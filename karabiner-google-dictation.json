@@ -1,0 +1,51 @@
+{
+    "title": "Google Dictation (Web Speech)",
+    "rules": [
+        {
+            "description": "Double-tap Right Command: open Google dictation (lone taps send nothing, safe inside Windows App)",
+            "manipulators": [
+                {
+                    "type": "basic",
+                    "conditions": [
+                        { "type": "variable_if", "name": "rcmd_double_tap", "value": 1 }
+                    ],
+                    "from": {
+                        "key_code": "right_command",
+                        "modifiers": { "optional": ["any"] }
+                    },
+                    "to": [
+                        { "set_variable": { "name": "rcmd_double_tap", "value": 0 } },
+                        {
+                            "shell_command": "/bin/sh -c 'pgrep -f \"dictate/serve.py\" >/dev/null || (nohup /usr/bin/python3 /Users/seyed/Projects/hobby/mem/dictate/serve.py >/dev/null 2>&1 &); open -na \"Google Chrome\" --args --app=http://127.0.0.1:17635'"
+                        }
+                    ]
+                },
+                {
+                    "type": "basic",
+                    "from": {
+                        "key_code": "right_command",
+                        "modifiers": { "optional": ["any"] }
+                    },
+                    "to": [
+                        { "key_code": "right_command", "lazy": true }
+                    ],
+                    "to_if_alone": [
+                        { "set_variable": { "name": "rcmd_double_tap", "value": 1 } }
+                    ],
+                    "to_delayed_action": {
+                        "to_if_invoked": [
+                            { "set_variable": { "name": "rcmd_double_tap", "value": 0 } }
+                        ],
+                        "to_if_canceled": [
+                            { "set_variable": { "name": "rcmd_double_tap", "value": 0 } }
+                        ]
+                    },
+                    "parameters": {
+                        "basic.to_delayed_action_delay_milliseconds": 400,
+                        "basic.to_if_alone_timeout_milliseconds": 400
+                    }
+                }
+            ]
+        }
+    ]
+}
