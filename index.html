@@ -115,6 +115,7 @@
     if (finalText && !/\s$/.test(finalText)) finalText += ' ';
     finalText += chunk + ' ';
     autosave(chunk);
+    live('final', { text: chunk });
   }
 
   // باگ‌فیکس اصلی: وقتی سشن تشخیص بسته می‌شه (خطای گذرا، مکث، ری‌استارت)،
@@ -144,6 +145,7 @@
     try { rec.start(); } catch (e) {}
     document.body.classList.add('on');
     setState('دارم گوش می‌دم');
+    live('state', { state: 'listening' });
     $('btnToggle').innerHTML = 'توقف <kbd>Space</kbd>';
   }
 
@@ -154,6 +156,7 @@
     rec.stop();
     document.body.classList.remove('on');
     setState('متوقف؛ ویرایش آزاده');
+    live('state', { state: 'stopped' });
     $('btnToggle').innerHTML = 'ادامه <kbd>Space</kbd>';
   }
 
@@ -196,6 +199,7 @@
       else interim += r[0].transcript;
     }
     lastInterim = interim;
+    live('interim', { text: lastInterim });
     render();
   };
 
@@ -209,9 +213,10 @@
       setState('شبکه ناپایداره؛ Space برای تلاش دوباره');
       $('btnToggle').innerHTML = 'ادامه <kbd>Space</kbd>';
       dbg('gave up after ' + endsSinceResult + ' ends without result');
+      live('state', { state: 'gaveup' });
       return;
     }
-    if (endsSinceResult >= 3) setState('اتصال ناپایدار، دوباره وصل می‌شم...');
+    if (endsSinceResult >= 3) { setState('اتصال ناپایدار، دوباره وصل می‌شم...'); live('state', { state: 'reconnecting' }); }
     clearTimeout(restartTimer);
     const delay = Math.min(300 * Math.pow(2, Math.max(0, endsSinceResult - 1)), 5000);
     restartTimer = setTimeout(() => {
@@ -235,6 +240,27 @@
     lastEventAt = Date.now();
     if (e.error === 'not-allowed') { listening = false; document.body.classList.remove('on'); setState('اجازه میکروفن رد شد'); }
   };
+
+  // پل به پنل نیتیو: نتیجه‌ها از /live می‌رن بیرون، فرمان‌ها از /events میان تو
+  const RELAY = new URLSearchParams(location.search).has('relay');
+
+  function live(kind, extra) {
+    if (!RELAY) return;
+    try { fetch('/live', { method: 'POST', body: JSON.stringify(Object.assign({ kind, sid }, extra || {})) }).catch(() => {}); } catch (e) {}
+  }
+
+  if (RELAY) {
+    const es = new EventSource('/events');
+    es.onmessage = e => {
+      let m;
+      try { m = JSON.parse(e.data); } catch (err) { return; }
+      if (m.kind !== 'cmd') return;
+      if (m.cmd === 'stop') stop();
+      else if (m.cmd === 'start') start();
+      else if (m.cmd === 'lang') { setLang(m.lang); if (listening) rec.abort(); }
+    };
+    setInterval(() => live('hb', { listening }), 5000);
+  }
 
   // واچ‌داگ: اگه در حالت شنیدن هیچ رویدادی نیومد، سشن رو بکش تا onend راهش بندازه
   setInterval(() => {
