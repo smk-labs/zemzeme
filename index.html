@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>دیکته گوگل</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: Vazirmatn, -apple-system, "Segoe UI", Tahoma, sans-serif;
+    margin: 0; height: 100vh; display: flex; flex-direction: column;
+    background: #fff; color: #1a1a1a;
+  }
+  header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px; border-bottom: 1px solid #e5e5e5; font-size: 13px;
+  }
+  #dot { width: 10px; height: 10px; border-radius: 50%; background: #999; flex: none; }
+  body.on #dot { background: #e03131; animation: pulse 1.2s infinite; }
+  @keyframes pulse { 50% { opacity: .35; } }
+  #lang {
+    margin-inline-start: auto; font: inherit; cursor: pointer;
+    background: #f1f1f1; color: inherit; border: 1px solid #ddd;
+    border-radius: 6px; padding: 4px 12px;
+  }
+  main { flex: 1; overflow: auto; padding: 18px; font-size: 22px; line-height: 1.9; white-space: pre-wrap; cursor: text; }
+  #final { outline: none; caret-color: #e03131; }
+  #interim { opacity: .45; }
+  footer {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    padding: 10px 14px; border-top: 1px solid #e5e5e5; font-size: 13px;
+  }
+  .act {
+    font: inherit; cursor: pointer; color: inherit;
+    background: #f1f1f1; border: 1px solid #ddd; border-radius: 6px;
+    padding: 5px 12px; display: inline-flex; align-items: center; gap: 7px;
+  }
+  .act:hover { background: #e9e9e9; }
+  .act kbd {
+    font-family: inherit; font-size: 11px; color: #888;
+    border: 1px solid #ccc; border-radius: 4px; padding: 0 5px; background: transparent;
+  }
+  #copied { color: #2b8a3e; visibility: hidden; margin-inline-start: auto; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #141414; color: #ececec; }
+    header, footer { border-color: #2a2a2a; }
+    #lang, .act { background: #222; border-color: #333; }
+    .act:hover { background: #2b2b2b; }
+    .act kbd { border-color: #444; color: #999; }
+  }
+</style>
+<header>
+  <span id="dot"></span>
+  <span id="state">آماده</span>
+  <button id="lang"></button>
+</header>
+<main id="out"><span id="final" contenteditable="plaintext-only"></span><span id="interim"></span></main>
+<footer>
+  <button class="act" id="btnToggle">توقف <kbd>Space</kbd></button>
+  <button class="act" id="btnCommit">تثبیت خاکستری‌ها <kbd>Enter</kbd></button>
+  <button class="act" id="btnCopy">کپی همه</button>
+  <button class="act" id="btnClear">پاک کردن <kbd>C</kbd></button>
+  <button class="act" id="btnFinish">کپی و بستن <kbd>Esc</kbd></button>
+  <span id="copied">کپی شد</span>
+</footer>
+<script>
+  const $ = id => document.getElementById(id);
+  // دیباگ: رویدادها بدون متن گفتار توی سرور لاگ می‌شن (dictate/log.txt)
+  function dbg(m) {
+    try {
+      console.log('[stt]', m);
+      fetch('/log', { method: 'POST', body: m }).catch(() => {});
+    } catch (e) {}
+  }
+  dbg('load ' + navigator.userAgent);
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) $('state').textContent = 'این مرورگر تشخیص گفتار نداره، توی کروم بازش کن';
+
+  const sid = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+  let lang = localStorage.lang || 'fa-IR';
+  let listening = false;
+  let finalText = '';
+  let lastInterim = '';
+  let netErrors = 0;
+  const rec = new SR();
+  rec.continuous = true;
+  rec.interimResults = true;
+
+  function setLang(l) {
+    lang = l; localStorage.lang = l; rec.lang = l;
+    $('lang').textContent = l === 'fa-IR' ? 'فارسی' : 'English';
+    document.documentElement.dir = l === 'fa-IR' ? 'rtl' : 'ltr';
+  }
+
+  function setState(t) { $('state').textContent = t; }
+
+  function render() {
+    $('final').textContent = finalText;
+    $('interim').textContent = lastInterim;
+    $('out').scrollTop = $('out').scrollHeight;
+  }
+
+  // هر تیکه قطعی‌شده روی دیسک هم ذخیره می‌شه که هیچ‌وقت هیچی از دست نره
+  function autosave(chunk) {
+    try { fetch('/save', { method: 'POST', body: sid + '\t' + chunk }).catch(() => {}); } catch (e) {}
+  }
+
+  // متن ویرایش‌شده توسط کاربر منبع حقیقته
+  function syncFromDom() { finalText = $('final').textContent; }
+
+  function appendFinal(chunk) {
+    syncFromDom();
+    if (finalText && !/\s$/.test(finalText)) finalText += ' ';
+    finalText += chunk + ' ';
+    autosave(chunk);
+  }
+
+  // باگ‌فیکس اصلی: وقتی سشن تشخیص بسته می‌شه (خطای گذرا، مکث، ری‌استارت)،
+  // متن خاکستری معلق رو به جای دور ریختن، قطعی کن
+  function salvage() {
+    const t = lastInterim.trim();
+    if (!t) return;
+    dbg('salvaged ' + t.split(/\s+/).length + ' words');
+    lastInterim = '';
+    appendFinal(t);
+    render();
+  }
+
+  // تثبیت دستی وسط حرف زدن: خاکستری‌ها قطعی می‌شن، شنیدن ادامه پیدا می‌کنه
+  function commit() {
+    if (!lastInterim.trim()) return;
+    salvage();
+    if (listening) try { rec.abort(); } catch (e) {}
+  }
+
+  function start() {
+    listening = true;
+    netErrors = 0;
+    try { rec.start(); } catch (e) {}
+    document.body.classList.add('on');
+    setState('دارم گوش می‌دم');
+    $('btnToggle').innerHTML = 'توقف <kbd>Space</kbd>';
+  }
+
+  function stop() {
+    listening = false;
+    rec.stop();
+    document.body.classList.remove('on');
+    setState('متوقف؛ ویرایش آزاده');
+    $('btnToggle').innerHTML = 'ادامه <kbd>Space</kbd>';
+  }
+
+  async function copyAll(flash) {
+    syncFromDom();
+    const t = (finalText + ' ' + lastInterim).replace(/\s+/g, ' ').trim();
+    if (!t) return;
+    try {
+      await navigator.clipboard.writeText(t);
+      if (flash) {
+        $('copied').style.visibility = 'visible';
+        setTimeout(() => $('copied').style.visibility = 'hidden', 1500);
+      }
+    } catch (e) {}
+  }
+
+  function clearAll() {
+    finalText = ''; lastInterim = '';
+    render();
+  }
+
+  function finish() {
+    copyAll(true);
+    stop();
+    setTimeout(() => {
+      window.close();
+      setTimeout(() => { if (!window.closed) setState('کپی شد؛ برای بستن Cmd+W'); }, 250);
+    }, 100);
+  }
+
+  ['start', 'audiostart', 'speechstart'].forEach(n => rec['on' + n] = () => dbg(n));
+
+  rec.onresult = e => {
+    netErrors = 0;
+    let interim = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const r = e.results[i];
+      if (r.isFinal) appendFinal(r[0].transcript.trim());
+      else interim += r[0].transcript;
+    }
+    lastInterim = interim;
+    render();
+  };
+
+  // سشن بسته شد: اول نجات خاکستری‌ها، بعد اگه کاربر هنوز می‌خواد، دوباره وصل شو
+  rec.onend = () => {
+    dbg('end');
+    salvage();
+    if (listening && netErrors < 3) try { rec.start(); } catch (e) {}
+  };
+
+  rec.onerror = e => {
+    dbg('error: ' + e.error + (e.message ? ' / ' + e.message : ''));
+    if (e.error === 'not-allowed') { listening = false; document.body.classList.remove('on'); setState('اجازه میکروفن رد شد'); }
+    if (e.error === 'network') {
+      netErrors++;
+      if (netErrors >= 3) { listening = false; document.body.classList.remove('on'); setState('خطای شبکه، سه بار پشت هم (Space: تلاش دوباره)'); }
+      else setState('خطای شبکه، تلاش دوباره...');
+    }
+  };
+
+  $('final').addEventListener('input', syncFromDom);
+  $('out').addEventListener('click', e => { if (e.target === $('out')) $('final').focus(); });
+
+  document.addEventListener('keydown', e => {
+    if (e.code === 'Escape') { e.preventDefault(); finish(); return; }
+    const editing = e.target && e.target.isContentEditable;
+    if (editing || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.code === 'Space') { e.preventDefault(); listening ? stop() : start(); }
+    else if (e.code === 'Enter') { e.preventDefault(); commit(); }
+    else if (e.code === 'KeyL') { setLang(lang === 'fa-IR' ? 'en-US' : 'fa-IR'); if (listening) rec.abort(); }
+    else if (e.code === 'KeyC') { clearAll(); }
+  });
+
+  $('btnToggle').onclick = () => listening ? stop() : start();
+  $('btnCommit').onclick = commit;
+  $('btnCopy').onclick = () => copyAll(true);
+  $('btnClear').onclick = clearAll;
+  $('btnFinish').onclick = finish;
+  $('lang').onclick = () => { setLang(lang === 'fa-IR' ? 'en-US' : 'fa-IR'); if (listening) rec.abort(); };
+
+  setLang(lang);
+  start();
+</script>
+</html>
