@@ -24,14 +24,43 @@
     NSInteger _endsSinceResult;
     BOOL _gotResultThisCycle;
     NSString *_lastInterim;
+    NSString *_salvageBest;      // بلندترین interim از آخرین final؛ بیمه پنجره لغزان گوگل
     NSTimer *_restartTimer;
     NSTimer *_watchdog;
     NSDate *_streamStartedAt;
     ZEngineState _lastState;
     NSDate *_lastLevelAt;
+    NSDate *_lastChunkAt;        // واچ‌داگ میکروفن مرده
+    NSInteger _micRetries;
+    BOOL _paused;
 }
 
 @synthesize delegate;
+@synthesize paused = _paused;
+
+// ادغام دو interim با هم‌پوشانی توکنی: گوگل گاهی پیشوند تثبیت‌شده را از interim های
+// بعدی می‌اندازد؛ موقع نجات، بلندترین نسخه با دم فعلی ادغام می‌شود که کلمه‌ای گم نشود.
+static NSString *ZMergeInterim(NSString *best, NSString *cur) {
+    best = [best stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    cur = [cur stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (!best.length) return cur;
+    if (!cur.length) return best;
+    if ([best containsString:cur]) return best;
+    NSArray *a = [best componentsSeparatedByString:@" "];
+    NSArray *b = [cur componentsSeparatedByString:@" "];
+    NSUInteger maxK = MIN(a.count, b.count);
+    for (NSUInteger k = maxK; k > 0; k--) {
+        NSArray *tailA = [a subarrayWithRange:NSMakeRange(a.count - k, k)];
+        NSArray *headB = [b subarrayWithRange:NSMakeRange(0, k)];
+        if ([tailA isEqualToArray:headB]) {
+            NSArray *rest = [b subarrayWithRange:NSMakeRange(k, b.count - k)];
+            return rest.count
+                ? [best stringByAppendingFormat:@" %@", [rest componentsJoinedByString:@" "]]
+                : best;
+        }
+    }
+    return [NSString stringWithFormat:@"%@ %@", best, cur];
+}
 
 - (instancetype)init {
     if ((self = [super init])) {
@@ -39,6 +68,7 @@
         _feedLock = [NSLock new];
         _preroll = [NSMutableData data];
         _lastInterim = @"";
+        _salvageBest = @"";
         _lang = @"fa-IR";
         _lastLevelAt = NSDate.distantPast;
     }
@@ -76,9 +106,30 @@
     [_stream cancel];    // مسیر close با زبان جدید ری‌استارت می‌کند
 }
 
+// مکث: شنیدن می‌ایستد، میکروفن گرم می‌ماند که ادامه آنی باشد
+- (void)pause {
+    if (!_running || _paused) return;
+    _paused = YES;
+    [self salvage];
+    [_stream cancel];    // مسیر close با گارد paused ری‌استارت نمی‌کند
+    [self state:ZEnginePaused msg:@""];
+    ZLog(@"engine: paused");
+}
+
+- (void)resume {
+    if (!_running || !_paused) return;
+    _paused = NO;
+    _endsSinceResult = 0;
+    _lastChunkAt = NSDate.date;
+    [self state:ZEngineConnecting msg:@""];
+    [self openStream];
+    ZLog(@"engine: resumed");
+}
+
 - (void)stop {
     BOOL was = _running;
     _running = NO;
+    _paused = NO;
     if (was) [self salvage];
     [_stream cancel];
     [_draining cancel];
@@ -98,6 +149,9 @@
     _mic.onChunk = ^(NSData *pcm) {
         __strong typeof(ws) s = ws;
         if (!s) return;
+        s->_lastChunkAt = NSDate.date;
+        s->_micRetries = 0;
+        if (s->_paused) return;    // در مکث، صدا دور ریخته می‌شود (بافر هم نه)
         [s->_feedLock lock];
         ZGoogleStream *t = s->_feedTarget;
         if (t) {
@@ -137,6 +191,8 @@
         }
         _micRunning = YES;
     }
+    _lastChunkAt = NSDate.date;
+    _micRetries = 0;
     [self openStream];
     [_watchdog invalidate];
     _watchdog = [NSTimer scheduledTimerWithTimeInterval:2 repeats:YES block:^(NSTimer *t) {
@@ -187,10 +243,14 @@
     }
     for (NSString *f in ev.finals) {
         _lastInterim = @"";
+        _salvageBest = @"";
         [self deliverFinal:f];
     }
-    if (ev.finals.count || ![ev.interim isEqualToString:_lastInterim]) {
+    // باگ‌فیکس حذف متن: فریم بدون result (endpointer/status) دیگر interim را پاک نمی‌کند؛
+    // فقط فریم‌های نتیجه‌دار حق دست زدن به متن خاکستری دارند.
+    if (ev.hasResults && (ev.finals.count || ![ev.interim isEqualToString:_lastInterim])) {
         _lastInterim = [ev.interim copy];
+        if (_lastInterim.length > _salvageBest.length) _salvageBest = [_lastInterim copy];
         [self.delegate engineInterim:_lastInterim];
     }
     if (ev.finals.count && [NSDate.date timeIntervalSinceDate:_streamStartedAt] > 240) {
@@ -212,15 +272,17 @@
     _stream = nil;
     ZLog(@"engine: closed pair=%@ reason=%@ result=%d voice=%d", s.pair, reason, _gotResultThisCycle, hadVoice);
     [self salvage];
-    if (!_running) return;
+    if (!_running || _paused) return;
     if (hadVoice && !_gotResultThisCycle) _endsSinceResult++;
     [self scheduleRestart];
 }
 
-// متن خاکستری معلق را قبل از هر مرگ/ری‌استارت قطعی کن که هیچ‌وقت گم نشود
+// متن خاکستری معلق را قبل از هر مرگ/ری‌استارت قطعی کن که هیچ‌وقت گم نشود.
+// بلندترین interim این پاره هم با دم فعلی ادغام می‌شود (پنجره لغزان گوگل کلمه نخورد).
 - (void)salvage {
-    NSString *t = [_lastInterim stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSString *t = ZMergeInterim(_salvageBest, _lastInterim);
     _lastInterim = @"";
+    _salvageBest = @"";
     [self.delegate engineInterim:@""];
     if (!t.length) return;
     ZLog(@"engine: salvaged %lu chars", (unsigned long)t.length);
@@ -246,7 +308,28 @@
 }
 
 - (void)tick {
-    if (!_running || !_stream) return;
+    if (!_running || _paused) return;
+    // واچ‌داگ میکروفن مرده: صدا اصلا نمی‌رسد یعنی تشخیص هم بی‌معناست؛
+    // بی‌صدا ماندنش قبلا شبیه «سکوت کاربر» دیده می‌شد و اپ بی‌سروصدا کر می‌ماند.
+    NSTimeInterval sinceChunk = [NSDate.date timeIntervalSinceDate:_lastChunkAt];
+    if (_micRunning && sinceChunk > 5) {
+        if (_micRetries < 2) {
+            _micRetries++;
+            _lastChunkAt = NSDate.date;
+            ZLog(@"engine: mic silent %.0fs, restarting mic (try %ld)", sinceChunk, (long)_micRetries);
+            [_mic stop];
+            _micRunning = NO;
+            NSError *err = nil;
+            if ([_mic startWithError:&err]) _micRunning = YES;
+        } else {
+            _running = NO;
+            [self stopMicAndTimers];
+            [self state:ZEngineGaveUp msg:@"میکروفن صدا نمی‌ده؛ ورودی صدای سیستم را چک کن و دوباره شروع کن"];
+            ZLog(@"engine: gave up, mic dead");
+            return;
+        }
+    }
+    if (!_stream) return;
     NSTimeInterval quiet = [NSDate.date timeIntervalSinceDate:_lastEventAt];
     NSTimeInterval age = [NSDate.date timeIntervalSinceDate:_streamStartedAt];
     if (quiet > 12) {
@@ -315,6 +398,7 @@ static NSString *const kRelayBase = @"http://127.0.0.1:17635";
 @implementation ZChromeRelayEngine {
     NSString *_lang;
     BOOL _running;
+    BOOL _paused;
     NSURLSession *_session;
     NSURLSessionDataTask *_sseTask;
     NSMutableData *_sseBuf;
@@ -323,6 +407,7 @@ static NSString *const kRelayBase = @"http://127.0.0.1:17635";
 }
 
 @synthesize delegate;
+@synthesize paused = _paused;
 
 - (instancetype)init {
     if ((self = [super init])) {
@@ -345,8 +430,23 @@ static NSString *const kRelayBase = @"http://127.0.0.1:17635";
     [self cmd:@{@"kind": @"cmd", @"cmd": @"lang", @"lang": l}];
 }
 
+- (void)pause {
+    if (!_running || _paused) return;
+    _paused = YES;
+    [self cmd:@{@"kind": @"cmd", @"cmd": @"stop"}];
+    [self.delegate engineState:ZEnginePaused message:@""];
+}
+
+- (void)resume {
+    if (!_running || !_paused) return;
+    _paused = NO;
+    [self cmd:@{@"kind": @"cmd", @"cmd": @"start"}];
+    [self.delegate engineState:ZEngineConnecting message:@""];
+}
+
 - (void)stop {
     _running = NO;
+    _paused = NO;
     [self cmd:@{@"kind": @"cmd", @"cmd": @"stop"}];
     [_hbTimer invalidate];
     _hbTimer = nil;
@@ -480,7 +580,7 @@ static NSString *const kRelayBase = @"http://127.0.0.1:17635";
             }
         } else if ([kind isEqualToString:@"hb"]) {
             NSNumber *listening = [obj[@"listening"] isKindOfClass:NSNumber.class] ? obj[@"listening"] : nil;
-            if (listening && !listening.boolValue) {
+            if (listening && !listening.boolValue && !s->_paused) {
                 // صفحه زنده است ولی گوش نمی‌دهد؛ دوباره فرمان بده
                 [s cmd:@{@"kind": @"cmd", @"cmd": @"start"}];
             }

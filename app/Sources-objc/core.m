@@ -118,11 +118,23 @@ NSFont *ZFont(CGFloat size, BOOL medium) {
 - (NSString *)engineName { return [self.d stringForKey:@"engine"] ?: @"google"; }
 - (void)setEngineName:(NSString *)v { [self.d setObject:v forKey:@"engine"]; }
 
-- (ZInsertMode)insertMode { return [self.d integerForKey:@"insertMode"]; }
+- (ZInsertMode)insertMode {
+    NSInteger v = [self.d integerForKey:@"insertMode"];
+    return v == ZInsertPaste ? ZInsertPaste : ZInsertType;    // مقدار قدیمی «جمع» به تایپ برمی‌گردد
+}
 - (void)setInsertMode:(ZInsertMode)m { [self.d setInteger:m forKey:@"insertMode"]; }
+
+- (BOOL)collectMode { return [self.d boolForKey:@"collect"]; }
+- (void)setCollectMode:(BOOL)v { [self.d setBool:v forKey:@"collect"]; }
 
 - (BOOL)internalHotkey { return [self.d boolForKey:@"internalHotkey"]; }
 - (void)setInternalHotkey:(BOOL)v { [self.d setBool:v forKey:@"internalHotkey"]; }
+
+- (BOOL)polishEnabled {
+    NSObject *o = [self.d objectForKey:@"polish"];
+    return o ? [self.d boolForKey:@"polish"] : YES;    // پیش‌فرض روشن
+}
+- (void)setPolishEnabled:(BOOL)v { [self.d setBool:v forKey:@"polish"]; }
 
 - (ZInsertMode)insertModeForBundleId:(NSString *)bundleId {
     // استثنای هر اپ؛ Windows App پیش‌فرض پیست می‌گیرد چون فوروارد یونیکد مصنوعی در RDP نامطمئن است
@@ -139,8 +151,9 @@ NSFont *ZFont(CGFloat size, BOOL medium) {
 }
 
 - (useconds_t)pasteDelayMicros {
+    // پیش‌فرض ۶۰۰: کلیپ‌بورد ریموت دسکتاپ با ۳۵۰ به موقع سینک نمی‌شد (تست واقعی 2026-07-24)
     NSObject *o = [self.d objectForKey:@"pasteDelayMs"];
-    double ms = o ? [self.d doubleForKey:@"pasteDelayMs"] : 350.0;
+    double ms = o ? [self.d doubleForKey:@"pasteDelayMs"] : 600.0;
     return (useconds_t)(MAX(0, ms) * 1000);
 }
 
@@ -221,6 +234,7 @@ ZSpeechEvent *ZProtoDecodeEvent(NSData *body) {
         } else if (f == 4 && w == 0) {
             ev.endpoint = (NSInteger)v;
         } else if (f == 2 && w == 2) {
+            ev.hasResults = YES;
             __block BOOL isFinal = NO;
             __block NSString *txt = @"";
             zWalkFields(sub, subLen, ^(uint64_t f2, int w2, uint64_t v2, const uint8_t *sub2, NSUInteger sub2Len) {

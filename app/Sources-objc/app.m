@@ -69,7 +69,7 @@ int ZSelfTest(NSString *file, NSString *lang) {
     NSStatusItem *_statusItem;
     ZPanel *_panel;
     ZSession *_session;
-    ZEscTap *_escTap;
+    ZSessionKeys *_keys;
     ZRCmdTap *_rcmdTap;
 }
 
@@ -96,7 +96,7 @@ int ZSelfTest(NSString *file, NSString *lang) {
                            withIntermediateDirectories:YES attributes:nil error:nil];
     ZRegisterFonts();
     _panel = [ZPanel new];
-    _escTap = [ZEscTap new];
+    _keys = [ZSessionKeys new];
     _rcmdTap = [ZRCmdTap new];
     [self setupStatusItem];
     __weak typeof(self) ws = self;
@@ -113,12 +113,15 @@ int ZSelfTest(NSString *file, NSString *lang) {
     }
 
     if (![ZInjector accessibilityOK]) [ZInjector promptAccessibility];
-    ZLog(@"app: launched root=%@ ax=%d", ZRoot().path, [ZInjector accessibilityOK]);
+    // دیمن پاس از همین حالا گرم شود که تکه اول اولین سشن سرد نخورد
+    if (ZSettings.shared.polishEnabled) [ZPolish.shared prepare];
+    ZLog(@"app: launched root=%@ ax=%d polish=%d",
+         ZRoot().path, [ZInjector accessibilityOK], ZSettings.shared.polishEnabled);
 }
 
 - (void)applicationWillTerminate:(NSNotification *)n {
     [_session finish];
-    [_escTap disable];
+    [_keys disable];
     [_rcmdTap disable];
 }
 
@@ -151,14 +154,21 @@ int ZSelfTest(NSString *file, NSString *lang) {
         __strong typeof(ws) me = ws;
         if (!me) return;
         me->_session = nil;
-        [me->_escTap disable];
+        [me->_keys disable];
     };
-    _escTap.onEsc = ^{
-        __strong typeof(ws) me = ws;
-        [me->_session finish];
-    };
-    [_escTap enable];
+    _keys.onEsc = ^{ [ws sessionDo:@selector(finish)]; };
+    _keys.onAltSpace = ^{ [ws sessionDo:@selector(pauseToggle)]; };
+    _keys.onAltC = ^{ [ws sessionDo:@selector(copyNow)]; };
+    _keys.onAltV = ^{ [ws sessionDo:@selector(insertHere)]; };
+    [_keys enable];
     [s start];
+}
+
+- (void)sessionDo:(SEL)action {
+    ZSession *s = _session;
+    if (!s) return;
+    IMP imp = [s methodForSelector:action];
+    ((void (*)(id, SEL))imp)(s, action);
 }
 
 // ---------- منوبار ----------
@@ -177,7 +187,24 @@ int ZSelfTest(NSString *file, NSString *lang) {
     menu.autoenablesItems = NO;
     BOOL active = _session != nil;
 
-    [self item:menu title:active ? @"پایان دیکته" : @"شروع دیکته" action:@selector(menuToggle) key:@""];
+    [self item:menu title:active ? @"پایان دیکته (Esc)" : @"شروع دیکته" action:@selector(menuToggle) key:@""];
+    if (active) {
+        [self item:menu title:@"مکث و ادامه شنیدن" action:@selector(menuPauseToggle) key:@" "];
+        [self item:menu title:@"کپی متن تا اینجا" action:@selector(menuCopyNow) key:@"c"];
+        [self item:menu title:@"درج در همین اپ" action:@selector(menuInsertHere) key:@"v"];
+    }
+    [menu addItem:NSMenuItem.separatorItem];
+
+    [self header:menu title:@"حالت"];
+    [self item:menu title:@"درج زنده سر کرسر" action:@selector(menuModeLive) key:@""].state =
+        !ZSettings.shared.collectMode ? NSControlStateValueOn : NSControlStateValueOff;
+    NSMenuItem *cm = [self item:menu title:@"جمع در پنل و ویرایش" action:@selector(menuModeCollect) key:@""];
+    cm.state = ZSettings.shared.collectMode ? NSControlStateValueOn : NSControlStateValueOff;
+    cm.toolTip = @"متن در خود پنل جمع می‌شود و قابل ویرایش است؛ تهش با یک دکمه درج یا کپی می‌شود";
+
+    NSMenuItem *pol = [self item:menu title:@"پاس ویرایش فارسی" action:@selector(menuTogglePolish) key:@""];
+    pol.state = ZSettings.shared.polishEnabled ? NSControlStateValueOn : NSControlStateValueOff;
+    pol.toolTip = @"نیم‌فاصله، ارقام فارسی، نقطه‌گذاری و املای مطمئن روی هر تکه قطعی فارسی";
     [menu addItem:NSMenuItem.separatorItem];
 
     [self header:menu title:@"زبان"];
@@ -199,10 +226,9 @@ int ZSelfTest(NSString *file, NSString *lang) {
     [self item:menu title:@"باز کردن صفحه موتور کروم" action:@selector(menuOpenChromePage) key:@""];
     [menu addItem:NSMenuItem.separatorItem];
 
-    [self header:menu title:@"درج متن"];
+    [self header:menu title:@"روش درج (Windows App همیشه پیست)"];
     NSArray *modes = @[@[@"تایپ مستقیم", @(ZInsertType)],
-                       @[@"پیست تکه‌ای", @(ZInsertPaste)],
-                       @[@"فقط جمع کن", @(ZInsertCollect)]];
+                       @[@"پیست تکه‌ای", @(ZInsertPaste)]];
     for (NSArray *m in modes) {
         NSMenuItem *mi = [self item:menu title:m[0] action:@selector(menuInsertMode:) key:@""];
         mi.representedObject = m[1];
@@ -221,9 +247,11 @@ int ZSelfTest(NSString *file, NSString *lang) {
     [self item:menu title:@"خروج از زمزمه" action:@selector(menuQuit) key:@"q"];
 }
 
+// شورتکات‌های نمایشی ⌥ فقط راهنما هستند؛ کار واقعی را تپ سراسری سشن می‌کند
 - (NSMenuItem *)item:(NSMenu *)m title:(NSString *)t action:(SEL)a key:(NSString *)k {
     NSMenuItem *i = [[NSMenuItem alloc] initWithTitle:t action:a keyEquivalent:k];
     i.target = self;
+    if (k.length && ![k isEqualToString:@"q"]) i.keyEquivalentModifierMask = NSEventModifierFlagOption;
     [m addItem:i];
     return i;
 }
@@ -235,6 +263,11 @@ int ZSelfTest(NSString *file, NSString *lang) {
 }
 
 - (void)menuToggle { [self toggleSession]; }
+- (void)menuPauseToggle { [self sessionDo:@selector(pauseToggle)]; }
+- (void)menuCopyNow { [self sessionDo:@selector(copyNow)]; }
+- (void)menuInsertHere { [self sessionDo:@selector(insertHere)]; }
+- (void)menuModeLive { ZSettings.shared.collectMode = NO; }
+- (void)menuModeCollect { ZSettings.shared.collectMode = YES; }
 - (void)menuLangFa { [self setLang:@"fa-IR"]; }
 - (void)menuLangEn { [self setLang:@"en-US"]; }
 - (void)setLang:(NSString *)l {
@@ -246,6 +279,10 @@ int ZSelfTest(NSString *file, NSString *lang) {
 - (void)menuOpenChromePage { [ZChromeRelayEngine openPage]; }
 - (void)menuInsertMode:(NSMenuItem *)sender {
     ZSettings.shared.insertMode = [sender.representedObject integerValue];
+}
+- (void)menuTogglePolish {
+    ZSettings.shared.polishEnabled = !ZSettings.shared.polishEnabled;
+    if (ZSettings.shared.polishEnabled) [ZPolish.shared prepare];
 }
 - (void)menuToggleHotkey {
     ZSettings.shared.internalHotkey = !ZSettings.shared.internalHotkey;

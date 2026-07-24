@@ -16,10 +16,14 @@
 @end
 
 // ---------- ZPanel ----------
-// نوار باریک بدون گرفتن فوکس، روی همه Space ها و فول‌اسکرین.
-// فقط بافر خاکستری و وضعیت را نشان می‌دهد؛ متن قطعی در خود اپ مقصد می‌نشیند.
+// نوار باریک بدون گرفتن فوکس، روی همه Space ها و فول‌اسکرین. سه دکمه بیشتر ندارد:
+// بستن، مکث/ادامه، کپی. متن خاکستری تا سه خط می‌پیچد و پنل قدش را خودش تنظیم می‌کند.
+// در حالت «جمع در پنل» یک ادیتور واقعی باز می‌شود: متن قطعی همان‌جا می‌نشیند،
+// قابل ویرایش با کیبورد خود کاربر، و تهش با یک دکمه در اپ مقصد درج می‌شود.
 
-static const CGFloat kPW = 500, kPH = 46;
+static const CGFloat kPW = 500;
+static const CGFloat kBarH = 46;      // ارتفاع ردیف پایه (دکمه‌ها + نقطه)
+static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جمع
 
 @implementation ZPanel {
     NSPanel *_panel;
@@ -28,13 +32,16 @@ static const CGFloat kPW = 500, kPH = 46;
     NSTextField *_text;
     NSView *_chipBg;
     NSTextField *_chipLabel;
-    NSButton *_btnClose, *_btnLang, *_btnTarget, *_btnLock;
+    NSButton *_btnClose, *_btnPause, *_btnCopy, *_btnInsert;
+    NSScrollView *_editorScroll;
+    NSTextView *_editor;
     BOOL _pulsing;
+    BOOL _collectVisible;
 }
 
 - (instancetype)init {
     if ((self = [super init])) {
-        _panel = [[NSPanel alloc] initWithContentRect:NSMakeRect(0, 0, kPW, kPH)
+        _panel = [[NSPanel alloc] initWithContentRect:NSMakeRect(0, 0, kPW, kBarH)
                                             styleMask:NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel
                                               backing:NSBackingStoreBuffered defer:NO];
         _panel.level = NSStatusWindowLevel;
@@ -50,7 +57,7 @@ static const CGFloat kPW = 500, kPH = 46;
         _panel.becomesKeyOnlyIfNeeded = YES;
         _panel.releasedWhenClosed = NO;
 
-        _effect = [[NSVisualEffectView alloc] initWithFrame:NSMakeRect(0, 0, kPW, kPH)];
+        _effect = [[NSVisualEffectView alloc] initWithFrame:NSMakeRect(0, 0, kPW, kBarH)];
         _effect.material = NSVisualEffectMaterialHUDWindow;
         _effect.state = NSVisualEffectStateActive;
         _effect.blendingMode = NSVisualEffectBlendingModeBehindWindow;
@@ -60,7 +67,7 @@ static const CGFloat kPW = 500, kPH = 46;
         _effect.layer.borderWidth = 0.5;
         _panel.contentView = _effect;
 
-        _dot = [[NSView alloc] initWithFrame:NSMakeRect(kPW - 25, (kPH - 9) / 2, 9, 9)];
+        _dot = [[NSView alloc] initWithFrame:NSMakeRect(kPW - 25, (kBarH - 9) / 2, 9, 9)];
         _dot.wantsLayer = YES;
         _dot.layer.cornerRadius = 4.5;
         [_effect addSubview:_dot];
@@ -70,7 +77,9 @@ static const CGFloat kPW = 500, kPH = 46;
         _text.textColor = NSColor.secondaryLabelColor;
         _text.alignment = NSTextAlignmentRight;
         _text.lineBreakMode = NSLineBreakByTruncatingHead;
-        _text.usesSingleLineMode = YES;
+        _text.usesSingleLineMode = NO;
+        _text.cell.wraps = YES;
+        _text.maximumNumberOfLines = 3;
         [_effect addSubview:_text];
 
         _chipBg = [NSView new];
@@ -85,14 +94,16 @@ static const CGFloat kPW = 500, kPH = 46;
         [_chipBg addSubview:_chipLabel];
 
         _btnClose = [self makeButton:@"xmark" tip:@"بستن و درج همه (Esc)" action:@selector(closeTap)];
-        _btnLang = [NSButton buttonWithTitle:@"فا" target:self action:@selector(langTap)];
-        _btnLang.bordered = NO;
-        _btnLang.font = ZFont(11, YES);
-        _btnLang.contentTintColor = NSColor.secondaryLabelColor;
-        _btnLang.toolTip = @"تغییر زبان";
-        [_effect addSubview:_btnLang];
-        _btnTarget = [self makeButton:@"scope" tip:@"مقصد همینجا: درج در همین اپ جلویی" action:@selector(targetTap)];
-        _btnLock = [self makeButton:@"lock.open" tip:@"قفل: درج نکن، فقط جمع کن" action:@selector(lockTap)];
+        _btnPause = [self makeButton:@"pause.fill" tip:@"مکث و ادامه شنیدن (⌥Space)" action:@selector(pauseTap)];
+        _btnCopy = [self makeButton:@"doc.on.doc" tip:@"کپی متن تا اینجا (⌥C)" action:@selector(copyTap)];
+
+        _btnInsert = [NSButton buttonWithTitle:@"درج در همین اپ" target:self action:@selector(insertTap)];
+        _btnInsert.bezelStyle = NSBezelStyleRounded;
+        _btnInsert.controlSize = NSControlSizeSmall;
+        _btnInsert.font = ZFont(12, YES);
+        _btnInsert.toolTip = @"کل متن پنل سر کرسر همین اپ تایپ می‌شود (⌥V)";
+        _btnInsert.hidden = YES;
+        [_effect addSubview:_btnInsert];
 
         [self layoutViews];
         [self applyColors];
@@ -113,22 +124,40 @@ static const CGFloat kPW = 500, kPH = 46;
     return b;
 }
 
-// چیدمان راست‌به‌چپ با فریم دستی: نقطه سمت راست، دکمه‌ها سمت چپ
-- (void)layoutViews {
-    CGFloat cy = (kPH - 24) / 2;
-    _btnClose.frame = NSMakeRect(10, cy, 24, 24);
-    _btnLang.frame = NSMakeRect(38, cy, 26, 24);
-    _btnTarget.frame = NSMakeRect(66, cy, 24, 24);
-    _btnLock.frame = NSMakeRect(94, cy, 24, 24);
+- (void)setButton:(NSButton *)b symbol:(NSString *)symbol {
+    NSImage *img = [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:b.toolTip];
+    b.image = [img imageWithSymbolConfiguration:
+               [NSImageSymbolConfiguration configurationWithPointSize:12 weight:NSFontWeightMedium]];
+}
 
+// چیدمان راست‌به‌چپ با فریم دستی: نقطه پایین راست، دکمه‌ها پایین چپ، متن وسط.
+// ادیتور (اگر باز باشد) بالای ردیف پایه می‌نشیند.
+- (void)layoutViews {
+    CGFloat H = _panel.frame.size.height;
+    CGFloat cy = (kBarH - 24) / 2;
+    _btnClose.frame = NSMakeRect(10, cy, 24, 24);
+    _btnPause.frame = NSMakeRect(38, cy, 24, 24);
+    _btnCopy.frame = NSMakeRect(66, cy, 24, 24);
+    CGFloat left = 98;
+    if (!_btnInsert.hidden) {
+        [_btnInsert sizeToFit];
+        _btnInsert.frame = NSMakeRect(left, (kBarH - _btnInsert.frame.size.height) / 2,
+                                      _btnInsert.frame.size.width, _btnInsert.frame.size.height);
+        left += _btnInsert.frame.size.width + 8;
+    }
     CGFloat chipW = _chipBg.hidden ? 0 : _chipBg.frame.size.width;
-    CGFloat left = 124 + chipW + (_chipBg.hidden ? 0 : 8);
-    CGFloat right = kPW - 25 - 12;
-    _text.frame = NSMakeRect(left, (kPH - 22) / 2, MAX(40, right - left), 22);
     if (!_chipBg.hidden) {
         NSRect f = _chipBg.frame;
-        f.origin = NSMakePoint(124, (kPH - 18) / 2);
+        f.origin = NSMakePoint(left, (kBarH - 18) / 2);
         _chipBg.frame = f;
+        left += chipW + 8;
+    }
+    CGFloat right = kPW - 25 - 12;
+    // در تسمه‌نقاله، فریم متن با قد پنل بالا می‌رود که تا سه خط جا شود
+    CGFloat textH = (_collectVisible ? kBarH : H) - 22;
+    _text.frame = NSMakeRect(left, 11, MAX(40, right - left), textH);
+    if (_collectVisible) {
+        _editorScroll.frame = NSMakeRect(12, kBarH, kPW - 24, H - kBarH - 10);
     }
 }
 
@@ -136,6 +165,86 @@ static const CGFloat kPW = 500, kPH = 46;
     _effect.layer.borderColor = [NSColor.labelColor colorWithAlphaComponent:0.12].CGColor;
     _chipBg.layer.backgroundColor = [NSColor.labelColor colorWithAlphaComponent:0.08].CGColor;
 }
+
+// ---------- ادیتور حالت جمع ----------
+
+- (void)ensureEditor {
+    if (_editorScroll) return;
+    _editorScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(12, kBarH, kPW - 24, kEditorH - 10)];
+    _editorScroll.hasVerticalScroller = YES;
+    _editorScroll.drawsBackground = NO;
+    _editorScroll.borderType = NSNoBorder;
+    _editor = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0, kPW - 24, kEditorH - 10)];
+    _editor.font = ZFont(15, NO);
+    _editor.textColor = NSColor.labelColor;
+    _editor.drawsBackground = NO;
+    _editor.richText = NO;
+    _editor.baseWritingDirection = NSWritingDirectionRightToLeft;
+    _editor.alignment = NSTextAlignmentRight;
+    _editor.textContainerInset = NSMakeSize(4, 8);
+    _editor.autoresizingMask = NSViewWidthSizable;
+    _editor.verticallyResizable = YES;
+    _editor.textContainer.widthTracksTextView = YES;
+    _editorScroll.documentView = _editor;
+    [_effect addSubview:_editorScroll];
+}
+
+- (void)setCollectVisible:(BOOL)on {
+    if (on) [self ensureEditor];
+    if (_collectVisible == on) return;
+    _collectVisible = on;
+    _editorScroll.hidden = !on;
+    _btnInsert.hidden = !on;
+    [self resizeTo:on ? kBarH + kEditorH : [self conveyorHeight]];
+}
+
+- (void)appendFinalToEditor:(NSString *)chunk {
+    [self ensureEditor];
+    NSString *cur = _editor.string;
+    NSString *add = cur.length && ![cur hasSuffix:@" "] && ![cur hasSuffix:@"\n"]
+        ? [@" " stringByAppendingString:chunk] : chunk;
+    [_editor.textStorage replaceCharactersInRange:NSMakeRange(cur.length, 0) withString:add];
+    _editor.font = ZFont(15, NO);
+    _editor.textColor = NSColor.labelColor;
+    [_editor scrollRangeToVisible:NSMakeRange(_editor.string.length, 0)];
+}
+
+- (NSString *)editorText {
+    return _editor.string ?: @"";
+}
+
+- (void)clearEditor {
+    [self ensureEditor];
+    [_editor.textStorage replaceCharactersInRange:NSMakeRange(0, _editor.string.length) withString:@""];
+}
+
+// ---------- اندازه ----------
+
+// قد نوار در حالت تسمه‌نقاله: تا سه خط با متن بلند می‌شود
+- (CGFloat)conveyorHeight {
+    NSString *s = _text.stringValue;
+    if (!s.length) return kBarH;
+    CGFloat w = _text.frame.size.width > 0 ? _text.frame.size.width : kPW - 160;
+    NSRect r = [s boundingRectWithSize:NSMakeSize(w, 1000)
+                               options:NSStringDrawingUsesLineFragmentOrigin
+                            attributes:@{NSFontAttributeName: _text.font}];
+    NSInteger lines = MIN(3, MAX(1, (NSInteger)ceil(r.size.height / 20.0)));
+    return kBarH + (lines - 1) * 21;
+}
+
+- (void)resizeTo:(CGFloat)h {
+    NSRect f = _panel.frame;
+    if (fabs(f.size.height - h) < 1) {
+        [self layoutViews];
+        return;
+    }
+    f.size.height = h;
+    [_panel setFrame:f display:YES];
+    _effect.frame = NSMakeRect(0, 0, kPW, h);
+    [self layoutViews];
+}
+
+// ---------- نمایش ----------
 
 - (void)show {
     [self applyColors];
@@ -172,9 +281,14 @@ static const CGFloat kPW = 500, kPH = 46;
 }
 
 - (void)render:(ZPanelModel *)m {
-    // متن: خاکستری لحظه‌ای؛ وقتی نیست، خط وضعیت
+    [self setCollectVisible:m.collect];
+
+    // متن: خاکستری لحظه‌ای؛ وقتی نیست، خط وضعیت.
+    // متن خیلی بلند از اولش بریده می‌شود که حرف‌های تازه همیشه دیده شوند.
     if (m.interim.length) {
-        _text.stringValue = m.interim;
+        NSString *t = m.interim;
+        if (t.length > 170) t = [@"…" stringByAppendingString:[t substringFromIndex:t.length - 165]];
+        _text.stringValue = t;
         _text.font = ZFont(15, NO);
         _text.textColor = NSColor.secondaryLabelColor;
     } else {
@@ -185,15 +299,14 @@ static const CGFloat kPW = 500, kPH = 46;
     _text.alignment = ([m.lang isEqualToString:@"en-US"] && m.interim.length)
         ? NSTextAlignmentLeft : NSTextAlignmentRight;
 
-    // چیپ صف/قفل
+    // چیپ صف (فقط تسمه‌نقاله، وقتی مقصد جلو نیست)
     NSString *chip = @"";
-    if (m.locked) {
-        chip = @"قفل";
-    } else if (m.queued > 0) {
+    if (!m.collect && m.queued > 0) {
         chip = [ZFaDigits([NSString stringWithFormat:@"%ld", (long)m.queued]) stringByAppendingString:@" در صف"];
     }
     _chipBg.toolTip = (m.waitingForTarget && m.targetName.length)
-        ? [NSString stringWithFormat:@"برگرد به %@ تا درج ادامه پیدا کند", m.targetName] : nil;
+        ? [NSString stringWithFormat:@"برگرد به %@ تا درج ادامه پیدا کند، یا ⌥V بزن که همینجا درج شود", m.targetName]
+        : nil;
     if (!chip.length) {
         _chipBg.hidden = YES;
     } else {
@@ -201,27 +314,31 @@ static const CGFloat kPW = 500, kPH = 46;
         _chipLabel.stringValue = chip;
         [_chipLabel sizeToFit];
         CGFloat w = _chipLabel.frame.size.width + 16;
-        _chipBg.frame = NSMakeRect(124, (kPH - 18) / 2, w, 18);
+        _chipBg.frame = NSMakeRect(98, (kBarH - 18) / 2, w, 18);
         _chipLabel.frame = NSMakeRect(8, 0, w - 16, 17);
     }
 
-    // دکمه‌ها
-    _btnLang.title = [m.lang isEqualToString:@"fa-IR"] ? @"فا" : @"EN";
-    NSImage *lockImg = [NSImage imageWithSystemSymbolName:m.locked ? @"lock.fill" : @"lock.open"
-                                accessibilityDescription:@"قفل"];
-    lockImg = [lockImg imageWithSymbolConfiguration:
-               [NSImageSymbolConfiguration configurationWithPointSize:12 weight:NSFontWeightMedium]];
-    _btnLock.image = lockImg;
-    _btnLock.contentTintColor = m.locked ? NSColor.controlAccentColor : NSColor.secondaryLabelColor;
+    // دکمه مکث سه چهره دارد: مکث، ادامه، تلاش دوباره بعد از خطا
+    if (m.error) {
+        [self setButton:_btnPause symbol:@"arrow.clockwise"];
+        _btnPause.toolTip = @"تلاش دوباره (⌥Space)";
+    } else if (m.paused) {
+        [self setButton:_btnPause symbol:@"play.fill"];
+        _btnPause.toolTip = @"ادامه شنیدن (⌥Space)";
+    } else {
+        [self setButton:_btnPause symbol:@"pause.fill"];
+        _btnPause.toolTip = @"مکث شنیدن (⌥Space)";
+    }
 
     // نقطه
     NSColor *color = m.error ? NSColor.systemGrayColor
-        : (m.listening ? [NSColor colorWithRed:0.88 green:0.19 blue:0.19 alpha:1] : NSColor.systemOrangeColor);
+        : (m.paused ? NSColor.systemGrayColor
+           : (m.listening ? [NSColor colorWithRed:0.88 green:0.19 blue:0.19 alpha:1] : NSColor.systemOrangeColor));
     _dot.layer.backgroundColor = color.CGColor;
-    if (m.listening && !_pulsing) [self startPulse];
-    if (!m.listening && _pulsing) [self stopPulse];
+    if (m.listening && !m.paused && !_pulsing) [self startPulse];
+    if ((!m.listening || m.paused) && _pulsing) [self stopPulse];
 
-    [self layoutViews];
+    [self resizeTo:m.collect ? kBarH + kEditorH : [self conveyorHeight]];
 }
 
 - (void)pulseLevel:(float)level {
@@ -250,9 +367,9 @@ static const CGFloat kPW = 500, kPH = 46;
 }
 
 - (void)closeTap { if (self.onClose) self.onClose(); }
-- (void)lockTap { if (self.onToggleLock) self.onToggleLock(); }
-- (void)targetTap { if (self.onRetarget) self.onRetarget(); }
-- (void)langTap { if (self.onToggleLang) self.onToggleLang(); }
+- (void)pauseTap { if (self.onPauseToggle) self.onPauseToggle(); }
+- (void)copyTap { if (self.onCopyNow) self.onCopyNow(); }
+- (void)insertTap { if (self.onInsertAll) self.onInsertAll(); }
 
 // اسکرین‌شات برای بازبینی طراحی (بدون نیاز به اجازه ضبط صفحه)
 - (void)makeShots:(NSString *)dir {
@@ -260,9 +377,14 @@ static const CGFloat kPW = 500, kPH = 46;
     listening.interim = @"دارم متن نمونه را برای نوار زمزمه می‌گویم که ببینیم";
     listening.listening = YES;
 
-    ZPanelModel *status = [ZPanelModel new];
-    status.status = @"دارم گوش می‌دم";
-    status.listening = YES;
+    ZPanelModel *multiline = [ZPanelModel new];
+    multiline.interim = @"وقتی جمله خیلی طولانی می‌شود و از یک خط می‌گذرد، نوار خودش قد می‌کشد "
+        @"و متن خاکستری تا سه خط می‌پیچد که همه حرف‌های در جریان دیده شوند و چیزی از چشم نیفتد";
+    multiline.listening = YES;
+
+    ZPanelModel *paused = [ZPanelModel new];
+    paused.status = @"مکث؛ ⌥Space برای ادامه";
+    paused.paused = YES;
 
     ZPanelModel *queued = [ZPanelModel new];
     queued.interim = @"این تکه هنوز خاکستری است";
@@ -271,53 +393,66 @@ static const CGFloat kPW = 500, kPH = 46;
     queued.waitingForTarget = YES;
     queued.targetName = @"Windows App";
 
-    ZPanelModel *locked = [ZPanelModel new];
-    locked.status = @"دارم گوش می‌دم";
-    locked.listening = YES;
-    locked.locked = YES;
-
     ZPanelModel *error = [ZPanelModel new];
-    error.status = @"شبکه ناپایداره؛ برای تلاش دوباره دابل‌تپ کن";
+    error.status = @"شبکه ناپایداره؛ دکمه تلاش دوباره یا ⌥Space";
     error.error = YES;
 
-    NSDictionary *states = @{@"listening": listening, @"status": status, @"queued": queued,
-                             @"locked": locked, @"error": error};
+    ZPanelModel *collect = [ZPanelModel new];
+    collect.collect = YES;
+    collect.listening = YES;
+    collect.interim = @"و این هم متن خاکستری در جریان";
+
+    NSArray *states = @[@[@"listening", listening], @[@"multiline", multiline], @[@"paused", paused],
+                        @[@"queued", queued], @[@"error", error], @[@"collect", collect]];
     [_panel orderFrontRegardless];
-    for (NSString *name in states) {
-        [self render:states[name]];
+    for (NSArray *pair in states) {
+        ZPanelModel *m = pair[1];
+        if (m.collect) {
+            [self clearEditor];
+            [self appendFinalToEditor:@"متن قطعی‌شده اینجا جمع می‌شود و با کیبورد خودت قابل ویرایش است."];
+            [self appendFinalToEditor:@"تهش با دکمه «درج در همین اپ» یکجا سر کرسر می‌نشیند."];
+        }
+        [self render:m];
         [_effect layoutSubtreeIfNeeded];
         NSBitmapImageRep *rep = [_effect bitmapImageRepForCachingDisplayInRect:_effect.bounds];
         if (!rep) continue;
         [_effect cacheDisplayInRect:_effect.bounds toBitmapImageRep:rep];
         NSData *png = [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
         [png writeToFile:[dir stringByAppendingPathComponent:
-                          [NSString stringWithFormat:@"panel-%@.png", name]] atomically:YES];
+                          [NSString stringWithFormat:@"panel-%@.png", pair[0]]] atomically:YES];
     }
+    [self setCollectVisible:NO];
     [_panel orderOut:nil];
 }
 
 @end
 
 // ---------- ZSession ----------
-// مدل تسمه‌نقاله: پنل فقط بافر خاکستری است؛ هر تکه قطعی همان لحظه سر کرسرِ
-// اپ مقصد درج می‌شود. اگر اپ جلویی عوض شود درج می‌ایستد و صف جمع می‌شود.
+// مدل تسمه‌نقاله: پنل فقط بافر خاکستری است؛ هر تکه قطعی، بعد از پاس ویرایش،
+// همان لحظه سر کرسرِ اپ مقصد درج می‌شود. اگر اپ جلویی عوض شود درج می‌ایستد و
+// صف جمع می‌شود (⌥V یعنی همینجا درج کن). در حالت «جمع در پنل» به جای درج زنده،
+// متن در ادیتور خود پنل می‌نشیند و تهش یکجا درج یا کپی می‌شود.
 
 @implementation ZSession {
     ZPanel *_panel;
     ZInjector *_injector;
     NSRunningApplication *_target;
-    NSMutableArray<NSString *> *_queue;       // تکه‌های قطعیِ هنوز درج‌نشده
+    NSMutableArray<NSString *> *_queue;       // تکه‌های قطعیِ هنوز درج‌نشده (تسمه‌نقاله)
     NSMutableArray<NSString *> *_transcript;  // همه قطعی‌ها برای کپی پایانی
     NSString *_interim;
     NSString *_statusText;
     BOOL _errorState;
     BOOL _listening;
-    BOOL _locked;
+    BOOL _collect;
     NSMutableArray<NSString *> *_pasteBuf;
     NSTimer *_pasteTimer;
     NSURL *_sessionFile;
     BOOL _finished;
     id _frontObserver;
+    // خط لوله پاس ویرایش: ترتیب تکه‌ها حفظ می‌شود، یکی‌یکی
+    NSMutableArray<NSString *> *_polishPending;
+    BOOL _polishBusy;
+    BOOL _dropNextPolish;    // موقع بستن، تکه در پرواز خام درج شده؛ جواب دیرش دور ریخته شود
 }
 
 - (instancetype)initWithEngine:(id<ZEngine>)engine panel:(ZPanel *)panel {
@@ -328,6 +463,7 @@ static const CGFloat kPW = 500, kPH = 46;
         _queue = [NSMutableArray array];
         _transcript = [NSMutableArray array];
         _pasteBuf = [NSMutableArray array];
+        _polishPending = [NSMutableArray array];
         _interim = @"";
         _statusText = @"";
         _sessionFile = [ZSessionsDir() URLByAppendingPathComponent:
@@ -337,9 +473,10 @@ static const CGFloat kPW = 500, kPH = 46;
 }
 
 - (void)start {
+    _collect = ZSettings.shared.collectMode;
     _target = NSWorkspace.sharedWorkspace.frontmostApplication;
-    ZLog(@"session: start target=%@ engine=%@ lang=%@",
-         _target.bundleIdentifier ?: @"?", ZSettings.shared.engineName, ZSettings.shared.lang);
+    ZLog(@"session: start target=%@ engine=%@ lang=%@ collect=%d",
+         _target.bundleIdentifier ?: @"?", ZSettings.shared.engineName, ZSettings.shared.lang, _collect);
     __weak typeof(self) ws = self;
     _frontObserver = [NSWorkspace.sharedWorkspace.notificationCenter
         addObserverForName:NSWorkspaceDidActivateApplicationNotification object:nil queue:NSOperationQueue.mainQueue
@@ -348,19 +485,15 @@ static const CGFloat kPW = 500, kPH = 46;
         [ws render];
     }];
     _panel.onClose = ^{ [ws finish]; };
-    _panel.onToggleLock = ^{
-        __strong typeof(ws) s = ws;
-        if (!s) return;
-        s->_locked = !s->_locked;
-        [s pump];
-        [s render];
-    };
-    _panel.onRetarget = ^{ [ws retarget]; };
-    _panel.onToggleLang = ^{ [ws toggleLang]; };
+    _panel.onPauseToggle = ^{ [ws pauseToggle]; };
+    _panel.onCopyNow = ^{ [ws copyNow]; };
+    _panel.onInsertAll = ^{ [ws insertHere]; };
+    if (_collect) [_panel clearEditor];
     [_panel show];
     if (![ZInjector accessibilityOK]) {
         _statusText = @"دسترسی Accessibility نیست؛ درج کار نمی‌کند، متن آخر کار کپی می‌شود";
     }
+    if (ZSettings.shared.polishEnabled) [ZPolish.shared prepare];
     self.engine.delegate = self;
     [self.engine startWithLang:ZSettings.shared.lang];
     [self render];
@@ -373,11 +506,47 @@ static const CGFloat kPW = 500, kPH = 46;
     [self render];
 }
 
+// تکه قطعی: اول خام روی دیسک (sessions طلای تست است و خام می‌ماند)،
+// بعد از خط لوله پاس ویرایش رد می‌شود و بعد درج/جمع.
 - (void)engineFinal:(NSString *)text {
-    [_transcript addObject:text];
     [self appendToSessionFile:text];
-    [_queue addObject:text];
-    [self pump];
+    [_polishPending addObject:text];
+    [self drainPolish];
+}
+
+- (void)drainPolish {
+    if (_polishBusy || !_polishPending.count) return;
+    NSString *raw = _polishPending.firstObject;
+    [_polishPending removeObjectAtIndex:0];
+    if (_finished) {
+        // موقع بستن معطلی نداریم: خام و همین حالا
+        [self acceptFinal:raw];
+        [self drainPolish];
+        return;
+    }
+    _polishBusy = YES;
+    __weak typeof(self) ws = self;
+    [ZPolish.shared polish:raw completion:^(NSString *polished) {
+        __strong typeof(ws) s = ws;
+        if (!s) return;
+        s->_polishBusy = NO;
+        if (s->_dropNextPolish) {
+            s->_dropNextPolish = NO;    // بسته شدیم و خامش درج شده؛ این جواب دور ریخته می‌شود
+        } else {
+            [s acceptFinal:polished];
+        }
+        [s drainPolish];
+    }];
+}
+
+- (void)acceptFinal:(NSString *)text {
+    [_transcript addObject:text];
+    if (_collect) {
+        [_panel appendFinalToEditor:text];
+    } else {
+        [_queue addObject:text];
+        [self pump];
+    }
     [self render];
 }
 
@@ -392,6 +561,7 @@ static const CGFloat kPW = 500, kPH = 46;
             _statusText = @"دارم گوش می‌دم";
             break;
         case ZEngineReconnecting: _statusText = @"اتصال ناپایدار، دوباره وصل می‌شم…"; break;
+        case ZEnginePaused: _statusText = @"مکث؛ ⌥Space برای ادامه"; break;
         case ZEngineGaveUp:
             _errorState = YES;
             _statusText = msg.length ? msg : @"خطای موتور";
@@ -408,6 +578,51 @@ static const CGFloat kPW = 500, kPH = 46;
     [_panel pulseLevel:rms];
 }
 
+// ---------- اکشن‌ها ----------
+
+// ⌥Space: مکث/ادامه؛ بعد از خطا، تلاش دوباره
+- (void)pauseToggle {
+    if (_errorState) {
+        _errorState = NO;
+        [self.engine startWithLang:ZSettings.shared.lang];
+        [self render];
+        return;
+    }
+    if (self.engine.paused) [self.engine resume];
+    else [self.engine pause];
+}
+
+// ⌥C: کپی متن تا اینجا (ماندگار)
+- (void)copyNow {
+    NSString *t = _collect ? [_panel editorText]
+                           : [[_transcript componentsJoinedByString:@" "]
+                              stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (t.length) [ZInjector copyFinal:t];
+}
+
+// ⌥V یا دکمه «درج در همین اپ»: هرچه هست، سر کرسر همین اپ جلویی
+- (void)insertHere {
+    _target = NSWorkspace.sharedWorkspace.frontmostApplication;
+    if (_collect) {
+        NSString *t = [_panel editorText];
+        if (!t.length) return;
+        [self injectText:[t stringByAppendingString:@" "]];
+        [self finish];
+        return;
+    }
+    [self pump];
+    [self render];
+}
+
+- (void)injectText:(NSString *)text {
+    if (![ZInjector accessibilityOK] || [ZInjector secureInputActive]) return;
+    if ([ZSettings.shared insertModeForBundleId:_target.bundleIdentifier] == ZInsertPaste) {
+        [_injector paste:text delayMicros:ZSettings.shared.pasteDelayMicros];
+    } else {
+        [_injector type:text delayMicros:ZSettings.shared.typeDelayMicros];
+    }
+}
+
 // ---------- تسمه‌نقاله ----------
 
 - (BOOL)targetIsFront {
@@ -416,13 +631,11 @@ static const CGFloat kPW = 500, kPH = 46;
 }
 
 - (void)pump {
-    if (!_queue.count) return;
-    ZInsertMode mode = [ZSettings.shared insertModeForBundleId:_target.bundleIdentifier];
-    if (mode == ZInsertCollect || _locked) return;
+    if (_collect || !_queue.count) return;
     if (![ZInjector accessibilityOK] || ![self targetIsFront] || [ZInjector secureInputActive]) return;
     NSString *chunk = [[_queue componentsJoinedByString:@" "] stringByAppendingString:@" "];
     [_queue removeAllObjects];
-    if (mode == ZInsertType) {
+    if ([ZSettings.shared insertModeForBundleId:_target.bundleIdentifier] == ZInsertType) {
         [_injector type:chunk delayMicros:ZSettings.shared.typeDelayMicros];
     } else {
         // ادغام تکه‌ها با تایمر کوتاه: پیست‌های کمتر، برای RDP امن‌تر
@@ -444,46 +657,26 @@ static const CGFloat kPW = 500, kPH = 46;
     [_injector paste:text delayMicros:ZSettings.shared.pasteDelayMicros];
 }
 
-- (void)retarget {
-    // مقصد جدید: همین اپ جلویی؛ صف همین‌جا خالی می‌شود
-    _target = NSWorkspace.sharedWorkspace.frontmostApplication;
-    ZLog(@"session: retarget to %@", _target.bundleIdentifier ?: @"?");
-    [self pump];
-    [self render];
-}
-
-- (void)toggleLang {
-    NSString *newLang = [ZSettings.shared.lang isEqualToString:@"fa-IR"] ? @"en-US" : @"fa-IR";
-    ZSettings.shared.lang = newLang;
-    [self.engine setLang:newLang];
-    [self render];
-}
-
 // ---------- پایان (Esc یا دابل‌تپ دوباره) ----------
 
 - (void)finish {
     if (_finished) return;
     _finished = YES;
+    if (_polishBusy) _dropNextPolish = YES;    // تکه در پرواز پایین‌تر خام درج می‌شود
     [self.engine stop];    // موتور قبل از بستن salvage می‌کند و finalها همین‌جا می‌رسند
+    // هرچه در خط لوله پاس مانده، بدون معطلی خام پذیرفته می‌شود
+    [self drainPolish];
     [self flushPasteBuf];
-    // باقی صف: اگر مقصد جلوست درج کن، وگرنه فقط کپی نجاتش می‌دهد
-    if (_queue.count && [ZInjector accessibilityOK] && [self targetIsFront]
-        && ![ZInjector secureInputActive] && !_locked) {
-        ZInsertMode mode = [ZSettings.shared insertModeForBundleId:_target.bundleIdentifier];
-        NSString *chunk = [[_queue componentsJoinedByString:@" "] stringByAppendingString:@" "];
-        if (mode == ZInsertType) {
-            [_injector type:chunk delayMicros:ZSettings.shared.typeDelayMicros];
-            [_queue removeAllObjects];
-        } else if (mode == ZInsertPaste) {
-            [_injector paste:chunk delayMicros:ZSettings.shared.pasteDelayMicros];
-            [_queue removeAllObjects];
-        }
+    // باقی صف تسمه‌نقاله: اگر مقصد جلوست درج کن، وگرنه کپی نجاتش می‌دهد
+    if (!_collect && _queue.count && [self targetIsFront]) {
+        [self injectText:[[_queue componentsJoinedByString:@" "] stringByAppendingString:@" "]];
+        [_queue removeAllObjects];
     }
-    // بیمه: کل متن سشن، یک بار، ماندگار در کلیپ‌بورد.
-    // نقطه اتصال «پاس اصلاح متن» آینده همین‌جاست: متن می‌رود تو، اصلاح‌شده می‌آید بیرون.
-    NSString *full = [[_transcript componentsJoinedByString:@" "]
-                      stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    if (full.length) [ZInjector copyFinal:full];
+    // بیمه: کل متن سشن، یک بار، ماندگار در کلیپ‌بورد؛ پشتِ صف درج که با پیست مسابقه نگیرد
+    NSString *full = _collect ? [_panel editorText]
+                              : [[_transcript componentsJoinedByString:@" "]
+                                 stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (full.length) [_injector copyFinalAfterPending:full];
     if (_frontObserver) [NSWorkspace.sharedWorkspace.notificationCenter removeObserver:_frontObserver];
     _frontObserver = nil;
     [_panel hide];
@@ -513,11 +706,12 @@ static const CGFloat kPW = 500, kPH = 46;
     m.interim = _interim;
     m.status = _statusText;
     m.queued = (NSInteger)(_queue.count + _pasteBuf.count);
-    m.locked = _locked;
     m.listening = _listening;
+    m.paused = self.engine.paused;
     m.error = _errorState;
     m.lang = ZSettings.shared.lang;
-    m.waitingForTarget = _queue.count > 0 && ![self targetIsFront];
+    m.collect = _collect;
+    m.waitingForTarget = !_collect && _queue.count > 0 && ![self targetIsFront];
     m.targetName = _target.localizedName ?: @"";
     [_panel render:m];
 }

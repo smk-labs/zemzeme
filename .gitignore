@@ -8,3 +8,7 @@ app/.build/
 Zemzeme.app/
 tools/stress-*.log
 tools/stress-run.out
+polish.log
+app/py/.venv/
+app/py/__pycache__/
+app/py/models/

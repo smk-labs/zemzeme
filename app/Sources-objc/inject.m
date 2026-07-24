@@ -55,28 +55,30 @@
     });
 }
 
-// پیست تکه‌ای: کپی با نشونه transient (تاریخچه‌گیرها رد می‌کنند)، Cmd+V،
-// و برگرداندن کلیپ‌بورد قبلی کاربر. تاخیر برای همگام شدن کلیپ‌بورد RDP.
+// پیست تکه‌ای: کپی با نشونه transient (تاریخچه‌گیرها رد می‌کنند) و Cmd+V.
+// همه چیز روی یک صف سریال تا دو پیست پشت هم مسابقه کلیپ‌بورد نگیرند
+// (باگ واقعی: برگرداندن کلیپ‌بورد قبلی وسط پیست بعدی می‌نشست و متن قدیمی پیست می‌شد؛
+// برای همین «برگرداندن» حذف شد. کپی پایانی Esc به هر حال کلیپ‌بورد را پر می‌کند.)
 - (void)paste:(NSString *)text delayMicros:(useconds_t)d {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        NSPasteboard *pb = NSPasteboard.generalPasteboard;
-        NSString *saved = [pb stringForType:NSPasteboardTypeString];
-        NSPasteboardType transient = @"org.nspasteboard.TransientType";
-        [pb declareTypes:@[NSPasteboardTypeString, transient] owner:nil];
-        [pb setString:text forType:NSPasteboardTypeString];
-        [pb setString:@"" forType:transient];
-        dispatch_async(self->_q, ^{
-            usleep(d);
-            [ZInjector sendCmdV];
-            usleep(500000);
-            dispatch_async(dispatch_get_main_queue(), ^{
-                // فقط متن ساده قبلی برمی‌گردد؛ بیمه پایانی جدا با copyFinal می‌آید
-                if (saved) {
-                    NSPasteboard *pb2 = NSPasteboard.generalPasteboard;
-                    [pb2 declareTypes:@[NSPasteboardTypeString] owner:nil];
-                    [pb2 setString:saved forType:NSPasteboardTypeString];
-                }
-            });
+    dispatch_async(_q, ^{
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            NSPasteboard *pb = NSPasteboard.generalPasteboard;
+            NSPasteboardType transient = @"org.nspasteboard.TransientType";
+            [pb declareTypes:@[NSPasteboardTypeString, transient] owner:nil];
+            [pb setString:text forType:NSPasteboardTypeString];
+            [pb setString:@"" forType:transient];
+        });
+        usleep(d);    // مهلت سینک کلیپ‌بورد ریموت دسکتاپ
+        [ZInjector sendCmdV];
+        usleep(150000);
+    });
+}
+
+// کپی پایانی پشت صف درج: هر پیست/تایپ معلق اول تمام می‌شود، بعد کلیپ‌بورد پر می‌شود
+- (void)copyFinalAfterPending:(NSString *)text {
+    dispatch_async(_q, ^{
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            [ZInjector copyFinal:text];
         });
     });
 }
@@ -105,19 +107,20 @@
 
 @end
 
-// ---------- ZEscTap ----------
-// فقط در طول سشن فعال است؛ Esc خالی را می‌بلعد و سشن را می‌بندد.
+// ---------- ZSessionKeys ----------
+// فقط در طول سشن فعال است. Esc خالی سشن را می‌بندد؛ شورتکات‌های ⌥ هم اینجا:
+// ⌥Space مکث/ادامه، ⌥C کپی تا اینجا، ⌥V درج همینجا. بیرون از سشن هیچ‌کدام گرفته نمی‌شود.
 
-@interface ZEscTap ()
+@interface ZSessionKeys ()
 - (CGEventRef)handleType:(CGEventType)type event:(CGEventRef)event;
 @end
 
-static CGEventRef zEscCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void *info) {
-    ZEscTap *me = (__bridge ZEscTap *)info;
+static CGEventRef zKeysCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void *info) {
+    ZSessionKeys *me = (__bridge ZSessionKeys *)info;
     return [me handleType:type event:event];
 }
 
-@implementation ZEscTap {
+@implementation ZSessionKeys {
     CFMachPortRef _tap;
     CFRunLoopSourceRef _source;
 }
@@ -126,9 +129,9 @@ static CGEventRef zEscCallback(CGEventTapProxy proxy, CGEventType type, CGEventR
     if (_tap) return;
     CGEventMask mask = CGEventMaskBit(kCGEventKeyDown);
     _tap = CGEventTapCreate(kCGSessionEventTap, kCGHeadInsertEventTap, kCGEventTapOptionDefault,
-                            mask, zEscCallback, (__bridge void *)self);
+                            mask, zKeysCallback, (__bridge void *)self);
     if (!_tap) {
-        ZLog(@"esc tap: create failed (accessibility?)");
+        ZLog(@"session keys tap: create failed (accessibility?)");
         return;
     }
     _source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, _tap, 0);
@@ -155,12 +158,21 @@ static CGEventRef zEscCallback(CGEventTapProxy proxy, CGEventType type, CGEventR
         if (_tap) CGEventTapEnable(_tap, true);
         return event;
     }
-    if (type == kCGEventKeyDown
-        && CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode) == 53
-        && !(CGEventGetFlags(event) & (kCGEventFlagMaskCommand | kCGEventFlagMaskAlternate
-                                       | kCGEventFlagMaskControl | kCGEventFlagMaskShift))) {
-        void (^cb)(void) = self.onEsc;
-        if (cb) dispatch_async(dispatch_get_main_queue(), cb);
+    if (type != kCGEventKeyDown) return event;
+    int64_t code = CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode);
+    CGEventFlags flags = CGEventGetFlags(event)
+        & (kCGEventFlagMaskCommand | kCGEventFlagMaskAlternate
+           | kCGEventFlagMaskControl | kCGEventFlagMaskShift);
+
+    void (^cb)(void) = nil;
+    if (code == 53 && flags == 0) cb = self.onEsc;
+    else if (flags == kCGEventFlagMaskAlternate) {
+        if (code == 49) cb = self.onAltSpace;       // Space
+        else if (code == 8) cb = self.onAltC;       // C
+        else if (code == 9) cb = self.onAltV;       // V
+    }
+    if (cb) {
+        dispatch_async(dispatch_get_main_queue(), cb);
         return NULL;
     }
     return event;
