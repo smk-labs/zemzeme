@@ -81,7 +81,9 @@
   let listening = false;
   let finalText = '';
   let lastInterim = '';
-  let netErrors = 0;
+  let lastEventAt = Date.now();
+  let endsSinceResult = 0;
+  let restartTimer = null;
   const rec = new SR();
   rec.continuous = true;
   rec.interimResults = true;
@@ -134,8 +136,11 @@
   }
 
   function start() {
+    dbg('user: start');
     listening = true;
-    netErrors = 0;
+    endsSinceResult = 0;
+    lastEventAt = Date.now();
+    clearTimeout(restartTimer);
     try { rec.start(); } catch (e) {}
     document.body.classList.add('on');
     setState('دارم گوش می‌دم');
@@ -143,7 +148,9 @@
   }
 
   function stop() {
+    dbg('user: stop');
     listening = false;
+    clearTimeout(restartTimer);
     rec.stop();
     document.body.classList.remove('on');
     setState('متوقف؛ ویرایش آزاده');
@@ -177,10 +184,11 @@
     }, 100);
   }
 
-  ['start', 'audiostart', 'speechstart'].forEach(n => rec['on' + n] = () => dbg(n));
+  ['start', 'audiostart', 'speechstart'].forEach(n => rec['on' + n] = () => { lastEventAt = Date.now(); dbg(n); });
 
   rec.onresult = e => {
-    netErrors = 0;
+    lastEventAt = Date.now();
+    endsSinceResult = 0;
     let interim = '';
     for (let i = e.resultIndex; i < e.results.length; i++) {
       const r = e.results[i];
@@ -191,22 +199,52 @@
     render();
   };
 
+  // ری‌استارت با تاخیر فزاینده: جلوی طوفان ری‌استارت (ده‌ها بار در ثانیه) رو می‌گیره
+  // و اگه start خطا بده، به جای مرگ ساکت، دوباره تلاش می‌کنه
+  function scheduleRestart(reason) {
+    if (!listening) return;
+    if (endsSinceResult >= 8) {
+      listening = false;
+      document.body.classList.remove('on');
+      setState('شبکه ناپایداره؛ Space برای تلاش دوباره');
+      $('btnToggle').innerHTML = 'ادامه <kbd>Space</kbd>';
+      dbg('gave up after ' + endsSinceResult + ' ends without result');
+      return;
+    }
+    if (endsSinceResult >= 3) setState('اتصال ناپایدار، دوباره وصل می‌شم...');
+    clearTimeout(restartTimer);
+    const delay = Math.min(300 * Math.pow(2, Math.max(0, endsSinceResult - 1)), 5000);
+    restartTimer = setTimeout(() => {
+      if (!listening) return;
+      try { rec.start(); }
+      catch (err) { dbg('start threw: ' + err.name); endsSinceResult++; scheduleRestart('retry-after-throw'); }
+    }, delay);
+  }
+
   // سشن بسته شد: اول نجات خاکستری‌ها، بعد اگه کاربر هنوز می‌خواد، دوباره وصل شو
   rec.onend = () => {
     dbg('end');
+    lastEventAt = Date.now();
+    endsSinceResult++;
     salvage();
-    if (listening && netErrors < 3) try { rec.start(); } catch (e) {}
+    scheduleRestart('end');
   };
 
   rec.onerror = e => {
     dbg('error: ' + e.error + (e.message ? ' / ' + e.message : ''));
+    lastEventAt = Date.now();
     if (e.error === 'not-allowed') { listening = false; document.body.classList.remove('on'); setState('اجازه میکروفن رد شد'); }
-    if (e.error === 'network') {
-      netErrors++;
-      if (netErrors >= 3) { listening = false; document.body.classList.remove('on'); setState('خطای شبکه، سه بار پشت هم (Space: تلاش دوباره)'); }
-      else setState('خطای شبکه، تلاش دوباره...');
-    }
   };
+
+  // واچ‌داگ: اگه در حالت شنیدن هیچ رویدادی نیومد، سشن رو بکش تا onend راهش بندازه
+  setInterval(() => {
+    if (!listening) return;
+    if (Date.now() - lastEventAt > 12000) {
+      dbg('watchdog: silent 12s, abort');
+      lastEventAt = Date.now();
+      try { rec.abort(); } catch (e) {}
+    }
+  }, 4000);
 
   $('final').addEventListener('input', syncFromDom);
   $('out').addEventListener('click', e => { if (e.target === $('out')) $('final').focus(); });
