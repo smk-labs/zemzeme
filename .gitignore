@@ -1,4 +1,10 @@
 log.txt
+app.log
 sessions/
 nohup.out
 .DS_Store
+__pycache__/
+app/.build/
+Zemzeme.app/
+tools/stress-*.log
+tools/stress-run.out
