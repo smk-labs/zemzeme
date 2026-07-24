@@ -1,5 +1,8 @@
 log.txt
 app.log
+polish.log
+app/py/.venv/
+app/py/models/
 sessions/
 nohup.out
 .DS_Store

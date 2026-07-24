@@ -110,12 +110,49 @@
   // متن ویرایش‌شده توسط کاربر منبع حقیقته
   function syncFromDom() { finalText = $('final').textContent; }
 
+  // پاس ویرایش (polish.py روی ۱۷۶۳۶): فقط وقتی صفحه مستقل است؛ در حالت relay اپ خودش پاس می‌زند.
+  // ترتیب تکه‌ها با صف حفظ می‌شود؛ دیر شد (۳۰۰ms) همان خام می‌نشیند و جواب دیر دور ریخته می‌شود.
+  const POLISH = 'http://127.0.0.1:17636';
+  const polishQ = [];
+  let polishReady = false;
+  if (!RELAY) fetch(POLISH + '/alive').then(r => r.json()).then(j => { polishReady = !!j.ready; }).catch(() => {});
+
+  async function polishChunk(chunk) {
+    if (RELAY || !polishReady || lang !== 'fa-IR' || !/[؀-ۿ]/.test(chunk)) return chunk;
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 300);
+    try {
+      const r = await fetch(POLISH + '/polish', { method: 'POST', signal: ctl.signal,
+                                                  body: JSON.stringify({ text: chunk, lang }) });
+      const j = await r.json();
+      return (j && typeof j.text === 'string' && j.text) ? j.text : chunk;
+    } catch (e) { return chunk; }
+    finally { clearTimeout(timer); }
+  }
+
+  function flushPolishQ() {
+    while (polishQ.length && polishQ[0].done) {
+      const s = polishQ.shift();
+      syncFromDom();
+      if (finalText && !/\s$/.test(finalText)) finalText += ' ';
+      finalText += (s.out || s.raw) + ' ';
+      render();
+    }
+  }
+
+  // بستن/کپی منتظر پاس نمی‌ماند: مانده‌ها همین حالا خام می‌نشینند
+  function flushPolishNow() {
+    for (const s of polishQ) if (!s.done) { s.done = true; s.out = s.raw; }
+    flushPolishQ();
+  }
+
   function appendFinal(chunk) {
-    syncFromDom();
-    if (finalText && !/\s$/.test(finalText)) finalText += ' ';
-    finalText += chunk + ' ';
-    autosave(chunk);
+    autosave(chunk);                 // خام روی دیسک، مثل همیشه
     live('final', { text: chunk });
+    const slot = { raw: chunk, out: null, done: false };
+    polishQ.push(slot);
+    polishChunk(chunk).then(t => { slot.out = t; }).catch(() => {})
+      .finally(() => { slot.done = true; flushPolishQ(); });
   }
 
   // باگ‌فیکس اصلی: وقتی سشن تشخیص بسته می‌شه (خطای گذرا، مکث، ری‌استارت)،
@@ -161,6 +198,7 @@
   }
 
   async function copyAll(flash) {
+    flushPolishNow();
     syncFromDom();
     const t = (finalText + ' ' + lastInterim).replace(/\s+/g, ' ').trim();
     if (!t) return;
@@ -174,6 +212,7 @@
   }
 
   function clearAll() {
+    polishQ.length = 0;    // جواب‌های دیرِ پاس هم با صف می‌میرند
     finalText = ''; lastInterim = '';
     render();
   }

@@ -452,6 +452,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     // خط لوله پاس ویرایش: ترتیب تکه‌ها حفظ می‌شود، یکی‌یکی
     NSMutableArray<NSString *> *_polishPending;
     BOOL _polishBusy;
+    NSString *_polishInFlight;   // خامِ تکه در پرواز؛ موقع بستن برمی‌گردد سر صف
     BOOL _dropNextPolish;    // موقع بستن، تکه در پرواز خام درج شده؛ جواب دیرش دور ریخته شود
 }
 
@@ -525,11 +526,13 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
         return;
     }
     _polishBusy = YES;
+    _polishInFlight = raw;
     __weak typeof(self) ws = self;
     [ZPolish.shared polish:raw completion:^(NSString *polished) {
         __strong typeof(ws) s = ws;
         if (!s) return;
         s->_polishBusy = NO;
+        s->_polishInFlight = nil;
         if (s->_dropNextPolish) {
             s->_dropNextPolish = NO;    // بسته شدیم و خامش درج شده؛ این جواب دور ریخته می‌شود
         } else {
@@ -662,7 +665,13 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
 - (void)finish {
     if (_finished) return;
     _finished = YES;
-    if (_polishBusy) _dropNextPolish = YES;    // تکه در پرواز پایین‌تر خام درج می‌شود
+    if (_polishBusy) {
+        // تکه در پرواز: خامش برمی‌گردد سر صف که همین حالا درج شود؛ جواب دیرِ پاس دور ریخته می‌شود
+        _dropNextPolish = YES;
+        if (_polishInFlight) [_polishPending insertObject:_polishInFlight atIndex:0];
+        _polishInFlight = nil;
+        _polishBusy = NO;
+    }
     [self.engine stop];    // موتور قبل از بستن salvage می‌کند و finalها همین‌جا می‌رسند
     // هرچه در خط لوله پاس مانده، بدون معطلی خام پذیرفته می‌شود
     [self drainPolish];
