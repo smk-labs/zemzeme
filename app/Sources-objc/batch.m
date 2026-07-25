@@ -154,12 +154,15 @@ static NSString *ZBatchStitch(NSString *a, NSString *b) {
 @property (nonatomic, copy) NSString *lang;
 @property (nonatomic) double speed;      // ضریب سرعت تغذیه؛ ۰ یعنی بی‌مکث
 @property (nonatomic) NSInteger jobs;
+@property (nonatomic) BOOL rawUp;        // آپلود خام l16 به جای FLAC (فقط عیب‌یابی)
+@property (atomic, readonly) unsigned long long bytesUp;   // بایت واقعی روی سیم
 @end
 
 @implementation ZBatchTranscriber {
     NSInteger _nextIndex;
     NSInteger _retries;
     NSLock *_stateLock;
+    unsigned long long _bytesUp;
     NSInteger _deafStreak;      // پاره‌های پشت‌سرهمی که سشنشان لال برگشت
     NSDate *_lastCooldownLog;
 }
@@ -193,6 +196,13 @@ static NSString *ZBatchStitch(NSString *a, NSString *b) {
 }
 
 // آیا این پاره واقعا حرف دارد؟ پاره‌ی سکوت حق دارد بی‌متن برگردد و نباید تکرار شود.
+- (unsigned long long)bytesUp {
+    [_stateLock lock];
+    unsigned long long v = _bytesUp;
+    [_stateLock unlock];
+    return v;
+}
+
 - (BOOL)pieceHasVoice:(ZBatchPiece *)p {
     if (p.pcm.length < 2) return NO;
     return ZFrameRMS(p.pcm.bytes, MIN(p.pcm.length / 2, (NSUInteger)320000)) > kZBatchSilenceRMS;
@@ -204,6 +214,7 @@ static NSString *ZBatchStitch(NSString *a, NSString *b) {
     NSString *best = @"";
     double sec = p.pcm.length / kZPcmBytesPerSec;
     BOOL voiced = [self pieceHasVoice:p];
+    NSUInteger prevWords = NSNotFound;
     for (int attempt = 0; attempt < 3; attempt++) {
         if (attempt) usleep((useconds_t)(4.0 * attempt * 1e6));
         [self coolDownIfDeaf];
@@ -212,8 +223,14 @@ static NSString *ZBatchStitch(NSString *a, NSString *b) {
         NSUInteger words = best.length ? [best componentsSeparatedByString:@" "].count : 0;
         // گفتار عادی ~۲٫۵ کلمه در ثانیه است؛ زیر ۰٫۴ یعنی سشن لال بوده، نه کم‌حرف
         BOOL thin = words < (NSUInteger)(0.4 * sec);
-        [self noteDeaf:thin && voiced];
+        [self noteDeaf:thin && voiced && words == 0];
         if (!thin || !voiced) return best;
+        // همان تعداد کلمه در تلاش دوباره یعنی صدا واقعا همین‌قدر حرف دارد (پچ‌پچ،
+        // نویز، صدای دور)، نه این‌که سشن لال باشد: بازپخش فایل قطعی است، پس نتیجه‌ی
+        // تکراری خودش جواب است. بی این شرط، یک پاره‌ی کم‌حرف سه بار فرستاده می‌شد و
+        // عقب‌کشیدنِ الکی هم راه می‌انداخت (روی وویس ۶ دقیقه‌ای: ۳۰ ثانیه از ۸۱).
+        if (words > 0 && words == prevWords) return best;
+        prevWords = words;
         _retries++;
         ZLog(@"batch: piece %ld thin (%lu words in %.0fs), attempt %d",
              (long)p.index, (unsigned long)words, sec, attempt + 2);
@@ -225,7 +242,11 @@ static NSString *ZBatchStitch(NSString *a, NSString *b) {
 // ZMergeInterim به دم متن می‌چسبد، وگرنه آخر هر پاره چند کلمه می‌افتاد.
 - (NSString *)attemptPiece:(ZBatchPiece *)p {
     ZGoogleStream *s = [[ZGoogleStream alloc] initWithLang:self.lang];
-    s.rawUpload = YES;
+    // FLAC پیش‌فرض است، مثل مسیر زنده: روی وویس ۶ دقیقه‌ای واقعی حجم آپلود از ۱۳ به
+    // ۷ مگابایت رسید و متن ۹۹٫۴٪ همان بود (۷۷۹ کلمه در برابر ۷۸۱، یعنی در حد نوسان
+    // خود تشخیص). ته‌مانده‌ی ~۲۵۰ میلی‌ثانیه‌ای انکودر سر پایان آپلود را هم هم‌پوشانی
+    // ۲٫۵ ثانیه‌ای پاره‌ی بعدی می‌پوشاند. --raw فقط برای عیب‌یابی است.
+    s.rawUpload = self.rawUp;
     NSMutableArray<NSString *> *finals = [NSMutableArray array];
     __block NSString *interim = @"";
     __block NSString *bestInterim = @"";
@@ -305,6 +326,9 @@ static NSString *ZBatchStitch(NSString *a, NSString *b) {
     if (hanging.length) text = ZMergeInterim(text, hanging);
     text = [text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
 
+    [_stateLock lock];
+    _bytesUp += s.bytesFed;
+    [_stateLock unlock];
     if (!text.length) ZLog(@"batch: piece %ld silent session (%@)", (long)p.index, closeReason ?: @"?");
     return text;
 }
@@ -485,11 +509,12 @@ static NSString *ZBatchSRT(NSArray<ZBatchPiece *> *pieces) {
 
 static void ZBatchUsage(void) {
     fprintf(stderr,
-        "zemzeme --transcribe <files...> [--lang fa-IR] [--jobs N] [--out DIR] [--srt] [--speed X]\n"
+        "zemzeme --transcribe <files...> [--lang fa-IR] [--jobs N] [--out DIR] [--srt] [--raw] [--speed X]\n"
         "\n"
         "  --lang   fa-IR (پیش‌فرض) یا en-US\n"
         "  --jobs   چند سشن هم‌زمان؛ پیش‌فرض ۲\n"
         "  --out    پوشه خروجی؛ پیش‌فرض کنار خود فایل\n"
+        "  --raw    آپلود خام l16 به جای FLAC؛ فقط برای عیب‌یابی (حجم دو برابر)\n"
         "  --srt    زیرنویس هم بساز. توجه: نقطه‌ی گوگل زمان برنمی‌گرداند، پس زمان‌های\n"
         "           SRT تقریبی‌اند (از روی بایت‌های صدا حساب می‌شوند)\n"
         "  --speed  ضریب سرعت تغذیه؛ ۰ یعنی بی‌مکث (پیش‌فرض) و اندازه‌گیری‌شده بی‌خطر\n"
@@ -504,6 +529,7 @@ int ZBatchMain(NSArray<NSString *> *args) {
                              // است همان لحظه در جریان باشد. اندازه‌گیری تا ۸ را سالم
                              // دید، ولی پیش‌فرض جا برای مسیر زنده باز می‌گذارد.
     BOOL srt = NO;
+    BOOL rawUp = NO;
     double speed = 0;
     NSMutableArray<NSString *> *files = [NSMutableArray array];
 
@@ -515,6 +541,7 @@ int ZBatchMain(NSArray<NSString *> *args) {
         else if ([a isEqualToString:@"--jobs"] && i + 1 < args.count) jobs = args[++i].integerValue;
         else if ([a isEqualToString:@"--speed"] && i + 1 < args.count) speed = args[++i].doubleValue;
         else if ([a isEqualToString:@"--srt"]) srt = YES;
+        else if ([a isEqualToString:@"--raw"]) rawUp = YES;
         else if ([a hasPrefix:@"--"]) {
             fprintf(stderr, "گزینه ناشناس: %s\n\n", a.UTF8String);
             ZBatchUsage();
@@ -552,6 +579,7 @@ int ZBatchMain(NSArray<NSString *> *args) {
         tr.lang = lang;
         tr.jobs = jobs;
         tr.speed = speed;
+        tr.rawUp = rawUp;
         NSArray<ZBatchPiece *> *pieces = [tr transcribe:dec
             progress:^(double doneSec, NSInteger count) {
                 double el = [NSDate.date timeIntervalSinceDate:t0];
@@ -597,11 +625,14 @@ int ZBatchMain(NSArray<NSString *> *args) {
             }
         }
         double el = [NSDate.date timeIntervalSinceDate:t0];
-        fprintf(stderr, "%s: تمام. %.0f ثانیه برای %.0f ثانیه صدا (%.1f برابر سرعت واقعی)\n",
-                url.lastPathComponent.UTF8String, el, total, el > 0 ? total / el : 0);
+        fprintf(stderr, "%s: تمام. %.0f ثانیه برای %.0f ثانیه صدا (%.1f برابر سرعت واقعی)، "
+                        "%.0f مگابایت آپلود %s\n",
+                url.lastPathComponent.UTF8String, el, total, el > 0 ? total / el : 0,
+                tr.bytesUp / 1048576.0, rawUp ? "(خام)" : "(flac)");
         ZLog(@"batch: done %@ pieces=%ld chars=%lu wall=%.0fs ratio=%.1fx",
              url.lastPathComponent, (long)pieces.count, (unsigned long)text.length, el,
              el > 0 ? total / el : 0);
+        ZLog(@"batch: uploaded %.1f MB (%@)", tr.bytesUp / 1048576.0, rawUp ? @"raw l16" : @"flac");
     }
     if (failed) fprintf(stderr, "%d فایل ناتمام ماند\n", failed);
     return failed ? 1 : 0;
