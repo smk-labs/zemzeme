@@ -1,0 +1,9 @@
+{
+  "name": "transcribe",
+  "description": "Turn voice notes, meeting recordings and any audio or video file into text, using the local Zemzeme batch backend. No API key, no ffmpeg, no upload to a third party service.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Seyed M. Keramati",
+    "url": "https://github.com/SMKeramati"
+  }
+}
