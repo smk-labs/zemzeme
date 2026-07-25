@@ -136,6 +136,12 @@ NSFont *ZFont(CGFloat size, BOOL medium) {
 }
 - (void)setPolishEnabled:(BOOL)v { [self.d setBool:v forKey:@"polish"]; }
 
+- (BOOL)upstreamFLAC {
+    NSObject *o = [self.d objectForKey:@"upstreamFLAC"];
+    return o ? [self.d boolForKey:@"upstreamFLAC"] : YES;    // پیش‌فرض روشن
+}
+- (void)setUpstreamFLAC:(BOOL)v { [self.d setBool:v forKey:@"upstreamFLAC"]; }
+
 - (ZInsertMode)insertModeForBundleId:(NSString *)bundleId {
     // استثنای هر اپ؛ Windows App پیش‌فرض پیست می‌گیرد چون فوروارد یونیکد مصنوعی در RDP نامطمئن است
     NSDictionary *def = @{@"com.microsoft.rdc.macos": @(ZInsertPaste)};

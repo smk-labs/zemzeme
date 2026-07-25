@@ -16,14 +16,18 @@ static NSString *const kBase = @"https://www.google.com/speech-api/full-duplex/v
     NSURLSessionDataTask *_downTask;
 
     NSLock *_lock;
-    NSMutableData *_pending;     // صدای در انتظار ارسال
+    NSMutableData *_pending;     // صدای خام (پی‌سی‌ام) در انتظار ارسال؛ سقفش kZBacklogCapBytes
     BOOL _uploadDone;
     BOOL _cancelled;
     BOOL _closedOnce;
+    BOOL _backlogWarned;
+    unsigned long long _bytesFed;    // بایت واقعی نوشته‌شده روی سیم (بعد از فشرده‌سازی)
 
     NSOutputStream *_output;
     NSThread *_writerThread;
     BOOL _stopWriter;
+    ZFlacEncoder *_flac;         // نال یعنی آپلود خام l16
+    NSMutableData *_encOut;      // خروجی انکود‌شده که هنوز کامل نوشته نشده (نیم‌نوشت جزئی)
 
     NSMutableData *_buf;         // بافر فریم‌های down (فقط روی صف دلیگیت)
     NSInteger _downHTTP;
@@ -49,16 +53,35 @@ static NSString *const kBase = @"https://www.google.com/speech-api/full-duplex/v
     NSString *down = [NSString stringWithFormat:@"%@/down?key=%@&pair=%@&output=pb", kBase, kKey, _pair];
 
     NSURLSessionConfiguration *cfg = NSURLSessionConfiguration.defaultSessionConfiguration;
-    cfg.timeoutIntervalForRequest = 25;    // سکوت طولانی‌تر را واچ‌داگ موتور زودتر می‌کشد
+    // واچ‌داگ موتور (۱۲ ثانیه سکوت رویداد) + لغو فوری روی خطای نوشتن (failWriter) مالک
+    // واقعی تشخیص قطعی‌اند؛ این تایم‌اوت را سخاوتمندانه باز می‌گذاریم که آپلود روی
+    // شبکه ضعیف فرصت جبران داشته باشد و زودتر از واچ‌داگ نمیرد.
+    cfg.timeoutIntervalForRequest = 3600;
     cfg.timeoutIntervalForResource = 600;
     _session = [NSURLSession sessionWithConfiguration:cfg delegate:self delegateQueue:nil];
 
     _downTask = [_session dataTaskWithRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:down]]];
     [_downTask resume];
 
+    NSString *contentType = @"audio/l16; rate=16000";
+    if (ZSettings.shared.upstreamFLAC) {
+        ZFlacEncoder *enc = [ZFlacEncoder new];
+        if (enc) {
+            _flac = enc;
+            contentType = @"audio/x-flac; rate=16000";
+            // هشدار: streamHeader بایت‌های آماده‌ی کانتینر FLAC است، نه پی‌سی‌ام؛ نباید
+            // از _pending (که drain آن را به انکودر می‌دهد) رد شود. مستقیم می‌رود در
+            // _encOut که drain عینا (بدون انکود) روی سیم می‌نویسدش، همین اول از همه.
+            // نخ writer هنوز شروع نشده (بعد از برگشت connect با needNewBodyStream
+            // می‌آید)، پس این انتساب رقابتی با drain ندارد.
+            _encOut = [enc.streamHeader mutableCopy];
+        }
+    }
+    _codecName = _flac ? @"flac" : @"l16";
+
     NSMutableURLRequest *ureq = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:up]];
     ureq.HTTPMethod = @"POST";
-    [ureq setValue:@"audio/l16; rate=16000" forHTTPHeaderField:@"Content-Type"];
+    [ureq setValue:contentType forHTTPHeaderField:@"Content-Type"];
     _upTask = [_session uploadTaskWithStreamedRequest:ureq];
     [_upTask resume];
 }
@@ -70,8 +93,32 @@ static NSString *const kBase = @"https://www.google.com/speech-api/full-duplex/v
         return;
     }
     [_pending appendData:pcm];
+    // شبکه خیلی عقب افتاده: به‌جای رشد بی‌نهایت (که تاخیر تشخیص را همیشه بیشتر
+    // می‌کند)، قدیمی‌ترین صدا را دور بریز؛ خیلی بهتر از cancel که همه را می‌بَرد.
+    if (_pending.length > kZBacklogCapBytes) {
+        NSUInteger drop = _pending.length - kZBacklogCapBytes;
+        [_pending replaceBytesInRange:NSMakeRange(0, drop) withBytes:NULL length:0];
+        if (!_backlogWarned) {
+            _backlogWarned = YES;
+            ZLog(@"stream %@ backlog over %ds, dropping oldest audio", _pair, kZBacklogSec);
+        }
+    }
     [_lock unlock];
     [self nudgeWriter];
+}
+
+- (NSData *)unsentPending {
+    [_lock lock];
+    NSData *d = _pending.length ? [_pending copy] : nil;
+    [_lock unlock];
+    return d;
+}
+
+- (unsigned long long)bytesFed {
+    [_lock lock];
+    unsigned long long v = _bytesFed;
+    [_lock unlock];
+    return v;
 }
 
 - (void)finishUpload {
@@ -104,29 +151,43 @@ static NSString *const kBase = @"https://www.google.com/speech-api/full-duplex/v
     [self drain];
 }
 
-// فقط روی نخ writer
+// فقط روی نخ writer. کوچک نگه‌داشتن chunk پی‌سی‌ام (۱۶ کیلوبایت) یعنی فریم‌های FLAC
+// هم به همان تناوب ~۱۰۰-۲۵۰ میلی‌ثانیه‌ی مبدا آماده و نوشته می‌شوند، نه یک‌جا انباشته.
 - (void)drain {
     NSOutputStream *o = _output;
     if (!o) return;
     while (o.hasSpaceAvailable) {
+        if (_encOut.length) {
+            NSInteger written = [o write:_encOut.bytes maxLength:_encOut.length];
+            if (written < 0) { [self failWriter]; return; }
+            [_encOut replaceBytesInRange:NSMakeRange(0, (NSUInteger)written) withBytes:NULL length:0];
+            [_lock lock];
+            _bytesFed += (unsigned long long)written;
+            [_lock unlock];
+            if (_encOut.length) return;    // ظرفیت سیم پر شد؛ منتظر hasSpaceAvailable بعدی بمان
+            continue;
+        }
         [_lock lock];
         if (_pending.length == 0) {
             BOOL done = _uploadDone;
             [_lock unlock];
+            // نکته: اگر FLAC فعال است، ممکن است کمتر از یک بلاک پی‌سی‌ام (~۲۵۰ms) ته‌مانده‌ی
+            // انکودر بدون فریم‌شدن از دست برود. این پایان نرم فقط سر چرخش سشن (~۴٫۵ دقیقه)
+            // پیش می‌آید، نه سر قطعی شبکه، پس ریسکش برای این مرحله پذیرفتنی‌ست.
             if (done) [self closeOutput];
             return;
         }
         NSUInteger n = MIN(_pending.length, (NSUInteger)16384);
-        NSData *chunk = [_pending subdataWithRange:NSMakeRange(0, n)];
+        NSData *pcmChunk = [_pending subdataWithRange:NSMakeRange(0, n)];
+        [_pending replaceBytesInRange:NSMakeRange(0, n) withBytes:NULL length:0];
+        BOOL pendingEmptyNow = _pending.length == 0;
         [_lock unlock];
-        NSInteger written = [o write:chunk.bytes maxLength:chunk.length];
-        if (written < 0) {
-            [self closeOutput];
-            return;
+        NSData *wire = _flac ? [_flac encode:pcmChunk] : pcmChunk;
+        if (wire.length) {
+            _encOut = [wire mutableCopy];
+        } else if (pendingEmptyNow) {
+            return;    // انکودر هنوز یک فریم کامل نداده و پی‌سی‌امِ در صف هم تمام شده
         }
-        [_lock lock];
-        [_pending replaceBytesInRange:NSMakeRange(0, (NSUInteger)written) withBytes:NULL length:0];
-        [_lock unlock];
     }
 }
 
@@ -138,6 +199,14 @@ static NSString *const kBase = @"https://www.google.com/speech-api/full-duplex/v
     o.delegate = nil;
     _output = nil;
     _stopWriter = YES;
+}
+
+// نوشتن روی بدنه آپلود شکست خورد: به‌جای نشستن پای واچ‌داگ ۱۲ ثانیه‌ای موتور، همین
+// الان هر دو تسک را لغو کن که reportClose فورا برسد و سوپروایزر بی‌درنگ ری‌کانکت کند.
+- (void)failWriter {
+    [self closeOutput];
+    [_upTask cancel];
+    [_downTask cancel];
 }
 
 - (void)writerMain:(NSOutputStream *)o {
@@ -153,7 +222,9 @@ static NSString *const kBase = @"https://www.google.com/speech-api/full-duplex/v
     if (aStream != _output) return;
     if (eventCode == NSStreamEventHasSpaceAvailable) {
         [self drain];
-    } else if (eventCode == NSStreamEventErrorOccurred || eventCode == NSStreamEventEndEncountered) {
+    } else if (eventCode == NSStreamEventErrorOccurred) {
+        [self failWriter];    // خطای واقعی: بلافاصله لغو کن، منتظر واچ‌داگ نمان
+    } else if (eventCode == NSStreamEventEndEncountered) {
         [self closeOutput];
     }
 }

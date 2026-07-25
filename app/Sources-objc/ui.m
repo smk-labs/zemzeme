@@ -25,16 +25,30 @@ static const CGFloat kPW = 500;
 static const CGFloat kBarH = 46;      // ارتفاع ردیف پایه (دکمه‌ها + نقطه)
 static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جمع
 
+// پس‌زمینهٔ پنل: NSVisualEffectView به‌خودی‌خود opaque حساب می‌شود و
+// mouseDownCanMoveWindow پیش‌فرض NO برمی‌گرداند، پس movableByWindowBackground پنل
+// روی هیچ پیکسلی اثر نداشت. اینجا صریحا اجازهٔ کشیدن از پس‌زمینه داده می‌شود؛
+// دکمه‌ها/برچسب/ادیتور چون خودشان mouseDown را می‌گیرند دست‌نخورده می‌مانند.
+@interface ZDragEffectView : NSVisualEffectView
+@end
+
+@implementation ZDragEffectView
+- (BOOL)mouseDownCanMoveWindow { return YES; }
+- (void)mouseDown:(NSEvent *)event { [self.window performWindowDragWithEvent:event]; }
+@end
+
 @implementation ZPanel {
     NSPanel *_panel;
-    NSVisualEffectView *_effect;
+    ZDragEffectView *_effect;
     NSView *_dot;
+    NSImageView *_grip;
     NSTextField *_text;
     NSView *_chipBg;
     NSTextField *_chipLabel;
     NSButton *_btnClose, *_btnPause, *_btnCopy, *_btnInsert;
     NSScrollView *_editorScroll;
     NSTextView *_editor;
+    NSTimer *_saveOriginTimer;
     BOOL _pulsing;
     BOOL _collectVisible;
 }
@@ -54,10 +68,11 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
         _panel.backgroundColor = NSColor.clearColor;
         _panel.hasShadow = YES;
         _panel.movableByWindowBackground = YES;
+        _panel.alphaValue = 0.92;   // کمی شیشه‌ای؛ فقط ۸٪ کم‌رنگ‌تر، خوانایی متن عملا دست‌نخورده
         _panel.becomesKeyOnlyIfNeeded = YES;
         _panel.releasedWhenClosed = NO;
 
-        _effect = [[NSVisualEffectView alloc] initWithFrame:NSMakeRect(0, 0, kPW, kBarH)];
+        _effect = [[ZDragEffectView alloc] initWithFrame:NSMakeRect(0, 0, kPW, kBarH)];
         _effect.material = NSVisualEffectMaterialHUDWindow;
         _effect.state = NSVisualEffectStateActive;
         _effect.blendingMode = NSVisualEffectBlendingModeBehindWindow;
@@ -71,6 +86,17 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
         _dot.wantsLayer = YES;
         _dot.layer.cornerRadius = 4.5;
         [_effect addSubview:_dot];
+
+        // دستگیرهٔ کشیدن: فقط راهنمای دیداری (کل پس‌زمینه از قبل قابل کشیدن است)، کنار نقطه
+        NSImage *gripImg = [NSImage imageWithSystemSymbolName:@"line.3.horizontal"
+                                      accessibilityDescription:@"دستگیرهٔ جابه‌جایی پنل"];
+        gripImg = [gripImg imageWithSymbolConfiguration:
+                   [NSImageSymbolConfiguration configurationWithPointSize:9 weight:NSFontWeightRegular]];
+        _grip = [NSImageView imageViewWithImage:gripImg ?: [NSImage new]];
+        _grip.contentTintColor = NSColor.secondaryLabelColor;
+        _grip.toolTip = @"بکش تا جابه‌جا شود";
+        _grip.frame = NSMakeRect(kPW - 25 - 8 - 16, (kBarH - 9) / 2, 16, 9);
+        [_effect addSubview:_grip];
 
         _text = [NSTextField labelWithString:@""];
         _text.font = ZFont(15, NO);
@@ -107,6 +133,12 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
 
         [self layoutViews];
         [self applyColors];
+        // موقعیت پنل با کمی تاخیر (debounce) هر بار جابه‌جا شد ذخیره می‌شود، نه فقط موقع hide
+        __weak typeof(self) ws = self;
+        [NSNotificationCenter.defaultCenter addObserverForName:NSWindowDidMoveNotification object:_panel
+                                                          queue:nil usingBlock:^(NSNotification *n) {
+            [ws scheduleSaveOrigin];
+        }];
     }
     return self;
 }
@@ -152,7 +184,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
         _chipBg.frame = f;
         left += chipW + 8;
     }
-    CGFloat right = kPW - 25 - 12;
+    CGFloat right = _grip.frame.origin.x - 8;   // قبل از دستگیره تمام شود، نه زیر نقطه
     // در تسمه‌نقاله، فریم متن با قد پنل بالا می‌رود که تا سه خط جا شود
     CGFloat textH = (_collectVisible ? kBarH : H) - 22;
     _text.frame = NSMakeRect(left, 11, MAX(40, right - left), textH);
@@ -246,36 +278,65 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
 
 // ---------- نمایش ----------
 
+// پنجره را داخل visibleFrame همان صفحه نگه می‌دارد؛ هرگز بیرون از صفحه برنمی‌گردد
+// (مثلا اگر مانیتور دومی که پنل رویش جابه‌جا شده بود از سیستم قطع شده باشد)
+- (NSPoint)clampOrigin:(NSPoint)p toScreen:(NSScreen *)screen {
+    NSRect vf = screen.visibleFrame;
+    NSSize sz = _panel.frame.size;
+    CGFloat maxX = NSMaxX(vf) - sz.width, maxY = NSMaxY(vf) - sz.height;
+    CGFloat x = maxX < vf.origin.x ? vf.origin.x : MIN(MAX(p.x, vf.origin.x), maxX);
+    CGFloat y = maxY < vf.origin.y ? vf.origin.y : MIN(MAX(p.y, vf.origin.y), maxY);
+    return NSMakePoint(x, y);
+}
+
 - (void)show {
     [self applyColors];
+    NSScreen *screen = nil;
+    NSPoint origin = NSZeroPoint;
     NSString *saved = [NSUserDefaults.standardUserDefaults stringForKey:@"panelOrigin"];
     if (saved) {
         NSArray *parts = [saved componentsSeparatedByString:@","];
         if (parts.count == 2) {
             NSPoint p = NSMakePoint([parts[0] doubleValue], [parts[1] doubleValue]);
             for (NSScreen *sc in NSScreen.screens) {
-                if (NSPointInRect(p, sc.frame)) {
-                    [_panel setFrameOrigin:p];
-                    [_panel orderFrontRegardless];
-                    return;
-                }
+                if (NSPointInRect(p, sc.frame)) { screen = sc; origin = p; break; }
             }
         }
     }
-    NSPoint mouse = NSEvent.mouseLocation;
-    NSScreen *screen = NSScreen.mainScreen;
-    for (NSScreen *sc in NSScreen.screens) {
-        if (NSMouseInRect(mouse, sc.frame, NO)) { screen = sc; break; }
+    if (!screen) {
+        NSPoint mouse = NSEvent.mouseLocation;
+        screen = NSScreen.mainScreen;
+        for (NSScreen *sc in NSScreen.screens) {
+            if (NSMouseInRect(mouse, sc.frame, NO)) { screen = sc; break; }
+        }
+        NSRect f = screen ? screen.visibleFrame : NSMakeRect(0, 0, 1440, 900);
+        origin = NSMakePoint(NSMidX(f) - kPW / 2, NSMinY(f) + 90);
     }
-    NSRect f = screen ? screen.visibleFrame : NSMakeRect(0, 0, 1440, 900);
-    [_panel setFrameOrigin:NSMakePoint(NSMidX(f) - kPW / 2, NSMinY(f) + 90)];
+    if (screen) origin = [self clampOrigin:origin toScreen:screen];
+    [_panel setFrameOrigin:origin];
     [_panel orderFrontRegardless];
 }
 
-- (void)hide {
+- (void)scheduleSaveOrigin {
+    [_saveOriginTimer invalidate];
+    __weak typeof(self) ws = self;
+    _saveOriginTimer = [NSTimer timerWithTimeInterval:0.3 repeats:NO block:^(NSTimer *t) {
+        [ws saveOrigin];
+    }];
+    // common modes: هنگام درگ (که ران‌لوپ داخلی خودش را دارد) هم شمارش تایمر ادامه پیدا کند
+    [NSRunLoop.currentRunLoop addTimer:_saveOriginTimer forMode:NSRunLoopCommonModes];
+}
+
+- (void)saveOrigin {
     NSPoint o = _panel.frame.origin;
     [NSUserDefaults.standardUserDefaults setObject:[NSString stringWithFormat:@"%.0f,%.0f", o.x, o.y]
                                             forKey:@"panelOrigin"];
+}
+
+- (void)hide {
+    [_saveOriginTimer invalidate];
+    _saveOriginTimer = nil;
+    [self saveOrigin];
     [self stopPulse];
     [_panel orderOut:nil];
 }
@@ -448,6 +509,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     NSTimer *_pasteTimer;
     NSURL *_sessionFile;
     BOOL _finished;
+    BOOL _collectInserted;    // حالت جمع: insertHere قبلا درج کرده؛ finish دوباره درج نکند
     id _frontObserver;
     // خط لوله پاس ویرایش: ترتیب تکه‌ها حفظ می‌شود، یکی‌یکی
     NSMutableArray<NSString *> *_polishPending;
@@ -610,6 +672,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
         NSString *t = [_panel editorText];
         if (!t.length) return;
         [self injectText:[t stringByAppendingString:@" "]];
+        _collectInserted = YES;
         [self finish];
         return;
     }
@@ -676,8 +739,15 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     // هرچه در خط لوله پاس مانده، بدون معطلی خام پذیرفته می‌شود
     [self drainPolish];
     [self flushPasteBuf];
-    // باقی صف تسمه‌نقاله: اگر مقصد جلوست درج کن، وگرنه کپی نجاتش می‌دهد
-    if (!_collect && _queue.count && [self targetIsFront]) {
+    // پایان: در حالت زنده باقی صف، در حالت جمع کل متن ادیتور؛ اگر مقصد جلوست درج
+    // می‌شود، وگرنه کپیِ زیر همین تابع نجاتش می‌دهد. اگر ⌥V/دکمه درج قبلا درج کرده
+    // (insertHere -> _collectInserted) اینجا دوباره درج نمی‌شود.
+    if (_collect) {
+        NSString *t = [_panel editorText];
+        if (!_collectInserted && t.length && [self targetIsFront]) {
+            [self injectText:[t stringByAppendingString:@" "]];
+        }
+    } else if (_queue.count && [self targetIsFront]) {
         [self injectText:[[_queue componentsJoinedByString:@" "] stringByAppendingString:@" "]];
         [_queue removeAllObjects];
     }

@@ -13,6 +13,7 @@ clang -fobjc-arc -O2 -Wall -Wno-unused-function \
   Sources-objc/*.m \
   -framework AppKit -framework AVFoundation -framework Carbon \
   -framework CoreText -framework ApplicationServices -framework QuartzCore \
+  -framework AudioToolbox \
   -o .build/zemzeme
 
 APP="../Zemzeme.app"

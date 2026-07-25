@@ -33,6 +33,9 @@
     NSDate *_lastChunkAt;        // واچ‌داگ میکروفن مرده
     NSInteger _micRetries;
     BOOL _paused;
+
+    NSDate *_lastRateLogAt;              // برای لاگ دوره‌ای نرخ آپلود
+    unsigned long long _lastRateLogBytes;
 }
 
 @synthesize delegate;
@@ -159,9 +162,10 @@ static NSString *ZMergeInterim(NSString *best, NSString *cur) {
             [t feed:pcm];
         } else {
             [s->_preroll appendData:pcm];
-            NSUInteger cap = 32000 * 10;    // سقف ۱۰ ثانیه
-            if (s->_preroll.length > cap) {
-                [s->_preroll replaceBytesInRange:NSMakeRange(0, s->_preroll.length - cap)
+            // همان سقف بک‌لاگ استریم (kZBacklogCapBytes): اگر با صدای حمل‌شده از یک
+            // استریم مرده یکی نباشد، همان لحظه دوباره قیچی می‌شود.
+            if (s->_preroll.length > kZBacklogCapBytes) {
+                [s->_preroll replaceBytesInRange:NSMakeRange(0, s->_preroll.length - kZBacklogCapBytes)
                                        withBytes:NULL length:0];
             }
             [s->_feedLock unlock];
@@ -223,7 +227,10 @@ static NSString *ZMergeInterim(NSString *best, NSString *cur) {
     _preroll.length = 0;
     [_feedLock unlock];
     if (pre) [s feed:pre];
-    ZLog(@"engine: stream open pair=%@ lang=%@ preroll=%luB", s.pair, _lang, (unsigned long)(pre.length));
+    _lastRateLogAt = NSDate.date;
+    _lastRateLogBytes = 0;
+    ZLog(@"engine: stream open pair=%@ lang=%@ engine=google codec=%@ preroll=%luB",
+         s.pair, _lang, s.codecName, (unsigned long)(pre.length));
 }
 
 - (void)handleEvent:(ZSpeechEvent *)ev from:(ZGoogleStream *)s {
@@ -265,8 +272,21 @@ static NSString *ZMergeInterim(NSString *best, NSString *cur) {
         return;
     }
     if (!s || s != _stream) return;
+    // صدای رسیده ولی هنوز سیم‌نرفته‌ی استریم مرده را حمل کن؛ وگرنه دقیقا همان صدایی
+    // که این وسط گم می‌شد (بدون این carry-forward) روی این ری‌استارت هم گم می‌ماند.
+    // فقط وقتی معنا دارد که موتور دارد ادامه می‌دهد (stop از قبل _preroll را صفر می‌کند).
+    NSData *leftover = _running ? [s unsentPending] : nil;
     [_feedLock lock];
     if (_feedTarget == s) _feedTarget = nil;
+    if (leftover.length) {
+        NSMutableData *combined = [NSMutableData dataWithData:leftover];
+        [combined appendData:_preroll];
+        if (combined.length > kZBacklogCapBytes) {
+            [combined replaceBytesInRange:NSMakeRange(0, combined.length - kZBacklogCapBytes) withBytes:NULL length:0];
+        }
+        _preroll = combined;
+        ZLog(@"engine: carried %luB unsent audio into next stream", (unsigned long)leftover.length);
+    }
     BOOL hadVoice = _voiceInCycle;
     [_feedLock unlock];
     _stream = nil;
@@ -330,6 +350,16 @@ static NSString *ZMergeInterim(NSString *best, NSString *cur) {
         }
     }
     if (!_stream) return;
+    // هر ~۵ ثانیه نرخ واقعی آپلود را لاگ کن که کاهش حجم دیده شود (روی همین تایمر ۲ ثانیه‌ای).
+    NSDate *rnow = NSDate.date;
+    NSTimeInterval sinceRateLog = [rnow timeIntervalSinceDate:_lastRateLogAt];
+    if (sinceRateLog >= 5.0) {
+        unsigned long long cur = _stream.bytesFed;
+        double kbps = sinceRateLog > 0 ? ((double)(cur - _lastRateLogBytes) / 1024.0) / sinceRateLog : 0;
+        ZLog(@"engine: upstream ~%.1f KB/s (codec=%@)", kbps, _stream.codecName);
+        _lastRateLogAt = rnow;
+        _lastRateLogBytes = cur;
+    }
     NSTimeInterval quiet = [NSDate.date timeIntervalSinceDate:_lastEventAt];
     NSTimeInterval age = [NSDate.date timeIntervalSinceDate:_streamStartedAt];
     if (quiet > 12) {

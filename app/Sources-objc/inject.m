@@ -107,118 +107,52 @@
 
 @end
 
-// ---------- ZSessionKeys ----------
-// فقط در طول سشن فعال است. Esc خالی سشن را می‌بندد؛ شورتکات‌های ⌥ هم اینجا:
-// ⌥Space مکث/ادامه، ⌥C کپی تا اینجا، ⌥V درج همینجا. بیرون از سشن هیچ‌کدام گرفته نمی‌شود.
-
-@interface ZSessionKeys ()
-- (CGEventRef)handleType:(CGEventType)type event:(CGEventRef)event;
-@end
-
-static CGEventRef zKeysCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void *info) {
-    ZSessionKeys *me = (__bridge ZSessionKeys *)info;
-    return [me handleType:type event:event];
-}
-
-@implementation ZSessionKeys {
-    CFMachPortRef _tap;
-    CFRunLoopSourceRef _source;
-}
-
-- (void)enable {
-    if (_tap) return;
-    CGEventMask mask = CGEventMaskBit(kCGEventKeyDown);
-    _tap = CGEventTapCreate(kCGSessionEventTap, kCGHeadInsertEventTap, kCGEventTapOptionDefault,
-                            mask, zKeysCallback, (__bridge void *)self);
-    if (!_tap) {
-        ZLog(@"session keys tap: create failed (accessibility?)");
-        return;
-    }
-    _source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, _tap, 0);
-    CFRunLoopAddSource(CFRunLoopGetMain(), _source, kCFRunLoopCommonModes);
-    CGEventTapEnable(_tap, true);
-}
-
-- (void)disable {
-    if (_source) {
-        CFRunLoopRemoveSource(CFRunLoopGetMain(), _source, kCFRunLoopCommonModes);
-        CFRelease(_source);
-        _source = NULL;
-    }
-    if (_tap) {
-        CGEventTapEnable(_tap, false);
-        CFMachPortInvalidate(_tap);
-        CFRelease(_tap);
-        _tap = NULL;
-    }
-}
-
-- (CGEventRef)handleType:(CGEventType)type event:(CGEventRef)event {
-    if (type == kCGEventTapDisabledByTimeout || type == kCGEventTapDisabledByUserInput) {
-        if (_tap) CGEventTapEnable(_tap, true);
-        return event;
-    }
-    if (type != kCGEventKeyDown) return event;
-    int64_t code = CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode);
-    CGEventFlags flags = CGEventGetFlags(event)
-        & (kCGEventFlagMaskCommand | kCGEventFlagMaskAlternate
-           | kCGEventFlagMaskControl | kCGEventFlagMaskShift);
-
-    void (^cb)(void) = nil;
-    if (code == 53 && flags == 0) cb = self.onEsc;
-    else if (flags == kCGEventFlagMaskAlternate) {
-        if (code == 49) cb = self.onAltSpace;       // Space
-        else if (code == 8) cb = self.onAltC;       // C
-        else if (code == 9) cb = self.onAltV;       // V
-    }
-    if (cb) {
-        dispatch_async(dispatch_get_main_queue(), cb);
-        return NULL;
-    }
-    return event;
-}
-
-@end
-
-// ---------- ZRCmdTap ----------
-// تشخیص دابل‌تپ Command راست داخل خود اپ (آزمایشی؛ پیش‌فرض خاموش).
-// همان ترفند lazy کارابینر: تپ تنها هیچ‌چیز به اپ‌ها نمی‌رساند (توی RDP کلید
-// ویندوز نمی‌خورد)، ولی اگر با کلید دیگری ترکیب شد، رویداد نگه‌داشته دوباره
-// تزریق می‌شود تا ترکیب‌ها سالم بمانند. اگر اپ بمیرد، سیستم تپ را برمی‌دارد.
+// ---------- ZHotkeyTap ----------
+// یک CGEventTap واحد برای کل اپ (نه یک تپ جدا به ازای هر سشن): از launch تا quit
+// زنده می‌ماند. دابل‌تپ Command راست (شروع/پایان سشن) در هر حالتی کار می‌کند و با
+// تنظیم «هاتکی داخلی» روشن/خاموش می‌شود. بقیه (Esc، ⌥Space/C/V، تک‌تپ Command راست،
+// Command راست+C) فقط وقتی sessionActive=YES باشد؛ بیرون از سشن دست‌نخورده رد می‌شوند.
+// تشخیص تپِ راست-Command همان ترفند lazy کارابینر است: رویداد نگه‌داشته می‌شود و فقط
+// اگر با کلید دیگری ترکیب شد دوباره تزریق می‌شود، وگرنه هیچ‌وقت به اپ دیگری نمی‌رسد.
 
 static const uint64_t kRightCmdBit = 0x10;    // NX_DEVICERCMDKEYMASK
+static const CGEventFlags kZModMask = kCGEventFlagMaskCommand | kCGEventFlagMaskAlternate
+                                     | kCGEventFlagMaskControl | kCGEventFlagMaskShift;
+static const CFTimeInterval kZTapWindow = 0.35;   // پنجره دابل/تک‌تپ
 
-@interface ZRCmdTap ()
+@interface ZHotkeyTap ()
 - (CGEventRef)handleProxy:(CGEventTapProxy)proxy type:(CGEventType)type event:(CGEventRef)event;
 @end
 
-static CGEventRef zRCmdCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void *info) {
-    ZRCmdTap *me = (__bridge ZRCmdTap *)info;
+static CGEventRef zHotkeyCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void *info) {
+    ZHotkeyTap *me = (__bridge ZHotkeyTap *)info;
     return [me handleProxy:proxy type:type event:event];
 }
 
-@implementation ZRCmdTap {
+@implementation ZHotkeyTap {
     CFMachPortRef _tap;
     CFRunLoopSourceRef _source;
-    BOOL _physDown;
-    BOOL _emitted;
+    BOOL _physDown;      // Command راست همین الان فیزیکی پایین است
+    BOOL _emitted;       // این نگه‌داشتن قبلا برای یک ترکیب دوباره تزریق/مصرف شد
+    BOOL _suppressUp;    // ترکیب میان‌بر خودمان بود؛ بالاآمدن راست-Command هم بلعیده شود
     CGEventRef _savedDown;
     CFAbsoluteTime _lastTapAt;
+    NSInteger _tapGen;   // نسل تپِ تنها؛ رسیدن تپ دوم تایمر تک‌تپِ قبلی را لغو می‌کند
 }
 
 - (void)enable {
     if (_tap) return;
     CGEventMask mask = CGEventMaskBit(kCGEventFlagsChanged) | CGEventMaskBit(kCGEventKeyDown);
     _tap = CGEventTapCreate(kCGSessionEventTap, kCGHeadInsertEventTap, kCGEventTapOptionDefault,
-                            mask, zRCmdCallback, (__bridge void *)self);
+                            mask, zHotkeyCallback, (__bridge void *)self);
     if (!_tap) {
-        ZLog(@"rcmd tap: create failed (accessibility?)");
+        ZLog(@"hotkey tap: create failed (accessibility?)");
         return;
     }
     _source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, _tap, 0);
     CFRunLoopAddSource(CFRunLoopGetMain(), _source, kCFRunLoopCommonModes);
     CGEventTapEnable(_tap, true);
-    ZLog(@"rcmd tap: enabled");
+    ZLog(@"hotkey tap: enabled");
 }
 
 - (void)disable {
@@ -239,7 +173,91 @@ static CGEventRef zRCmdCallback(CGEventTapProxy proxy, CGEventType type, CGEvent
     }
     _physDown = NO;
     _emitted = NO;
-    ZLog(@"rcmd tap: disabled");
+    _suppressUp = NO;
+}
+
+// تپِ تنها راست-Command: یا نیمه‌ی دوم یک دابل‌تپ (فوری: toggle) یا اگر پنجره سپری
+// شد و کسی نیامد، تک‌تپ (مکث/ادامه، فقط در حین سشن).
+- (void)loneTapUp {
+    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+    CFAbsoluteTime last = _lastTapAt;
+    _lastTapAt = now;
+    _tapGen++;
+    if (last > 0 && now - last < kZTapWindow) {
+        _lastTapAt = 0;    // سه‌تایی پشت هم را دوتا-دوتا نخوان
+        if (ZSettings.shared.internalHotkey) {
+            void (^cb)(void) = self.onToggle;
+            if (cb) dispatch_async(dispatch_get_main_queue(), cb);
+        }
+        return;
+    }
+    NSInteger gen = _tapGen;
+    __weak typeof(self) ws = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kZTapWindow * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        __strong typeof(ws) me = ws;
+        if (!me || me->_tapGen != gen || !me.sessionActive) return;    // تپ دومی رسید یا سشنی نیست
+        void (^cb)(void) = me.onPauseToggle;
+        if (cb) cb();
+    });
+}
+
+- (CGEventRef)handleFlagsChanged:(CGEventRef)event {
+    BOOL isDown = (CGEventGetFlags(event) & kRightCmdBit) != 0;
+    if (isDown) {
+        _physDown = YES;
+        _emitted = NO;
+        if (_savedDown) CFRelease(_savedDown);
+        _savedDown = CGEventCreateCopy(event);
+        return NULL;    // فعلا از همه پنهان؛ اگر ترکیب شد دوباره تزریق می‌شود
+    }
+    BOOL wasEmitted = _emitted;
+    BOOL suppressUp = _suppressUp;
+    _physDown = NO;
+    _emitted = NO;
+    _suppressUp = NO;
+    if (_savedDown) {
+        CFRelease(_savedDown);
+        _savedDown = NULL;
+    }
+    if (wasEmitted) return suppressUp ? NULL : event;
+    [self loneTapUp];
+    return NULL;
+}
+
+- (CGEventRef)handleKeyDown:(CGEventRef)event proxy:(CGEventTapProxy)proxy {
+    int64_t code = CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode);
+
+    if (_physDown && !_emitted) {
+        CGEventFlags mods = CGEventGetFlags(event) & kZModMask;
+        if (self.sessionActive && code == 8 && mods == kCGEventFlagMaskCommand) {
+            // Command راست + C در حین سشن: میان‌بر ماست؛ نه پایین‌رفتن نه بالاآمدنش به اپی نرسد
+            _emitted = YES;
+            _suppressUp = YES;
+            void (^cb)(void) = self.onCopyNow;
+            if (cb) dispatch_async(dispatch_get_main_queue(), cb);
+            return NULL;
+        }
+        // کلید دیگری آمد: Command راست واقعا مودیفایر بود؛ اول رویداد نگه‌داشته را بفرست
+        if (_savedDown) CGEventTapPostEvent(proxy, _savedDown);
+        _emitted = YES;
+        return event;
+    }
+
+    if (!self.sessionActive) return event;    // بیرون از سشن هیچ‌کدام گرفته نمی‌شود
+    CGEventFlags flags = CGEventGetFlags(event) & kZModMask;
+    void (^cb)(void) = nil;
+    if (code == 53 && flags == 0) cb = self.onEsc;              // Esc خالی
+    else if (flags == kCGEventFlagMaskAlternate) {
+        if (code == 49) cb = self.onPauseToggle;    // ⌥Space
+        else if (code == 8) cb = self.onCopyNow;    // ⌥C
+        else if (code == 9) cb = self.onInsertHere; // ⌥V
+    }
+    if (cb) {
+        dispatch_async(dispatch_get_main_queue(), cb);
+        return NULL;
+    }
+    return event;
 }
 
 - (CGEventRef)handleProxy:(CGEventTapProxy)proxy type:(CGEventType)type event:(CGEventRef)event {
@@ -249,38 +267,10 @@ static CGEventRef zRCmdCallback(CGEventTapProxy proxy, CGEventType type, CGEvent
     }
     if (type == kCGEventFlagsChanged
         && CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode) == 54) {
-        BOOL isDown = (CGEventGetFlags(event) & kRightCmdBit) != 0;
-        if (isDown) {
-            _physDown = YES;
-            _emitted = NO;
-            if (_savedDown) CFRelease(_savedDown);
-            _savedDown = CGEventCreateCopy(event);
-            return NULL;    // فعلا از همه پنهان؛ اگر ترکیب شد دوباره تزریق می‌شود
-        }
-        BOOL wasEmitted = _emitted;
-        _physDown = NO;
-        _emitted = NO;
-        if (_savedDown) {
-            CFRelease(_savedDown);
-            _savedDown = NULL;
-        }
-        if (wasEmitted) return event;
-        // تپِ تنها: بلعیده؛ شمارش دابل‌تپ
-        CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
-        if (now - _lastTapAt < 0.4) {
-            _lastTapAt = 0;
-            void (^cb)(void) = self.onDoubleTap;
-            if (cb) dispatch_async(dispatch_get_main_queue(), cb);
-        } else {
-            _lastTapAt = now;
-        }
-        return NULL;
+        return [self handleFlagsChanged:event];
     }
-    if (type == kCGEventKeyDown && _physDown && !_emitted) {
-        // کلید دیگری آمد: right command واقعا مودیفایر بود؛ اول رویداد نگه‌داشته را بفرست
-        if (_savedDown) CGEventTapPostEvent(proxy, _savedDown);
-        _emitted = YES;
-        return event;
+    if (type == kCGEventKeyDown) {
+        return [self handleKeyDown:event proxy:proxy];
     }
     return event;
 }

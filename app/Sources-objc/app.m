@@ -32,6 +32,7 @@ int ZSelfTest(NSString *file, NSString *lang) {
         dispatch_semaphore_signal(sem);
     };
     [s connect];
+    printf("selftest: codec=%s\n", s.codecName.UTF8String);
 
     dispatch_queue_t q = dispatch_queue_create("selftest.pace", DISPATCH_QUEUE_SERIAL);
     __block NSUInteger off = 0;
@@ -69,8 +70,8 @@ int ZSelfTest(NSString *file, NSString *lang) {
     NSStatusItem *_statusItem;
     ZPanel *_panel;
     ZSession *_session;
-    ZSessionKeys *_keys;
-    ZRCmdTap *_rcmdTap;
+    ZHotkeyTap *_hotkeys;
+    CFAbsoluteTime _lastToggleAt;    // دیبانس toggle داخلی در برابر toggle بیرونی (Karabiner)
 }
 
 - (void)applicationWillFinishLaunching:(NSNotification *)n {
@@ -96,12 +97,14 @@ int ZSelfTest(NSString *file, NSString *lang) {
                            withIntermediateDirectories:YES attributes:nil error:nil];
     ZRegisterFonts();
     _panel = [ZPanel new];
-    _keys = [ZSessionKeys new];
-    _rcmdTap = [ZRCmdTap new];
+    _hotkeys = [ZHotkeyTap new];
     [self setupStatusItem];
     __weak typeof(self) ws = self;
-    _rcmdTap.onDoubleTap = ^{ [ws toggleSession]; };
-    if (ZSettings.shared.internalHotkey) [_rcmdTap enable];
+    _hotkeys.onToggle = ^{ [ws toggleSession]; };
+    _hotkeys.onEsc = ^{ [ws sessionDo:@selector(finish)]; };
+    _hotkeys.onPauseToggle = ^{ [ws sessionDo:@selector(pauseToggle)]; };
+    _hotkeys.onCopyNow = ^{ [ws sessionDo:@selector(copyNow)]; };
+    _hotkeys.onInsertHere = ^{ [ws sessionDo:@selector(insertHere)]; };
 
     // حالت اسکرین‌شات طراحی: zemzeme --uishot <dir>
     NSArray *args = NSProcessInfo.processInfo.arguments;
@@ -113,6 +116,8 @@ int ZSelfTest(NSString *file, NSString *lang) {
     }
 
     if (![ZInjector accessibilityOK]) [ZInjector promptAccessibility];
+    // اگر همین الان اعتماد داریم تپ را بالا بیاور؛ وگرنه شروع سشن بعدی دوباره امتحان می‌کند
+    if ([ZInjector accessibilityOK]) [_hotkeys enable];
     // دیمن پاس از همین حالا گرم شود که تکه اول اولین سشن سرد نخورد
     if (ZSettings.shared.polishEnabled) [ZPolish.shared prepare];
     ZLog(@"app: launched root=%@ ax=%d polish=%d",
@@ -121,8 +126,7 @@ int ZSelfTest(NSString *file, NSString *lang) {
 
 - (void)applicationWillTerminate:(NSNotification *)n {
     [_session finish];
-    [_keys disable];
-    [_rcmdTap disable];
+    [_hotkeys disable];
 }
 
 // ---------- URL: zemzeme://toggle | start | stop ----------
@@ -140,6 +144,11 @@ int ZSelfTest(NSString *file, NSString *lang) {
 }
 
 - (void)toggleSession {
+    // با Karabiner که همین toggle را از بیرون با URL صدا می‌زند هم‌زمان نشویم:
+    // دو فراخوانی نزدیک به هم (دابل‌تپ داخلی + دابل‌تپ کارابینر) یعنی دومی نادیده گرفته شود
+    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+    if (now - _lastToggleAt < 0.2) return;
+    _lastToggleAt = now;
     if (_session) [_session finish];
     else [self startSession];
 }
@@ -154,13 +163,11 @@ int ZSelfTest(NSString *file, NSString *lang) {
         __strong typeof(ws) me = ws;
         if (!me) return;
         me->_session = nil;
-        [me->_keys disable];
+        me->_hotkeys.sessionActive = NO;
     };
-    _keys.onEsc = ^{ [ws sessionDo:@selector(finish)]; };
-    _keys.onAltSpace = ^{ [ws sessionDo:@selector(pauseToggle)]; };
-    _keys.onAltC = ^{ [ws sessionDo:@selector(copyNow)]; };
-    _keys.onAltV = ^{ [ws sessionDo:@selector(insertHere)]; };
-    [_keys enable];
+    // شاید موقع لانچ دسترسی نبود؛ همین‌جا یک‌بار دیگر امتحان کن (بی‌ضرر اگر از قبل فعال است)
+    [_hotkeys enable];
+    _hotkeys.sessionActive = YES;
     [s start];
 }
 
@@ -186,65 +193,101 @@ int ZSelfTest(NSString *file, NSString *lang) {
     [menu removeAllItems];
     menu.autoenablesItems = NO;
     BOOL active = _session != nil;
+    BOOL paused = active && _session.engine.paused;
 
-    [self item:menu title:active ? @"پایان دیکته (Esc)" : @"شروع دیکته" action:@selector(menuToggle) key:@""];
+    // بالا: ۴ اقدام اصلی (فقط وقتی سشن فعال است بیشتر از شروع معنا دارد)
+    [self icon:[self item:menu title:active ? @"پایان و درج (Esc)" : @"شروع دیکته"
+                    action:@selector(menuToggle) key:@""]
+        symbol:active ? @"stop.circle" : @"mic.fill"];
     if (active) {
-        [self item:menu title:@"مکث و ادامه شنیدن" action:@selector(menuPauseToggle) key:@" "];
-        [self item:menu title:@"کپی متن تا اینجا" action:@selector(menuCopyNow) key:@"c"];
-        [self item:menu title:@"درج در همین اپ" action:@selector(menuInsertHere) key:@"v"];
+        NSMenuItem *pause = [self item:menu title:@"مکث/ادامه" action:@selector(menuPauseToggle) key:@" "];
+        [self icon:pause symbol:paused ? @"play.circle" : @"pause.circle"];
+        pause.toolTip = paused ? @"ادامه شنیدن" : @"مکث شنیدن";
+        NSMenuItem *copy = [self item:menu title:@"کپی متن" action:@selector(menuCopyNow) key:@"c"];
+        [self icon:copy symbol:@"doc.on.doc"];
+        copy.toolTip = @"کپی کل متن دیکته‌شده تا الان";
+        NSMenuItem *ins = [self item:menu title:@"درج همینجا" action:@selector(menuInsertHere) key:@"v"];
+        [self icon:ins symbol:@"text.insert"];
+        ins.toolTip = @"درج در اپی که پشت پنل باز است";
     }
     [menu addItem:NSMenuItem.separatorItem];
 
-    [self header:menu title:@"حالت"];
-    [self item:menu title:@"درج زنده سر کرسر" action:@selector(menuModeLive) key:@""].state =
+    // حالت: دو رادیو + یک تاگل، بدون ردیف تیتر
+    [self icon:[self item:menu title:@"درج زنده" action:@selector(menuModeLive) key:@""]
+        symbol:@"cursorarrow.motionlines"].state =
         !ZSettings.shared.collectMode ? NSControlStateValueOn : NSControlStateValueOff;
-    NSMenuItem *cm = [self item:menu title:@"جمع در پنل و ویرایش" action:@selector(menuModeCollect) key:@""];
+    NSMenuItem *cm = [self icon:[self item:menu title:@"جمع در پنل" action:@selector(menuModeCollect) key:@""]
+                          symbol:@"rectangle.and.pencil.and.ellipsis"];
     cm.state = ZSettings.shared.collectMode ? NSControlStateValueOn : NSControlStateValueOff;
     cm.toolTip = @"متن در خود پنل جمع می‌شود و قابل ویرایش است؛ تهش با یک دکمه درج یا کپی می‌شود";
-
-    NSMenuItem *pol = [self item:menu title:@"پاس ویرایش فارسی" action:@selector(menuTogglePolish) key:@""];
+    NSMenuItem *pol = [self icon:[self item:menu title:@"ویرایش فارسی" action:@selector(menuTogglePolish) key:@""]
+                           symbol:@"wand.and.stars"];
     pol.state = ZSettings.shared.polishEnabled ? NSControlStateValueOn : NSControlStateValueOff;
     pol.toolTip = @"نیم‌فاصله، ارقام فارسی، نقطه‌گذاری و املای مطمئن روی هر تکه قطعی فارسی";
     [menu addItem:NSMenuItem.separatorItem];
 
-    [self header:menu title:@"زبان"];
-    [self item:menu title:@"فارسی" action:@selector(menuLangFa) key:@""].state =
+    // زبان: زیرمنوی کوچک
+    NSMenuItem *langItem = [self icon:[[NSMenuItem alloc] initWithTitle:@"زبان" action:nil keyEquivalent:@""]
+                                symbol:@"globe"];
+    NSMenu *langMenu = [NSMenu new];
+    [self item:langMenu title:@"فارسی" action:@selector(menuLangFa) key:@""].state =
         [ZSettings.shared.lang isEqualToString:@"fa-IR"] ? NSControlStateValueOn : NSControlStateValueOff;
-    [self item:menu title:@"English" action:@selector(menuLangEn) key:@""].state =
+    [self item:langMenu title:@"English" action:@selector(menuLangEn) key:@""].state =
         [ZSettings.shared.lang isEqualToString:@"en-US"] ? NSControlStateValueOn : NSControlStateValueOff;
-    [menu addItem:NSMenuItem.separatorItem];
+    langItem.submenu = langMenu;
+    [menu addItem:langItem];
 
-    [self header:menu title:@"موتور"];
-    NSMenuItem *g = [self item:menu title:@"گوگل مستقیم" action:@selector(menuEngineGoogle) key:@""];
+    // پیشرفته: همه‌چیزهای کم‌استفاده در یک زیرمنو
+    NSMenuItem *advItem = [self icon:[[NSMenuItem alloc] initWithTitle:@"پیشرفته" action:nil keyEquivalent:@""]
+                               symbol:@"gearshape"];
+    NSMenu *adv = [NSMenu new];
+    adv.autoenablesItems = NO;
+
+    NSMenuItem *g = [self icon:[self item:adv title:@"گوگل مستقیم" action:@selector(menuEngineGoogle) key:@""]
+                         symbol:@"bolt.fill"];
     g.state = [ZSettings.shared.engineName isEqualToString:@"google"]
         ? NSControlStateValueOn : NSControlStateValueOff;
     g.enabled = !active;
-    NSMenuItem *c = [self item:menu title:@"صفحه کروم (فال‌بک)" action:@selector(menuEngineChrome) key:@""];
+    NSMenuItem *c = [self icon:[self item:adv title:@"صفحه کروم (فال‌بک)" action:@selector(menuEngineChrome) key:@""]
+                         symbol:@"arrow.triangle.2.circlepath"];
     c.state = [ZSettings.shared.engineName isEqualToString:@"chrome"]
         ? NSControlStateValueOn : NSControlStateValueOff;
     c.enabled = !active;
-    [self item:menu title:@"باز کردن صفحه موتور کروم" action:@selector(menuOpenChromePage) key:@""];
-    [menu addItem:NSMenuItem.separatorItem];
+    [self icon:[self item:adv title:@"باز کردن صفحه موتور" action:@selector(menuOpenChromePage) key:@""]
+        symbol:@"arrow.up.right.square"];
+    [adv addItem:NSMenuItem.separatorItem];
 
-    [self header:menu title:@"روش درج (Windows App همیشه پیست)"];
-    NSArray *modes = @[@[@"تایپ مستقیم", @(ZInsertType)],
-                       @[@"پیست تکه‌ای", @(ZInsertPaste)]];
+    NSMenuItem *flac = [self icon:[self item:adv title:@"فشرده‌سازی صدا (FLAC)" action:@selector(menuToggleFLAC) key:@""]
+                            symbol:@"waveform.circle"];
+    flac.state = ZSettings.shared.upstreamFLAC ? NSControlStateValueOn : NSControlStateValueOff;
+    flac.toolTip = @"حجم آپلود صدا را تا نصف کم می‌کند؛ اگر جور نشد خودش موقع اتصال به حالت خام برمی‌گردد";
+    [adv addItem:NSMenuItem.separatorItem];
+
+    NSArray *modes = @[@[@"تایپ مستقیم", @(ZInsertType), @"keyboard"],
+                       @[@"پیست تکه‌ای", @(ZInsertPaste), @"doc.on.clipboard"]];
     for (NSArray *m in modes) {
-        NSMenuItem *mi = [self item:menu title:m[0] action:@selector(menuInsertMode:) key:@""];
+        NSMenuItem *mi = [self icon:[self item:adv title:m[0] action:@selector(menuInsertMode:) key:@""]
+                              symbol:m[2]];
         mi.representedObject = m[1];
         mi.state = ZSettings.shared.insertMode == [m[1] integerValue]
             ? NSControlStateValueOn : NSControlStateValueOff;
+        mi.toolTip = @"برای Windows App همیشه پیست انتخاب می‌شود، حتی اگر اینجا تایپ باشد";
     }
-    [menu addItem:NSMenuItem.separatorItem];
+    [adv addItem:NSMenuItem.separatorItem];
 
-    NSMenuItem *hk = [self item:menu title:@"هاتکی داخلی بدون Karabiner (آزمایشی)"
-                         action:@selector(menuToggleHotkey) key:@""];
+    NSMenuItem *hk = [self icon:[self item:adv title:@"هاتکی داخلی (آزمایشی)" action:@selector(menuToggleHotkey) key:@""]
+                          symbol:@"command"];
     hk.state = ZSettings.shared.internalHotkey ? NSControlStateValueOn : NSControlStateValueOff;
     hk.toolTip = @"اول رول Karabiner را خاموش کن، وگرنه دابل‌تپ به اپ نمی‌رسد";
-    [self item:menu title:@"پوشه سشن‌ها" action:@selector(menuOpenSessions) key:@""];
-    [self item:menu title:@"دسترسی‌ها در تنظیمات سیستم" action:@selector(menuOpenAccessibility) key:@""];
+    [adv addItem:NSMenuItem.separatorItem];
+
+    [self icon:[self item:adv title:@"پوشه سشن‌ها" action:@selector(menuOpenSessions) key:@""] symbol:@"folder"];
+    [self icon:[self item:adv title:@"دسترسی‌ها" action:@selector(menuOpenAccessibility) key:@""] symbol:@"lock.shield"];
+    advItem.submenu = adv;
+    [menu addItem:advItem];
+
     [menu addItem:NSMenuItem.separatorItem];
-    [self item:menu title:@"خروج از زمزمه" action:@selector(menuQuit) key:@"q"];
+    [self icon:[self item:menu title:@"خروج از زمزمه" action:@selector(menuQuit) key:@"q"] symbol:@"power"];
 }
 
 // شورتکات‌های نمایشی ⌥ فقط راهنما هستند؛ کار واقعی را تپ سراسری سشن می‌کند
@@ -256,10 +299,13 @@ int ZSelfTest(NSString *file, NSString *lang) {
     return i;
 }
 
-- (void)header:(NSMenu *)m title:(NSString *)t {
-    NSMenuItem *i = [[NSMenuItem alloc] initWithTitle:t action:nil keyEquivalent:@""];
-    i.enabled = NO;
-    [m addItem:i];
+// آیکن SF Symbol برای یک ردیف منو؛ اگر اسم نماد اشتباه باشد imageWithSystemSymbolName نال
+// برمی‌گرداند و اینجا لاگ می‌شود تا خاموش از قلم نیفتد.
+- (NSMenuItem *)icon:(NSMenuItem *)i symbol:(NSString *)name {
+    NSImage *img = [NSImage imageWithSystemSymbolName:name accessibilityDescription:nil];
+    if (!img) ZLog(@"menu: SF Symbol پیدا نشد: %@", name);
+    i.image = img;
+    return i;
 }
 
 - (void)menuToggle { [self toggleSession]; }
@@ -277,6 +323,7 @@ int ZSelfTest(NSString *file, NSString *lang) {
 - (void)menuEngineGoogle { ZSettings.shared.engineName = @"google"; }
 - (void)menuEngineChrome { ZSettings.shared.engineName = @"chrome"; }
 - (void)menuOpenChromePage { [ZChromeRelayEngine openPage]; }
+- (void)menuToggleFLAC { ZSettings.shared.upstreamFLAC = !ZSettings.shared.upstreamFLAC; }
 - (void)menuInsertMode:(NSMenuItem *)sender {
     ZSettings.shared.insertMode = [sender.representedObject integerValue];
 }
@@ -284,10 +331,9 @@ int ZSelfTest(NSString *file, NSString *lang) {
     ZSettings.shared.polishEnabled = !ZSettings.shared.polishEnabled;
     if (ZSettings.shared.polishEnabled) [ZPolish.shared prepare];
 }
+// تپ همیشه سرپا است؛ این تنظیم فقط تفسیر دابل‌تپ به toggle را روشن/خاموش می‌کند
 - (void)menuToggleHotkey {
     ZSettings.shared.internalHotkey = !ZSettings.shared.internalHotkey;
-    if (ZSettings.shared.internalHotkey) [_rcmdTap enable];
-    else [_rcmdTap disable];
 }
 - (void)menuOpenSessions { [NSWorkspace.sharedWorkspace openURL:ZSessionsDir()]; }
 - (void)menuOpenAccessibility {

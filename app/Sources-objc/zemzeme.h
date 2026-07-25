@@ -27,6 +27,7 @@ typedef NS_ENUM(NSInteger, ZInsertMode) {
 @property (nonatomic) BOOL collectMode;             // جمع در پنل به جای درج زنده
 @property (nonatomic) BOOL internalHotkey;
 @property (nonatomic) BOOL polishEnabled;           // پاس ویرایش فارسی؛ پیش‌فرض روشن
+@property (nonatomic) BOOL upstreamFLAC;            // فشرده‌سازی FLAC آپلود؛ پیش‌فرض روشن، اگر انکودر نساخت خودش l16 خام می‌رود
 - (ZInsertMode)insertModeForBundleId:(NSString *)bundleId;
 - (useconds_t)typeDelayMicros;
 - (useconds_t)pasteDelayMicros;
@@ -71,9 +72,28 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 - (void)stop;
 @end
 
+// ---------- بافر بک‌لاگ صدا ----------
+// سقف مشترک برای _pending استریم (stream.m) و _preroll موتور (engines.m): چقدر صدای
+// خام می‌تواند روی شبکه ضعیف/بین اتصال‌ها معطل بماند قبل از این‌که قدیمی‌ترینش دور
+// ریخته شود. هر دو باید یک عدد باشند وگرنه صدای حمل‌شده از استریم مرده به preroll
+// همان لحظه دوباره قیچی می‌شود.
+#define kZBacklogSec 60
+#define kZBacklogCapBytes ((NSUInteger)(32000 * kZBacklogSec))
+
+// ---------- فشرده‌ساز FLAC برای آپلود ----------
+// پی‌سی‌ام خام s16le مونو ۱۶ کیلوهرتز را با AudioConverter سیستم (AudioToolbox) به
+// فریم‌های FLAC می‌فشرد. اگر ساخت کانورتر شکست بخورد، init نال برمی‌گرداند و فراخوان
+// (ZGoogleStream) باید بی‌سروصدا به آپلود خام l16 برگردد.
+@interface ZFlacEncoder : NSObject
+@property (nonatomic, readonly) NSData *streamHeader;   // "fLaC" + بلاک STREAMINFO؛ فقط یک‌بار، اول بدنه
+- (NSData *)encode:(NSData *)pcm;   // ممکن است خالی برگردد (هنوز یک فریم کامل جمع نشده)
+@end
+
 // ---------- استریم full-duplex گوگل ----------
 @interface ZGoogleStream : NSObject
 @property (nonatomic, readonly) NSString *pair;
+@property (nonatomic, readonly) NSString *codecName;            // "flac" یا "l16"؛ بعد از connect معتبر است
+@property (atomic, readonly) unsigned long long bytesFed;        // بایت واقعی نوشته‌شده روی سیم (برای لاگ نرخ)
 @property (nonatomic, copy) void (^onEvent)(ZSpeechEvent *ev);   // روی صف دلیگیت URLSession
 @property (nonatomic, copy) void (^onClose)(NSString *reason);   // دقیقا یک بار
 - (instancetype)initWithLang:(NSString *)lang;
@@ -81,6 +101,7 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 - (void)feed:(NSData *)pcm;      // s16le مونو ۱۶ کیلوهرتز
 - (void)finishUpload;            // پایان نرم: نتیجه‌های آخر می‌آیند
 - (void)cancel;
+- (NSData *)unsentPending;       // پی‌سی‌ام صف‌شده که هنوز سیم نرفته؛ برای حمل به استریم بعدی
 @end
 
 // ---------- میکروفن ----------
@@ -120,18 +141,17 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 - (void)copyFinalAfterPending:(NSString *)text;         // پشت صف درج، که مسابقه با پیست نگیرد
 @end
 
-// ---------- تپ کیبورد سشن: Esc و شورتکات‌های ⌥ ----------
-@interface ZSessionKeys : NSObject
-@property (nonatomic, copy) void (^onEsc)(void);
-@property (nonatomic, copy) void (^onAltSpace)(void);   // مکث/ادامه شنیدن
-@property (nonatomic, copy) void (^onAltC)(void);       // کپی متن تا اینجا
-@property (nonatomic, copy) void (^onAltV)(void);       // درج همینجا (اپ جلویی)
-- (void)enable;
-- (void)disable;
-@end
-
-@interface ZRCmdTap : NSObject
-@property (nonatomic, copy) void (^onDoubleTap)(void);
+// ---------- تپ کیبورد سراسری: Esc، شورتکات‌های ⌥، دابل/تک‌تپ Command راست ----------
+// یک CGEventTap واحد برای کل اپ؛ از لانچ تا کوییت زنده می‌ماند (نه هر سشن یک تپ نو).
+// دابل‌تپ Command راست (شروع/پایان سشن) در هر حالتی کار می‌کند؛ بقیه (Esc، ⌥ها،
+// تک‌تپ، Command راست+C) فقط وقتی sessionActive=YES باشد.
+@interface ZHotkeyTap : NSObject
+@property (nonatomic, copy) void (^onToggle)(void);        // دابل‌تپ Command راست: شروع/پایان سشن
+@property (nonatomic, copy) void (^onEsc)(void);            // Esc: پایان و درج
+@property (nonatomic, copy) void (^onPauseToggle)(void);    // ⌥Space یا تک‌تپ Command راست
+@property (nonatomic, copy) void (^onCopyNow)(void);        // ⌥C یا Command راست+C
+@property (nonatomic, copy) void (^onInsertHere)(void);     // ⌥V
+@property (nonatomic) BOOL sessionActive;
 - (void)enable;
 - (void)disable;
 @end
