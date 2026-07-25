@@ -22,7 +22,8 @@
 
     NSDate *_lastEventAt;
     NSDate *_lastResultAt;       // آخرین فریمِ نتیجه‌دار، نه هر فریمی
-    NSDate *_lastVoiceAt;        // آخرین لحظه‌ای که واقعا صدا بود
+    NSTimeInterval _voiceSinceResult;   // جمع ثانیه‌های صدای واقعی از آخرین نتیجه
+    NSDate *_prevLevelAt;        // برای اندازه‌گیری همان جمع
     NSInteger _endsSinceResult;
     BOOL _gotResultThisCycle;
     NSString *_lastInterim;
@@ -76,7 +77,7 @@ static NSString *ZMergeInterim(NSString *best, NSString *cur) {
         _salvageBest = @"";
         _lang = @"fa-IR";
         _lastLevelAt = NSDate.distantPast;
-        _lastVoiceAt = NSDate.distantPast;
+        _voiceSinceResult = 0;
     }
     return self;
 }
@@ -177,9 +178,16 @@ static NSString *ZMergeInterim(NSString *best, NSString *cur) {
         if (rms > 0.07f) {
             [s->_feedLock lock];
             s->_voiceInCycle = YES;
-            s->_lastVoiceAt = NSDate.date;
+            // جمع زمان صدای واقعی. سقف ۰٫۵ ثانیه روی هر گام، که بعد از یک وقفه‌ی
+            // طولانی یک‌باره پر نشود و مکث را صدا حساب نکند.
+            NSDate *n = NSDate.date;
+            NSTimeInterval step = s->_prevLevelAt ? [n timeIntervalSinceDate:s->_prevLevelAt] : 0;
+            s->_voiceSinceResult += MIN(MAX(step, 0), 0.5);
             [s->_feedLock unlock];
         }
+        [s->_feedLock lock];
+        s->_prevLevelAt = NSDate.date;
+        [s->_feedLock unlock];
         NSDate *now = NSDate.date;
         if ([now timeIntervalSinceDate:s->_lastLevelAt] > 0.1) {
             s->_lastLevelAt = now;
@@ -257,6 +265,7 @@ static NSString *ZMergeInterim(NSString *best, NSString *cur) {
         // که هزینه‌اش از ریسک دوباره‌درج شدن یک جمله کمتر است.)
         [_feedLock lock];
         _replay.length = 0;
+        _voiceSinceResult = 0;
         [_feedLock unlock];
     }
     for (NSString *f in ev.finals) {
@@ -373,11 +382,12 @@ static NSString *ZMergeInterim(NSString *best, NSString *cur) {
     // می‌شد و تایمر را تازه می‌کرد؛ کاربر مجبور بود دستی مکث و ادامه بزند. حالا
     // معیار درست است: دارد حرف می‌زند ولی نتیجه‌ای نمی‌آید.
     [_feedLock lock];
-    NSTimeInterval sinceVoice = [now timeIntervalSinceDate:_lastVoiceAt];
+    NSTimeInterval voiced = _voiceSinceResult;
     [_feedLock unlock];
     NSTimeInterval sinceResult = [now timeIntervalSinceDate:_lastResultAt];
-    if (sinceVoice < 1.5 && sinceResult > kZStallSec) {
-        ZLog(@"engine: stalled %.0fs with voice, recycling pair=%@", sinceResult, _stream.pair);
+    if (voiced > kZStallVoiceSec && sinceResult > kZStallSec) {
+        ZLog(@"engine: stalled %.0fs (voice %.1fs) with no result, recycling pair=%@",
+             sinceResult, voiced, _stream.pair);
         // مسیر close خودش salvage می‌کند و آن درست است: salvage متنی را می‌گیرد که
         // تا آخرین نتیجه تشخیص داده شده بود، و بازپخش صدای بعد از همان نتیجه است.
         // مرزشان یکی است، پس نه کلمه‌ای گم می‌شود نه دو بار درج می‌شود.

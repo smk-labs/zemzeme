@@ -51,6 +51,9 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     NSTimer *_saveOriginTimer;
     BOOL _pulsing;
     BOOL _collectVisible;
+    NSPoint _wantOrigin;         // جای انتخابی کاربر؛ قد کشیدن پنل جابه‌جایش نمی‌کند
+    BOOL _haveWantOrigin;
+    BOOL _resizing;
 }
 
 - (instancetype)init {
@@ -105,7 +108,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
         _text.lineBreakMode = NSLineBreakByTruncatingHead;
         _text.usesSingleLineMode = NO;
         _text.cell.wraps = YES;
-        _text.maximumNumberOfLines = 3;
+        _text.maximumNumberOfLines = 3;    // خط وضعیت؛ سر متن خاکستری با سقف پنل تازه می‌شود
         [_effect addSubview:_text];
 
         _chipBg = [NSView new];
@@ -137,7 +140,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
         __weak typeof(self) ws = self;
         [NSNotificationCenter.defaultCenter addObserverForName:NSWindowDidMoveNotification object:_panel
                                                           queue:nil usingBlock:^(NSNotification *n) {
-            [ws scheduleSaveOrigin];
+            [ws panelMoved];
         }];
     }
     return self;
@@ -259,46 +262,60 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
 // کاربر می‌خواست ببیند. حالا اندازه می‌گیریم و از سرِ متن کم می‌کنیم تا جا شود.
 - (NSString *)visibleTail:(NSString *)full {
     CGFloat w = [self textWidth];
-    NSDictionary *attrs = @{NSFontAttributeName: _text.font};
     CGFloat cap = [self conveyorMaxTextHeight];
-    if ([full boundingRectWithSize:NSMakeSize(w, 10000)
-                          options:NSStringDrawingUsesLineFragmentOrigin
-                       attributes:attrs].size.height <= cap) {
-        return full;
-    }
-    // دوجستجوی دودویی روی مرز کلمه: کوتاه‌ترین دمی که جا می‌شود
+    if ([self heightOf:full width:w] <= cap) return full;
+    // جستجوی دودویی روی مرز کلمه: بلندترین دمی که جا می‌شود
     NSArray<NSString *> *words = [full componentsSeparatedByString:@" "];
-    NSUInteger lo = 0, hi = words.count;      // lo کلمه از اول انداخته می‌شود
+    NSUInteger lo = 0, hi = words.count;      // lo تعداد کلمه‌ای که از اول انداخته می‌شود
     while (lo < hi) {
         NSUInteger mid = (lo + hi) / 2;
         NSString *cand = [@"… " stringByAppendingString:
             [[words subarrayWithRange:NSMakeRange(mid, words.count - mid)] componentsJoinedByString:@" "]];
-        CGFloat h = [cand boundingRectWithSize:NSMakeSize(w, 10000)
-                                      options:NSStringDrawingUsesLineFragmentOrigin
-                                   attributes:attrs].size.height;
-        if (h <= cap) hi = mid; else lo = mid + 1;
+        if ([self heightOf:cand width:w] <= cap) hi = mid; else lo = mid + 1;
     }
     if (lo >= words.count) return words.lastObject ?: @"";
     return [@"… " stringByAppendingString:
         [[words subarrayWithRange:NSMakeRange(lo, words.count - lo)] componentsJoinedByString:@" "]];
 }
 
-// قد یک خط و سه خط با همین فونت، اندازه‌گیری‌شده نه حدسی. عدد ثابت ۲۰ که قبلا بود
-// از قد واقعی خط (~۲۲) کمتر است، پس هم شمارش خط را زیاد نشان می‌داد هم سقف سه خط را
-// کوتاه می‌کرد و متن به دو خط قناعت می‌کرد.
-- (CGFloat)lineHeight {
-    return [@"م" boundingRectWithSize:NSMakeSize(10000, 10000)
-                             options:NSStringDrawingUsesLineFragmentOrigin
-                          attributes:@{NSFontAttributeName: _text.font}].size.height;
+// اندازه‌گیری با خودِ سلولِ همین لیبل، نه با boundingRect روی رشته‌ی خام.
+// چرا: boundingRect کمتر از واقعیت می‌شمرد (استایل پاراگراف و شکستن خط سلول را ندارد)،
+// پس متن «جا می‌شود» تشخیص داده می‌شد و بعد AppKit خط آخر را می‌انداخت. حالا معیارِ
+// بریدن و معیارِ چیدن یکی است. maximumNumberOfLines موقع اندازه‌گیری برداشته می‌شود،
+// وگرنه سلول قد را همان سقف خط گزارش می‌کرد و متنِ سرریز «جا شده» به نظر می‌رسید.
+- (CGFloat)heightOf:(NSString *)s width:(CGFloat)w {
+    NSTextFieldCell *cell = (NSTextFieldCell *)_text.cell;
+    NSString *keep = cell.stringValue;
+    NSInteger keepMax = _text.maximumNumberOfLines;
+    _text.maximumNumberOfLines = 0;
+    cell.stringValue = s;
+    CGFloat h = [cell cellSizeForBounds:NSMakeRect(0, 0, w, 100000)].height;
+    cell.stringValue = keep;
+    _text.maximumNumberOfLines = keepMax;
+    return h;
 }
+
+- (CGFloat)lineHeight { return [self heightOf:@"م" width:10000]; }
 
 // سقف واقعی، همان قدی که فریم لیبل سر سه خط می‌گیرد. با هر عددی بزرگ‌تر از این،
 // AppKit خط سوم را می‌انداخت و درست دم متن گم می‌شد؛ با کوچک‌تر، متن به دو خط قناعت
 // می‌کرد. رشد هر خط پنل هم از همین قد خط می‌آید، نه از عدد ثابت ۲۱ که کمی کم بود.
 - (CGFloat)conveyorLineStep { return ceil([self lineHeight]); }
 
+// تا کجا قد بکشد. سه خط برای دیکته‌ی طولانی دیوار بود: متن از باکس می‌زد بیرون و
+// دم حرف (تازه‌ترین کلمه‌ها) دیده نمی‌شد. حالا تا نصف بلندی صفحه بالا می‌رود، حداکثر
+// ۱۲ خط. بیشتر از این خواندنی نیست: کسی متن خاکستریِ در حال تغییر را در بیست خط
+// دنبال نمی‌کند. از آن به بعد هم شکستی در کار نیست، فقط از سرِ متن کم می‌شود و
+// حرف زدن می‌تواند تا هر جا ادامه پیدا کند.
+- (NSInteger)conveyorMaxLines {
+    NSScreen *sc = _panel.screen ?: NSScreen.mainScreen;
+    CGFloat room = (sc ? sc.visibleFrame.size.height : 900) * 0.5 - kBarH;
+    NSInteger n = (NSInteger)floor(room / MAX(1.0, [self conveyorLineStep]));
+    return MIN(12, MAX(3, n));
+}
+
 - (CGFloat)conveyorMaxTextHeight {
-    return kBarH + 2 * [self conveyorLineStep] - 22;
+    return kBarH + ([self conveyorMaxLines] - 1) * [self conveyorLineStep] - 22;
 }
 
 // جای متن، با همان حسابی که layoutViews می‌کند. از فریمِ خودِ لیبل خوانده نمی‌شود،
@@ -310,16 +327,13 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     return MAX(40, (_grip.frame.origin.x - 8) - left);
 }
 
-// قد نوار در حالت تسمه‌نقاله: تا سه خط با متن بلند می‌شود
+// قد نوار در حالت تسمه‌نقاله: با متن بلند قد می‌کشد، تا سقف conveyorMaxLines
 - (CGFloat)conveyorHeight {
     NSString *s = _text.stringValue;
     if (!s.length) return kBarH;
-    CGFloat w = [self textWidth];
-    NSRect r = [s boundingRectWithSize:NSMakeSize(w, 1000)
-                               options:NSStringDrawingUsesLineFragmentOrigin
-                            attributes:@{NSFontAttributeName: _text.font}];
+    CGFloat h = [self heightOf:s width:[self textWidth]];
     CGFloat lh = [self lineHeight];
-    NSInteger lines = MIN(3, MAX(1, (NSInteger)round(r.size.height / MAX(1.0, lh))));
+    NSInteger lines = MIN([self conveyorMaxLines], MAX(1, (NSInteger)round(h / MAX(1.0, lh))));
     return kBarH + (lines - 1) * [self conveyorLineStep];
 }
 
@@ -329,9 +343,18 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
         [self layoutViews];
         return;
     }
+    _resizing = YES;
     f.size.height = h;
     [_panel setFrame:f display:YES];
-    _effect.frame = NSMakeRect(0, 0, kPW, h);
+    // پنل از پایین ثابت است و به بالا قد می‌کشد، پس اگر کاربر نزدیک سقف صفحه گذاشته
+    // باشد سرش می‌زند بیرون. با قد تازه دوباره داخل صفحه می‌آید، و چون جای انتخابی
+    // کاربر جدا نگه داشته می‌شود، متن که کوتاه شد پنل همان‌جای خودش برمی‌گردد.
+    if (_haveWantOrigin) {
+        NSScreen *sc = _panel.screen ?: NSScreen.mainScreen;
+        if (sc) [_panel setFrameOrigin:[self clampOrigin:_wantOrigin toScreen:sc]];
+    }
+    _resizing = NO;
+    _effect.frame = NSMakeRect(0, 0, kPW, _panel.frame.size.height);
     [self layoutViews];
 }
 
@@ -372,8 +395,19 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
         origin = NSMakePoint(NSMidX(f) - kPW / 2, NSMinY(f) + 90);
     }
     if (screen) origin = [self clampOrigin:origin toScreen:screen];
+    _wantOrigin = origin;
+    _haveWantOrigin = YES;
     [_panel setFrameOrigin:origin];
     [_panel orderFrontRegardless];
+}
+
+// جابه‌جایی به دست کاربر. جابه‌جایی‌های خودمان (سرِ قد کشیدن پنل) اینجا نمی‌آیند،
+// وگرنه جای انتخابی کاربر با جای اصلاح‌شده عوض می‌شد و پنل کم‌کم سر می‌خورد.
+- (void)panelMoved {
+    if (_resizing) return;
+    _wantOrigin = _panel.frame.origin;
+    _haveWantOrigin = YES;
+    [self scheduleSaveOrigin];
 }
 
 - (void)scheduleSaveOrigin {
@@ -387,7 +421,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
 }
 
 - (void)saveOrigin {
-    NSPoint o = _panel.frame.origin;
+    NSPoint o = _haveWantOrigin ? _wantOrigin : _panel.frame.origin;
     [NSUserDefaults.standardUserDefaults setObject:[NSString stringWithFormat:@"%.0f,%.0f", o.x, o.y]
                                             forKey:@"panelOrigin"];
 }
@@ -427,6 +461,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     // حساب شود، نه با پهنای فریم قبلی.
     if (m.interim.length) {
         _text.font = ZFont(15, NO);
+        _text.maximumNumberOfLines = (NSInteger)[self conveyorMaxLines];
         _text.stringValue = [self visibleTail:m.interim];
         _text.textColor = NSColor.secondaryLabelColor;
     } else {
@@ -525,6 +560,22 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     longNarrow.waitingForTarget = YES;
     longNarrow.targetName = @"Windows App";
 
+    // دیکته‌ی واقعا طولانی و بی‌مکث: پنل باید قد بکشد، نه این‌که دم حرف را بیندازد
+    ZPanelModel *veryLong = [ZPanelModel new];
+    veryLong.interim = @"خب حالا می‌خواهم یک متن واقعا طولانی بگویم و هیچ‌جا مکث نکنم تا ببینم "
+        @"این نوار چه می‌کند، چون تا الان وقتی حرفم طول می‌کشید از سه خط که می‌گذشت آخرش "
+        @"می‌پرید و دیگر نمی‌دیدمش، و آدم وقتی نمی‌بیند کجای حرفش است حس شکست می‌گیرد و "
+        @"رشته‌ی کلام از دستش می‌رود، پس باید همین‌طور که حرف می‌زنم پنل بزرگ شود و "
+        @"تازه‌ترین جمله‌ها همیشه پیدا باشند، و اگر هم از سقف صفحه گذشت باز شکستی در کار "
+        @"نباشد و فقط از اول متن کم شود، چون کسی که دارد دیکته می‌کند فقط می‌خواهد مطمئن "
+        @"باشد که حرفش شنیده می‌شود و چیزی جا نمی‌افتد، همین و بس. حالا باز هم ادامه "
+        @"می‌دهم و از سقف دوازده خط هم می‌گذرم، که ببینیم پشتیبان کار می‌کند یا نه: از "
+        @"اینجا به بعد دیگر پنل بزرگ‌تر نمی‌شود، چون بزرگ‌تر از این روی صفحه فایده‌ای "
+        @"ندارد و کسی نمی‌تواند این‌همه متنِ در حال تغییر را بخواند، پس باید از اولِ متن "
+        @"کم شود و آخرش، یعنی همین جمله‌ای که همین الان دارم می‌گویم، پیدا بماند و "
+        @"جمله‌ی آخر باید دیده شود";
+    veryLong.listening = YES;
+
     ZPanelModel *error = [ZPanelModel new];
     error.status = @"شبکه ناپایداره؛ دکمه تلاش دوباره یا ⌥Space";
     error.error = YES;
@@ -536,6 +587,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
 
     NSArray *states = @[@[@"listening", listening], @[@"multiline", multiline], @[@"paused", paused],
                         @[@"queued", queued], @[@"long-narrow", longNarrow],
+                        @[@"very-long", veryLong],
                         @[@"error", error], @[@"collect", collect]];
     [_panel orderFrontRegardless];
     for (NSArray *pair in states) {
