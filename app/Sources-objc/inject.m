@@ -227,17 +227,33 @@ static CGEventRef zHotkeyCallback(CGEventTapProxy proxy, CGEventType type, CGEve
     return NULL;
 }
 
+// نقشه‌ی واحد کلید به کار: هم Command راست + حرف از آن می‌خواند هم ⌥ + حرف، پس دو
+// مسیر هیچ‌وقت از هم واگرا نمی‌شوند و هر دکمه‌ی پنل دقیقا یک حرف دارد.
+- (void (^)(void))actionForCode:(int64_t)code {
+    switch (code) {
+        case 49: return self.onPauseToggle;   // Space
+        case 8:  return self.onCopyNow;       // C
+        case 2:  return self.onTrash;         // D
+        case 37: return self.onLangSwitch;    // L
+        case 14: return self.onModeToggle;    // E
+        case 35: return self.onPolishNow;     // P
+        case 9:  return self.onInsertHere;    // V
+        default: return nil;
+    }
+}
+
 - (CGEventRef)handleKeyDown:(CGEventRef)event proxy:(CGEventTapProxy)proxy {
     int64_t code = CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode);
 
     if (_physDown && !_emitted) {
         CGEventFlags mods = CGEventGetFlags(event) & kZModMask;
-        if (self.sessionActive && code == 8 && mods == kCGEventFlagMaskCommand) {
-            // Command راست + C در حین سشن: میان‌بر ماست؛ نه پایین‌رفتن نه بالاآمدنش به اپی نرسد
+        void (^cb)(void) = (self.sessionActive && mods == kCGEventFlagMaskCommand)
+            ? [self actionForCode:code] : nil;
+        if (cb) {
+            // میان‌بر ماست؛ نه پایین‌رفتن نه بالاآمدنش به اپ زیرین نرسد
             _emitted = YES;
             _suppressUp = YES;
-            void (^cb)(void) = self.onCopyNow;
-            if (cb) dispatch_async(dispatch_get_main_queue(), cb);
+            dispatch_async(dispatch_get_main_queue(), cb);
             return NULL;
         }
         // کلید دیگری آمد: Command راست واقعا مودیفایر بود؛ اول رویداد نگه‌داشته را بفرست
@@ -250,11 +266,7 @@ static CGEventRef zHotkeyCallback(CGEventTapProxy proxy, CGEventType type, CGEve
     CGEventFlags flags = CGEventGetFlags(event) & kZModMask;
     void (^cb)(void) = nil;
     if (code == 53 && flags == 0) cb = self.onEsc;              // Esc خالی
-    else if (flags == kCGEventFlagMaskAlternate) {
-        if (code == 49) cb = self.onPauseToggle;    // ⌥Space
-        else if (code == 8) cb = self.onCopyNow;    // ⌥C
-        else if (code == 9) cb = self.onInsertHere; // ⌥V
-    }
+    else if (flags == kCGEventFlagMaskAlternate) cb = [self actionForCode:code];
     if (cb) {
         dispatch_async(dispatch_get_main_queue(), cb);
         return NULL;

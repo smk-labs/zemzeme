@@ -154,6 +154,11 @@ NSFont *ZFont(CGFloat size, BOOL medium) {
 }
 - (void)setPolishEnabled:(BOOL)v { [self.d setBool:v forKey:@"polish"]; }
 
+// پیش‌فرض خاموش: تصمیم اولیه این بود که وام‌واژه دست نخورد، پس برگرداندنش باید
+// انتخاب صریح کاربر باشد نه رفتار پیش‌فرض.
+- (BOOL)latinTerms { return [self.d boolForKey:@"latinTerms"]; }
+- (void)setLatinTerms:(BOOL)v { [self.d setBool:v forKey:@"latinTerms"]; }
+
 - (BOOL)upstreamFLAC {
     NSObject *o = [self.d objectForKey:@"upstreamFLAC"];
     return o ? [self.d boolForKey:@"upstreamFLAC"] : YES;    // پیش‌فرض روشن

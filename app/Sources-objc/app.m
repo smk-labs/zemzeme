@@ -106,6 +106,10 @@ int ZSelfTest(NSString *file, NSString *lang) {
     _hotkeys.onPauseToggle = ^{ [ws sessionDo:@selector(pauseToggle)]; };
     _hotkeys.onCopyNow = ^{ [ws sessionDo:@selector(copyNow)]; };
     _hotkeys.onInsertHere = ^{ [ws sessionDo:@selector(insertHere)]; };
+    _hotkeys.onTrash = ^{ [ws sessionDo:@selector(dropPending)]; };
+    _hotkeys.onLangSwitch = ^{ [ws sessionDo:@selector(switchLang)]; };
+    _hotkeys.onModeToggle = ^{ [ws sessionDo:@selector(toggleMode)]; };
+    _hotkeys.onPolishNow = ^{ [ws sessionDo:@selector(polishCollected)]; };
 
     // حالت اسکرین‌شات طراحی: zemzeme --uishot <dir>
     NSArray *args = NSProcessInfo.processInfo.arguments;
@@ -146,7 +150,9 @@ int ZSelfTest(NSString *file, NSString *lang) {
 }
 
 - (void)applicationWillTerminate:(NSNotification *)n {
-    [_session finish];
+    // finishNow نه finish: مسیر معمولی ممکن است منتظر پاس ویرایشِ پایانی بماند و
+    // اپ تا برگشتنش زنده نمی‌ماند، یعنی متن گم می‌شد. پاس را می‌بازیم، متن را نه.
+    [_session finishNow];
     [_hotkeys disable];
 }
 
@@ -252,6 +258,12 @@ int ZSelfTest(NSString *file, NSString *lang) {
                            symbol:@"wand.and.stars"];
     pol.state = ZSettings.shared.polishEnabled ? NSControlStateValueOn : NSControlStateValueOff;
     pol.toolTip = @"نیم‌فاصله، ارقام فارسی، نقطه‌گذاری و املای مطمئن روی هر تکه قطعی فارسی";
+    NSMenuItem *lat = [self icon:[self item:menu title:@"واژه‌های فنی لاتین"
+                                     action:@selector(menuToggleLatinTerms) key:@""]
+                           symbol:@"textformat"];
+    lat.state = ZSettings.shared.latinTerms ? NSControlStateValueOn : NSControlStateValueOff;
+    lat.toolTip = @"وام‌واژه‌های فنی به لاتین برمی‌گردند (کامیت ← commit). فقط واژه‌های "
+                   "فهرست app/py/terms.txt، بدون هیچ حدسی؛ واژه‌های دوپهلو عمدا در فهرست نیستند";
     [menu addItem:NSMenuItem.separatorItem];
 
     // زبان: زیرمنوی کوچک
@@ -314,6 +326,41 @@ int ZSelfTest(NSString *file, NSString *lang) {
     advItem.submenu = adv;
     [menu addItem:advItem];
 
+    // یک جای مرتب برای دیدن همه‌ی میان‌برها. تولتیپ هر دکمه هم حرف خودش را می‌گوید،
+    // ولی فهرست کامل باید یک‌جا پیدا باشد، وگرنه باید روی هفت دکمه موس نگه داشت.
+    NSMenuItem *keysItem = [self icon:[[NSMenuItem alloc] initWithTitle:@"میان‌برها"
+                                                                action:nil keyEquivalent:@""]
+                                symbol:@"keyboard"];
+    NSMenu *keys = [NSMenu new];
+    NSArray *rows = @[
+        @[@"شروع و پایان سشن", @"دابل‌تپ Command راست"],
+        @[@"مکث و ادامه", @"تک‌تپ Command راست"],
+        @[@"پایان و درج همه", @"Esc"],
+        @[@"کپی متن تا اینجا", @"Command راست + C"],
+        @[@"دور ریختن متن درج‌نشده", @"Command راست + D"],
+        @[@"عوض کردن زبان", @"Command راست + L"],
+        @[@"جمع در پنل ↔ درج زنده", @"Command راست + E"],
+        @[@"پاس ویرایش روی متن جمع‌شده", @"Command راست + P"],
+        @[@"درج سر کرسر همین اپ", @"Command راست + V"],
+    ];
+    for (NSArray *r in rows) {
+        NSMenuItem *i = [[NSMenuItem alloc] initWithTitle:
+            [NSString stringWithFormat:@"%@  —  %@", r[0], r[1]] action:nil keyEquivalent:@""];
+        i.enabled = NO;
+        [keys addItem:i];
+    }
+    [keys addItem:NSMenuItem.separatorItem];
+    NSMenuItem *note = [[NSMenuItem alloc] initWithTitle:@"همه‌ی این حرف‌ها با ⌥ هم کار می‌کنند"
+                                                 action:nil keyEquivalent:@""];
+    note.enabled = NO;
+    [keys addItem:note];
+    NSMenuItem *note2 = [[NSMenuItem alloc] initWithTitle:@"میان‌برهای حرفی فقط در حین سشن فعال‌اند"
+                                                  action:nil keyEquivalent:@""];
+    note2.enabled = NO;
+    [keys addItem:note2];
+    keysItem.submenu = keys;
+    [menu addItem:keysItem];
+
     [menu addItem:NSMenuItem.separatorItem];
     [self icon:[self item:menu title:@"خروج از زمزمه" action:@selector(menuQuit) key:@"q"] symbol:@"power"];
 }
@@ -359,6 +406,7 @@ int ZSelfTest(NSString *file, NSString *lang) {
     ZSettings.shared.polishEnabled = !ZSettings.shared.polishEnabled;
     if (ZSettings.shared.polishEnabled) [ZPolish.shared prepare];
 }
+- (void)menuToggleLatinTerms { ZSettings.shared.latinTerms = !ZSettings.shared.latinTerms; }
 // تپ همیشه سرپا است؛ این تنظیم فقط تفسیر دابل‌تپ به toggle را روشن/خاموش می‌کند
 - (void)menuToggleHotkey {
     ZSettings.shared.internalHotkey = !ZSettings.shared.internalHotkey;
@@ -383,6 +431,11 @@ int main(int argc, const char *argv[]) {
             NSString *lang = i + 2 < args.count ? args[i + 2] : @"en-US";
             return ZSelfTest(args[i + 1], lang);
         }
+        // حالت دسته‌ای قبل از ساختن NSApplication برمی‌گردد: نه آیتم منوبار، نه تپ
+        // کیبورد، نه اجازه اکسسبیلیتی. اپ منوبارِ در حال اجرا هم دست نمی‌خورد،
+        // چون گارد «یک نمونه» در applicationDidFinishLaunching است و اینجا
+        // هیچ‌وقت به آن نمی‌رسیم.
+        if ([args containsObject:@"--transcribe"]) return ZBatchMain(args);
         NSApplication *app = NSApplication.sharedApplication;
         static ZAppDelegate *delegate;
         delegate = [ZAppDelegate new];

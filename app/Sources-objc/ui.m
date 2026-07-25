@@ -23,6 +23,8 @@
 
 static const CGFloat kPW = 500;
 static const CGFloat kBarH = 46;      // ارتفاع ردیف پایه (دکمه‌ها + نقطه)
+static const CGFloat kBarPad = 10;    // فاصله اولین دکمه از لبه چپ
+static const CGFloat kBarStep = 28;   // گام هر دکمه (۲۴ عرض + ۴ فاصله)
 static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جمع
 
 // پس‌زمینهٔ پنل: NSVisualEffectView به‌خودی‌خود opaque حساب می‌شود و
@@ -46,6 +48,8 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     NSView *_chipBg;
     NSTextField *_chipLabel;
     NSButton *_btnClose, *_btnPause, *_btnCopy, *_btnTrash, *_btnInsert;
+    NSButton *_btnLang, *_btnMode, *_btnPolish;
+    NSArray<NSButton *> *_bar;    // ترتیب دکمه‌ها؛ یک منبع حقیقت برای چیدمان و پهنای متن
     NSScrollView *_editorScroll;
     NSTextView *_editor;
     NSTimer *_saveOriginTimer;
@@ -122,20 +126,30 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
         _chipLabel.alignment = NSTextAlignmentCenter;
         [_chipBg addSubview:_chipLabel];
 
-        _btnClose = [self makeButton:@"xmark" tip:@"بستن و درج همه (Esc)" action:@selector(closeTap)];
-        _btnPause = [self makeButton:@"pause.fill" tip:@"مکث و ادامه شنیدن (⌥Space)" action:@selector(pauseTap)];
-        _btnCopy = [self makeButton:@"doc.on.doc" tip:@"کپی متن تا اینجا (⌥C)" action:@selector(copyTap)];
+        // همه‌ی دکمه‌ها آیکون‌اند و یک اندازه، و هر تولتیپ حرف میان‌بر خودش را می‌گوید.
+        // میان‌بر هر کدام «Command راست + همان حرف» است؛ ⌥ + همان حرف هم کار می‌کند.
+        _btnClose = [self makeButton:@"xmark" tip:@"پایان و درج همه (Esc)" action:@selector(closeTap)];
+        _btnPause = [self makeButton:@"pause.fill"
+                                 tip:@"مکث و ادامه (تک‌تپ Command راست، یا Command راست + Space)"
+                              action:@selector(pauseTap)];
+        _btnCopy = [self makeButton:@"doc.on.doc" tip:@"کپی متن تا اینجا (Command راست + C)"
+                             action:@selector(copyTap)];
         _btnTrash = [self makeButton:@"trash"
-                                 tip:@"دور ریختن هرچه گفته‌ای و هنوز درج نشده؛ شنیدن ادامه دارد"
+                                 tip:@"دور ریختن هرچه گفته‌ای و هنوز درج نشده (Command راست + D)"
                               action:@selector(trashTap)];
-
-        _btnInsert = [NSButton buttonWithTitle:@"درج در همین اپ" target:self action:@selector(insertTap)];
-        _btnInsert.bezelStyle = NSBezelStyleRounded;
-        _btnInsert.controlSize = NSControlSizeSmall;
-        _btnInsert.font = ZFont(12, YES);
-        _btnInsert.toolTip = @"کل متن پنل سر کرسر همین اپ تایپ می‌شود (⌥V)";
+        _btnLang = [self makeButton:@"globe" tip:@"" action:@selector(langTap)];
+        _btnMode = [self makeButton:@"square.and.pencil" tip:@"" action:@selector(modeTap)];
+        _btnPolish = [self makeButton:@"wand.and.stars"
+                                  tip:@"اعمال پاس ویرایش فارسی روی متن جمع‌شده (Command راست + P)"
+                               action:@selector(polishTap)];
+        _btnInsert = [self makeButton:@"text.insert"
+                                  tip:@"درج متن سر کرسر همین اپ (Command راست + V)"
+                               action:@selector(insertTap)];
+        _btnPolish.hidden = YES;
         _btnInsert.hidden = YES;
-        [_effect addSubview:_btnInsert];
+        // ترتیب چیدمان؛ layoutViews و textWidth هر دو از همین یک لیست می‌خوانند، پس
+        // پیدا و ناپیدا شدن دکمه‌ها هیچ‌وقت با عدد هاردکد ناهمخوان نمی‌شود.
+        _bar = @[_btnClose, _btnPause, _btnCopy, _btnTrash, _btnLang, _btnMode, _btnPolish, _btnInsert];
 
         [self layoutViews];
         [self applyColors];
@@ -173,23 +187,17 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
 - (void)layoutViews {
     CGFloat H = _panel.frame.size.height;
     CGFloat cy = (kBarH - 24) / 2;
-    _btnClose.frame = NSMakeRect(10, cy, 24, 24);
-    _btnPause.frame = NSMakeRect(38, cy, 24, 24);
-    _btnCopy.frame = NSMakeRect(66, cy, 24, 24);
-    _btnTrash.frame = NSMakeRect(94, cy, 24, 24);
-    CGFloat left = 126;
-    if (!_btnInsert.hidden) {
-        [_btnInsert sizeToFit];
-        _btnInsert.frame = NSMakeRect(left, (kBarH - _btnInsert.frame.size.height) / 2,
-                                      _btnInsert.frame.size.width, _btnInsert.frame.size.height);
-        left += _btnInsert.frame.size.width + 8;
+    CGFloat left = kBarPad;
+    for (NSButton *b in _bar) {
+        if (b.hidden) continue;
+        b.frame = NSMakeRect(left, cy, 24, 24);
+        left += kBarStep;
     }
-    CGFloat chipW = _chipBg.hidden ? 0 : _chipBg.frame.size.width;
     if (!_chipBg.hidden) {
         NSRect f = _chipBg.frame;
         f.origin = NSMakePoint(left, (kBarH - 18) / 2);
         _chipBg.frame = f;
-        left += chipW + 8;
+        left += _chipBg.frame.size.width + 8;
     }
     CGFloat right = _grip.frame.origin.x - 8;   // قبل از دستگیره تمام شود، نه زیر نقطه
     // در تسمه‌نقاله، فریم متن با قد پنل بالا می‌رود که تا سه خط جا شود
@@ -233,7 +241,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     if (_collectVisible == on) return;
     _collectVisible = on;
     _editorScroll.hidden = !on;
-    _btnInsert.hidden = !on;
+    // پیدا و ناپیدا شدن دکمه‌ها را render می‌گذارد، یک جا، که دو منبع حقیقت نشود
     [self resizeTo:on ? kBarH + kEditorH : [self conveyorHeight]];
 }
 
@@ -250,6 +258,16 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
 
 - (NSString *)editorText {
     return _editor.string ?: @"";
+}
+
+// جای متن را یک‌جا عوض می‌کند: مسیر پاس دستی و مسیر عوض کردن حالت هر دو لازمش دارند
+- (void)setEditorText:(NSString *)text {
+    [self ensureEditor];
+    [_editor.textStorage replaceCharactersInRange:NSMakeRange(0, _editor.string.length)
+                                      withString:text ?: @""];
+    _editor.font = ZFont(15, NO);
+    _editor.textColor = NSColor.labelColor;
+    [_editor scrollRangeToVisible:NSMakeRange(_editor.string.length, 0)];
 }
 
 - (void)clearEditor {
@@ -325,8 +343,8 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
 // جای متن، با همان حسابی که layoutViews می‌کند. از فریمِ خودِ لیبل خوانده نمی‌شود،
 // چون آن یک رندر عقب است و درست همان لحظه‌ای که چیپ ظاهر می‌شود غلط می‌دهد.
 - (CGFloat)textWidth {
-    CGFloat left = 126;
-    if (!_btnInsert.hidden) left += _btnInsert.frame.size.width + 8;
+    CGFloat left = kBarPad;
+    for (NSButton *b in _bar) if (!b.hidden) left += kBarStep;
     if (!_chipBg.hidden) left += _chipBg.frame.size.width + 8;
     return MAX(40, (_grip.frame.origin.x - 8) - left);
 }
@@ -441,6 +459,20 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
 - (void)render:(ZPanelModel *)m {
     [self setCollectVisible:m.collect];
 
+    // زبان روی همان دکمه دیده می‌شود: آیکون یکی است و تولتیپ می‌گوید الان کدام زبان
+    // است و زدنش چه می‌کند. متن روی دکمه نمی‌گذاریم که ردیف یک‌دست بماند.
+    BOOL en = [m.lang hasPrefix:@"en"];
+    _btnLang.toolTip = en ? @"زبان: انگلیسی. برای رفتن به فارسی بزن (Command راست + L)"
+                          : @"زبان: فارسی. برای رفتن به انگلیسی بزن (Command راست + L)";
+    // آیکون حالت، همان چیزی که با زدنش می‌گیری
+    [self setButton:_btnMode symbol:m.collect ? @"bolt.fill" : @"square.and.pencil"];
+    _btnMode.toolTip = m.collect
+        ? @"رفتن به درج زنده؛ متن جمع‌شده هم با خودش می‌آید (Command راست + E)"
+        : @"رفتن به جمع در پنل، جایی که می‌شود ویرایش کرد (Command راست + E)";
+    // پاس دستی و درج فقط در حالت جمع معنا دارند
+    _btnPolish.hidden = !m.collect;
+    _btnInsert.hidden = !m.collect && !m.waitingForTarget;
+
     // چیپ صف (فقط تسمه‌نقاله، وقتی مقصد جلو نیست)
     NSString *chip = @"";
     if (!m.collect && m.queued > 0) {
@@ -456,7 +488,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
         _chipLabel.stringValue = chip;
         [_chipLabel sizeToFit];
         CGFloat w = _chipLabel.frame.size.width + 16;
-        _chipBg.frame = NSMakeRect(126, (kBarH - 18) / 2, w, 18);
+        _chipBg.frame = NSMakeRect(kBarPad, (kBarH - 18) / 2, w, 18);   // x را layoutViews می‌گذارد
         _chipLabel.frame = NSMakeRect(8, 0, w - 16, 17);
     }
 
@@ -488,10 +520,14 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
         _btnPause.toolTip = @"مکث شنیدن (⌥Space)";
     }
 
-    // نقطه
-    NSColor *color = m.error ? NSColor.systemGrayColor
-        : (m.paused ? NSColor.systemGrayColor
-           : (m.listening ? [NSColor colorWithRed:0.88 green:0.19 blue:0.19 alpha:1] : NSColor.systemOrangeColor));
+    // نقطه، با کد رنگ درست: سبز یعنی دارد می‌شنود، قرمز یعنی اتصال مشکل دارد،
+    // نارنجی همان «در حال وصل شدن» قبلی، خاکستری مکث. قبلا شنیدن قرمز بود، یعنی
+    // حالت سلامت و حالت خرابی یک رنگ داشتند.
+    NSColor *color;
+    if (m.paused)                  color = NSColor.systemGrayColor;
+    else if (m.error || m.trouble) color = [NSColor colorWithRed:0.88 green:0.19 blue:0.19 alpha:1];
+    else if (m.listening)          color = [NSColor colorWithRed:0.20 green:0.78 blue:0.35 alpha:1];
+    else                           color = NSColor.systemOrangeColor;
     _dot.layer.backgroundColor = color.CGColor;
     if (m.listening && !m.paused && !_pulsing) [self startPulse];
     if ((!m.listening || m.paused) && _pulsing) [self stopPulse];
@@ -528,6 +564,9 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
 - (void)pauseTap { if (self.onPauseToggle) self.onPauseToggle(); }
 - (void)copyTap { if (self.onCopyNow) self.onCopyNow(); }
 - (void)trashTap { if (self.onTrash) self.onTrash(); }
+- (void)langTap { if (self.onLangSwitch) self.onLangSwitch(); }
+- (void)modeTap { if (self.onModeToggle) self.onModeToggle(); }
+- (void)polishTap { if (self.onPolishNow) self.onPolishNow(); }
 - (void)insertTap { if (self.onInsertAll) self.onInsertAll(); }
 
 // اسکرین‌شات برای بازبینی طراحی (بدون نیاز به اجازه ضبط صفحه)
@@ -632,12 +671,14 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     NSString *_interim;
     NSString *_statusText;
     BOOL _errorState;
+    BOOL _troubleState;       // قطعی موقت: نقطه قرمز، ولی سشن زنده است
     BOOL _listening;
     BOOL _collect;
     NSMutableArray<NSString *> *_pasteBuf;
     NSTimer *_pasteTimer;
     NSURL *_sessionFile;
     BOOL _finished;
+    BOOL _finishing;          // منتظر پاس ویرایشِ پایانی حالت جمع
     BOOL _collectInserted;    // حالت جمع: insertHere قبلا درج کرده؛ finish دوباره درج نکند
     id _frontObserver;
     // خط لوله پاس ویرایش: ترتیب تکه‌ها حفظ می‌شود، یکی‌یکی
@@ -681,6 +722,9 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     _panel.onCopyNow = ^{ [ws copyNow]; };
     _panel.onTrash = ^{ [ws dropPending]; };
     _panel.onInsertAll = ^{ [ws insertHere]; };
+    _panel.onLangSwitch = ^{ [ws switchLang]; };
+    _panel.onModeToggle = ^{ [ws toggleMode]; };
+    _panel.onPolishNow = ^{ [ws polishCollected]; };
     if (_collect) [_panel clearEditor];
     [_panel show];
     if (![ZInjector accessibilityOK]) {
@@ -711,6 +755,14 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     if (_polishBusy || !_polishPending.count) return;
     NSString *raw = _polishPending.firstObject;
     [_polishPending removeObjectAtIndex:0];
+    // حالت جمع: خام می‌نشیند در ادیتور. پاس ویرایش وسط کار روی متنی که داری ویرایشش
+    // می‌کنی می‌افتد و ویرایش‌هایت را می‌شوید، پس تا خودت نخواهی (دکمه پاس) یا تا
+    // لحظه‌ی درج و پایان، اجرا نمی‌شود.
+    if (_collect && !_finished) {
+        [self acceptFinal:raw];
+        [self drainPolish];
+        return;
+    }
     if (_finished) {
         // موقع بستن معطلی نداریم: خام و همین حالا
         [self acceptFinal:raw];
@@ -748,14 +800,20 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
 - (void)engineState:(ZEngineState)state message:(NSString *)msg {
     _errorState = NO;
     _listening = NO;
+    _troubleState = NO;
+    NSString *langName = [ZSettings.shared.lang hasPrefix:@"en"] ? @"انگلیسی" : @"فارسی";
     switch (state) {
         case ZEngineIdle: _statusText = @""; break;
         case ZEngineConnecting: _statusText = @"در حال اتصال…"; break;
         case ZEngineListening:
             _listening = YES;
-            _statusText = @"دارم گوش می‌دم";
+            // زبان همین‌جا دیده می‌شود، پس بعد از عوض کردنش تاییدش را می‌گیری
+            _statusText = [@"دارم گوش می‌دم · " stringByAppendingString:langName];
             break;
-        case ZEngineReconnecting: _statusText = @"اتصال ناپایدار، دوباره وصل می‌شم…"; break;
+        case ZEngineReconnecting:
+            _troubleState = YES;
+            _statusText = @"اتصال ناپایدار، دوباره وصل می‌شم…";
+            break;
         case ZEnginePaused: _statusText = @"مکث؛ ⌥Space برای ادامه"; break;
         case ZEngineGaveUp:
             _errorState = YES;
@@ -820,15 +878,89 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     [self render];
 }
 
+// عوض کردن حالت وسط کار، بدون گم شدن متن. دو حالت یک نوار مشترک دارند و تنها فرق
+// جمع این است که فضای ویرایش هم دارد، پس عوض کردنش فقط جای متن معلق را عوض می‌کند.
+- (void)toggleMode {
+    NSString *pending = _collect ? [_panel editorText] : nil;
+    _collect = !_collect;
+    ZSettings.shared.collectMode = _collect;
+    if (_collect) {
+        // درج زنده به جمع: هرچه در صف مانده و هنوز تایپ نشده می‌رود داخل ادیتور
+        NSString *q = [[_queue arrayByAddingObjectsFromArray:_pasteBuf]
+                       componentsJoinedByString:@" "];
+        [_queue removeAllObjects];
+        [_pasteBuf removeAllObjects];
+        [_panel clearEditor];
+        if (q.length) [_panel appendFinalToEditor:q];
+        _collectInserted = NO;
+    } else {
+        // جمع به درج زنده: متن ادیتور می‌رود سر صف درج، پس دیده و درج می‌شود، نه گم
+        [_panel clearEditor];
+        NSString *t = [pending stringByTrimmingCharactersInSet:
+                       NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        if (t.length) {
+            [_queue addObject:t];
+            [self pump];
+        }
+    }
+    ZLog(@"session: mode -> %@", _collect ? @"collect" : @"live");
+    [self render];
+}
+
+// چرخش زبان. موتور خودش استریم را با زبان تازه ری‌استارت می‌کند و متن خاکستری را
+// قبلش نجات می‌دهد، پس چیزی از دست نمی‌رود. پاس فارسی روی انگلیسی خودبه‌خود کنار
+// می‌ایستد (هم روی زبان سشن، هم روی نبودن حرف فارسی در تکه).
+- (void)switchLang {
+    NSString *next = [ZSettings.shared.lang hasPrefix:@"en"] ? @"fa-IR" : @"en-US";
+    ZSettings.shared.lang = next;
+    [self.engine setLang:next];
+    ZLog(@"session: lang -> %@", next);
+    [self render];
+}
+
+// متن جمع‌شده را یک بار پاس می‌دهد و بعد ادامه می‌دهد. هم دکمه‌ی پاس از این می‌رود،
+// هم درج، هم پایان، پس ترتیبِ «اول پاس، بعد درج» یک جا نوشته شده و واگرا نمی‌شود.
+// روی نخ پس‌زمینه، چون نسخه‌ی دسته‌ای تا ۹ ثانیه بودجه دارد و نخ اصلی نباید یخ بزند.
+- (void)withPolishedCollected:(void (^)(NSString *text))done {
+    NSString *raw = [_panel editorText];
+    if (!ZSettings.shared.polishEnabled || !raw.length) {
+        done(raw);
+        return;
+    }
+    NSString *lang = ZSettings.shared.lang;
+    __weak typeof(self) ws = self;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSString *out = [ZPolish.shared polishSync:raw lang:lang];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            __strong typeof(ws) s = ws;
+            if (!s) return;
+            NSString *t = out.length ? out : raw;
+            if (![t isEqualToString:raw]) [s->_panel setEditorText:t];
+            done(t);
+        });
+    });
+}
+
+// دکمه‌ی پاس: فقط اعمال روی ادیتور، بی‌آن‌که چیزی درج یا بسته شود
+- (void)polishCollected {
+    if (!_collect) return;
+    [self withPolishedCollected:^(NSString *text) {}];
+}
+
 // ⌥V یا دکمه «درج در همین اپ»: هرچه هست، سر کرسر همین اپ جلویی
 - (void)insertHere {
     _target = NSWorkspace.sharedWorkspace.frontmostApplication;
     if (_collect) {
-        NSString *t = [_panel editorText];
-        if (!t.length) return;
-        [self injectText:[t stringByAppendingString:@" "]];
-        _collectInserted = YES;
-        [self finish];
+        if (![_panel editorText].length) return;
+        // پاس اول، درج بعد: در حالت جمع پاس عقب افتاده بود و همین‌جا باید اعمال شود
+        __weak typeof(self) ws = self;
+        [self withPolishedCollected:^(NSString *text) {
+            __strong typeof(ws) s = ws;
+            if (!s || !text.length) return;
+            [s injectText:[text stringByAppendingString:@" "]];
+            s->_collectInserted = YES;
+            [s finishNow];
+        }];
         return;
     }
     [self pump];
@@ -880,9 +1012,31 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
 
 // ---------- پایان (Esc یا دابل‌تپ دوباره) ----------
 
+// حالت جمع پاس ویرایش را به تعویق انداخته بود؛ سر پایان یک بار اجرا می‌شود و بعد
+// تازه درج و کپی. روی نخ پس‌زمینه، چون نسخه‌ی دسته‌ای تا ۹ ثانیه بودجه دارد و نخ
+// اصلی نباید آن‌قدر یخ بزند. مسیر خروج اپ عمدا از این معطلی رد نمی‌شود (finishNow):
+// آنجا اپ دارد بسته می‌شود و از دست دادن پاس مهم نیست، از دست دادن متن مهم است.
 - (void)finish {
+    if (_finished || _finishing) return;
+    if (_collect && !_collectInserted && ZSettings.shared.polishEnabled
+        && [_panel editorText].length) {
+        _finishing = YES;
+        __weak typeof(self) ws = self;
+        [self withPolishedCollected:^(NSString *text) {
+            __strong typeof(ws) s = ws;
+            if (!s) return;
+            s->_finishing = NO;
+            [s finishNow];
+        }];
+        return;
+    }
+    [self finishNow];
+}
+
+- (void)finishNow {
     if (_finished) return;
     _finished = YES;
+    _finishing = NO;
     if (_polishBusy) {
         // تکه در پرواز: خامش برمی‌گردد سر صف که همین حالا درج شود؛ جواب دیرِ پاس دور ریخته می‌شود
         _dropNextPolish = YES;
@@ -943,6 +1097,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     m.listening = _listening;
     m.paused = self.engine.paused;
     m.error = _errorState;
+    m.trouble = _troubleState;
     m.lang = ZSettings.shared.lang;
     m.collect = _collect;
     m.waitingForTarget = !_collect && _queue.count > 0 && ![self targetIsFront];

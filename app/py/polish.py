@@ -36,6 +36,33 @@ JOIN_PREFIXES = ("می", "نمی")
 JOIN_SUFFIXES = ("ها", "های", "هایی", "تر", "ترین")
 
 
+def load_terms():
+    """نقشه‌ی وام‌واژه‌ی فنی از terms.txt، مرتب‌شده از بلندترین کلید به کوتاه‌ترین.
+
+    ترتیب مهم است: «پول ریکوئست» باید قبل از «ریکوئست» امتحان شود، وگرنه نیمه‌کاره
+    جایگزین می‌شود. فایل کنار خود اسکریپت است، پس با بسته‌ی اپ جابه‌جا می‌شود.
+    """
+    path = os.path.join(ROOT, "terms.txt")
+    pairs = []
+    try:
+        with open(path, encoding="utf8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "\t" not in line:
+                    continue
+                fa, la = line.split("\t", 1)
+                fa, la = fa.strip(), la.strip()
+                if fa and la:
+                    pairs.append((fa, la))
+    except OSError:
+        return []
+    pairs.sort(key=lambda p: -len(p[0]))
+    # مرز واژه با \b روی حروف فارسی قابل اعتماد نیست؛ به‌جایش لنگرهای صریح:
+    # ابتدای متن یا یک نویسه‌ی غیرحرفی، و همان در انتها.
+    return [(re.compile(r"(?<![^\W\d_])" + re.escape(fa) + r"(?![^\W\d_])"), la)
+            for fa, la in pairs]
+
+
 class Pipeline:
     def __init__(self):
         from piraye import NormalizerBuilder
@@ -59,6 +86,7 @@ class Pipeline:
         self.ort = ort.InferenceSession(onnx_path, opts, providers=["CPUExecutionProvider"])
         self._spell_cache = {}
         self._lock = threading.Lock()
+        self.terms = load_terms()
         self.polish("این یک متن نمونه است تا مدل گرم شود")  # warmup
 
     # ---------- لایه ۱: نرمال‌سازی ----------
@@ -207,7 +235,15 @@ class Pipeline:
 
     # ---------- کل پاس ----------
 
-    def polish(self, text):
+    # وام‌واژه‌ی فنی به لاتین. عمدا خارج از پاس پیش‌فرض است: تصمیم اولیه این بود که
+    # وام‌واژه دست نخورد، و این تاگل همان تصمیم را برمی‌گرداند، پس فقط با درخواست
+    # صریح اجرا می‌شود. نقشه‌محور و قطعی، بدون هیچ حدس زدنی.
+    def latinize(self, t):
+        for rx, la in self.terms:
+            t = rx.sub(la, t)
+        return t
+
+    def polish(self, text, terms=False):
         t0 = time.time()
         if not text or len(text) > MAX_CHARS or not PERSIAN_RE.search(text):
             return text, []
@@ -217,6 +253,10 @@ class Pipeline:
             t, ops = self.spell(t, t0)
             if (time.time() - t0) * 1000 < PUNCT_GATE_MS:
                 t = self.punctuate(t)
+            # آخر از همه: تا اینجا همه‌ی لایه‌ها روی متن فارسی کار کرده‌اند و
+            # جایگزینی لاتین دیگر مرز واژه‌ای را برایشان به‌هم نمی‌ریزد.
+            if terms and self.terms:
+                t = self.latinize(t)
         t = re.sub(r"  +", " ", t).strip()
         return (t if t else text), ops
 
@@ -274,12 +314,13 @@ class Handler(BaseHTTPRequestHandler):
             return
         text = req.get("text", "")
         lang = req.get("lang", "fa-IR")
+        terms = bool(req.get("terms", False))
         t0 = time.time()
         if not isinstance(text, str) or not READY.is_set() or str(lang).startswith("en"):
             self._send(200, {"text": text, "ready": READY.is_set(), "ms": 0, "spell": []})
             return
         try:
-            out, ops = PIPE.polish(text)
+            out, ops = PIPE.polish(text, terms=terms)
         except Exception:  # noqa: BLE001 — هر خطایی یعنی همان متن خام برگردد
             out, ops = text, []
         self._send(200, {"text": out, "ready": True,

@@ -49,7 +49,8 @@
 
 // ادغام دو interim با هم‌پوشانی توکنی: گوگل گاهی پیشوند تثبیت‌شده را از interim های
 // بعدی می‌اندازد؛ موقع نجات، بلندترین نسخه با دم فعلی ادغام می‌شود که کلمه‌ای گم نشود.
-static NSString *ZMergeInterim(NSString *best, NSString *cur) {
+// همین تابع درز پاره‌های هم‌پوشان مسیر دسته‌ای را هم می‌بندد، پس عمومی است.
+NSString *ZMergeInterim(NSString *best, NSString *cur) {
     best = [best stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     cur = [cur stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (!best.length) return cur;

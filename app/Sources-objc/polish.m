@@ -110,7 +110,9 @@ static const NSTimeInterval kPolishFailsafe = 0.40;
     NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:
         [NSURL URLWithString:[kPolishBase stringByAppendingString:@"/polish"]]];
     req.HTTPMethod = @"POST";
-    req.HTTPBody = [NSJSONSerialization dataWithJSONObject:@{@"text": raw, @"lang": ZSettings.shared.lang}
+    req.HTTPBody = [NSJSONSerialization dataWithJSONObject:@{@"text": raw,
+                                                             @"lang": ZSettings.shared.lang,
+                                                             @"terms": @(ZSettings.shared.latinTerms)}
                                                    options:0 error:nil];
     __block BOOL called = NO;    // هر دو مسیر روی نخ اصلی؛ قفل لازم نیست
     __weak typeof(self) ws = self;
@@ -140,6 +142,43 @@ static const NSTimeInterval kPolishFailsafe = 0.40;
     }] resume];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kPolishFailsafe * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{ finish(raw, @"failsafe"); });
+}
+
+// مسیر دسته‌ای: همگام، با سقف ۸ ثانیه. اینجا کسی منتظر تایپ نیست، پس تایم‌اوت تند
+// مسیر زنده معنا ندارد؛ در عوض اگر دیمن بالا نیامده باشد همان خام برمی‌گردد و اجرا
+// به‌خاطر ویرایش شکست نمی‌خورد.
+- (NSString *)polishSync:(NSString *)raw lang:(NSString *)lang {
+    if (!raw.length || [lang hasPrefix:@"en"] || ![ZPolish hasPersian:raw]) return raw;
+    NSDate *t0 = NSDate.date;
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:
+        [NSURL URLWithString:[kPolishBase stringByAppendingString:@"/polish"]]];
+    req.HTTPMethod = @"POST";
+    req.HTTPBody = [NSJSONSerialization dataWithJSONObject:@{@"text": raw, @"lang": lang,
+                                                             @"terms": @(ZSettings.shared.latinTerms)}
+                                                   options:0 error:nil];
+    req.timeoutInterval = 8;
+    __block NSString *out = nil;
+    __block NSString *outcome = @"empty";
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    [[NSURLSession.sharedSession dataTaskWithRequest:req
+                                  completionHandler:^(NSData *d, NSURLResponse *r, NSError *e) {
+        if (!e && d.length) {
+            NSDictionary *obj = [NSJSONSerialization JSONObjectWithData:d options:0 error:nil];
+            NSString *t = [obj isKindOfClass:NSDictionary.class] &&
+                          [obj[@"text"] isKindOfClass:NSString.class] ? obj[@"text"] : nil;
+            if (t.length) {
+                out = t;
+                outcome = @"ok";
+            }
+        } else if (e) {
+            outcome = e.code == NSURLErrorTimedOut ? @"timeout" : @"down";
+        }
+        dispatch_semaphore_signal(sem);
+    }] resume];
+    dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(9 * NSEC_PER_SEC)));
+    [self log:[@"batch-" stringByAppendingString:outcome]
+           ms:(int)([NSDate.date timeIntervalSinceDate:t0] * 1000) raw:raw out:out ?: raw];
+    return out ?: raw;
 }
 
 // جفت قبل/بعد هر تکه، کنار app.log؛ فایل در .gitignore است

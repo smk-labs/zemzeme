@@ -64,7 +64,7 @@ static NSString *const kBase = @"https://www.google.com/speech-api/full-duplex/v
     [_downTask resume];
 
     NSString *contentType = @"audio/l16; rate=16000";
-    if (ZSettings.shared.upstreamFLAC) {
+    if (ZSettings.shared.upstreamFLAC && !_rawUpload) {
         ZFlacEncoder *enc = [ZFlacEncoder new];
         if (enc) {
             _flac = enc;

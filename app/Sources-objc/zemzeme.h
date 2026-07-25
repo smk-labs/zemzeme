@@ -28,6 +28,7 @@ typedef NS_ENUM(NSInteger, ZInsertMode) {
 @property (nonatomic) BOOL collectMode;             // جمع در پنل به جای درج زنده
 @property (nonatomic) BOOL internalHotkey;
 @property (nonatomic) BOOL polishEnabled;           // پاس ویرایش فارسی؛ پیش‌فرض روشن
+@property (nonatomic) BOOL latinTerms;              // وام‌واژه فنی به لاتین؛ پیش‌فرض خاموش
 @property (nonatomic) BOOL upstreamFLAC;            // فشرده‌سازی FLAC آپلود؛ پیش‌فرض روشن، اگر انکودر نساخت خودش l16 خام می‌رود
 - (ZInsertMode)insertModeForBundleId:(NSString *)bundleId;
 - (useconds_t)typeDelayMicros;
@@ -44,6 +45,11 @@ typedef NS_ENUM(NSInteger, ZInsertMode) {
 @end
 
 ZSpeechEvent *ZProtoDecodeEvent(NSData *body);
+
+// ادغام دو متن با هم‌پوشانی توکنی: دم best با سر cur جوش داده می‌شود، پس نه کلمه‌ای
+// گم می‌شود نه دو بار می‌آید. هم موتور زنده (نجات interim) از آن استفاده می‌کند، هم
+// مسیر دسته‌ای (درز دو پاره‌ی هم‌پوشان فایل).
+NSString *ZMergeInterim(NSString *best, NSString *cur);
 
 // ---------- موتور pluggable ----------
 typedef NS_ENUM(NSInteger, ZEngineState) {
@@ -125,6 +131,10 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 @property (atomic, readonly) unsigned long long bytesFed;        // بایت واقعی نوشته‌شده روی سیم (برای لاگ نرخ)
 @property (nonatomic, copy) void (^onEvent)(ZSpeechEvent *ev);   // روی صف دلیگیت URLSession
 @property (nonatomic, copy) void (^onClose)(NSString *reason);   // دقیقا یک بار
+// آپلود خام l16 حتی اگر تنظیم FLAC روشن باشد؛ قبل از connect ست می‌شود. مسیر دسته‌ای
+// این را می‌خواهد: انکودر FLAC سر finishUpload تا ~۲۵۰ms ته‌مانده را فریم نمی‌کند و
+// در فایل ۹۰ دقیقه‌ای این یعنی صدها بار «آخر پاره» غیرقطعی. خام، قطعی است.
+@property (nonatomic) BOOL rawUpload;
 - (instancetype)initWithLang:(NSString *)lang;
 - (void)connect;
 - (void)feed:(NSData *)pcm;      // s16le مونو ۱۶ کیلوهرتز
@@ -156,6 +166,10 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 + (instancetype)shared;
 - (void)prepare;    // دیمن را بالا بیاور و مدل را گرم کن (آسنکرون، چندبار صدا زدن بی‌ضرر)
 - (void)polish:(NSString *)raw completion:(void (^)(NSString *text))done;
+// نسخه بلوکه برای مسیر دسته‌ای: نه روی نخ اصلی است نه در مسابقه با تایپ، پس بودجه‌اش
+// سخاوتمندتر است و به قرارداد ۳۰۰ میلی‌ثانیه‌ی مسیر زنده کاری ندارد. دیمن نباشد یا
+// دیر کند، همان متن خام برمی‌گردد.
+- (NSString *)polishSync:(NSString *)raw lang:(NSString *)lang;
 @end
 
 // ---------- درج ----------
@@ -174,11 +188,18 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 // دابل‌تپ Command راست (شروع/پایان سشن) در هر حالتی کار می‌کند؛ بقیه (Esc، ⌥ها،
 // تک‌تپ، Command راست+C) فقط وقتی sessionActive=YES باشد.
 @interface ZHotkeyTap : NSObject
-@property (nonatomic, copy) void (^onToggle)(void);        // دابل‌تپ Command راست: شروع/پایان سشن
+// همه‌ی میان‌برها روی Command راست سوار شده‌اند: تک‌تپ مکث/ادامه، دابل‌تپ شروع/پایان،
+// و Command راست + یک حرف برای هر دکمه. همان حروف با ⌥ هم کار می‌کنند (عادت قدیمی
+// نشکند)، چون هر دو از یک نقشه‌ی واحد (actionForCode:) می‌خوانند.
+@property (nonatomic, copy) void (^onToggle)(void);        // دابل‌تپ Command راست
 @property (nonatomic, copy) void (^onEsc)(void);            // Esc: پایان و درج
-@property (nonatomic, copy) void (^onPauseToggle)(void);    // ⌥Space یا تک‌تپ Command راست
-@property (nonatomic, copy) void (^onCopyNow)(void);        // ⌥C یا Command راست+C
-@property (nonatomic, copy) void (^onInsertHere)(void);     // ⌥V
+@property (nonatomic, copy) void (^onPauseToggle)(void);    // تک‌تپ Command راست، یا Space
+@property (nonatomic, copy) void (^onCopyNow)(void);        // C
+@property (nonatomic, copy) void (^onInsertHere)(void);     // V
+@property (nonatomic, copy) void (^onTrash)(void);          // D
+@property (nonatomic, copy) void (^onLangSwitch)(void);     // L
+@property (nonatomic, copy) void (^onModeToggle)(void);     // E
+@property (nonatomic, copy) void (^onPolishNow)(void);      // P
 @property (nonatomic) BOOL sessionActive;
 @property (nonatomic, readonly) BOOL enabled;   // تپ واقعا بالا است، نه فقط enable صدا خورده
 - (void)enable;
@@ -193,6 +214,7 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 @property (nonatomic) BOOL listening;
 @property (nonatomic) BOOL paused;
 @property (nonatomic) BOOL error;       // gaveUp: دکمه مکث می‌شود «تلاش دوباره»
+@property (nonatomic) BOOL trouble;     // قطعی موقت شبکه: نقطه قرمز، ولی سشن زنده است
 @property (nonatomic, copy) NSString *lang;
 @property (nonatomic) BOOL waitingForTarget;
 @property (nonatomic, copy) NSString *targetName;
@@ -204,7 +226,10 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 @property (nonatomic, copy) void (^onPauseToggle)(void);
 @property (nonatomic, copy) void (^onCopyNow)(void);
 @property (nonatomic, copy) void (^onTrash)(void);      // انصراف از هرچه هنوز درج نشده
-@property (nonatomic, copy) void (^onInsertAll)(void);  // فقط حالت جمع: دکمه «درج در همین اپ»
+@property (nonatomic, copy) void (^onInsertAll)(void);  // درج هرچه در پنل جمع شده
+@property (nonatomic, copy) void (^onLangSwitch)(void); // چرخش زبان
+@property (nonatomic, copy) void (^onModeToggle)(void); // جمع در پنل ↔ درج زنده
+@property (nonatomic, copy) void (^onPolishNow)(void);  // اعمال پاس فارسی روی متن جمع‌شده
 - (void)show;
 - (void)hide;
 - (void)render:(ZPanelModel *)m;
@@ -212,6 +237,7 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 // ادیتور حالت جمع: متن قطعی قابل ویرایش داخل خود پنل
 - (void)appendFinalToEditor:(NSString *)chunk;
 - (NSString *)editorText;
+- (void)setEditorText:(NSString *)text;
 - (void)clearEditor;
 - (void)makeShots:(NSString *)dir;
 @end
@@ -222,11 +248,34 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 @property (nonatomic, strong, readonly) id<ZEngine> engine;
 - (instancetype)initWithEngine:(id<ZEngine>)engine panel:(ZPanel *)panel;
 - (void)start;
-- (void)pauseToggle;   // ⌥Space: مکث/ادامه؛ بعد از خطا یعنی تلاش دوباره
-- (void)copyNow;       // ⌥C: کپی متن تا اینجا
-- (void)insertHere;    // ⌥V: درج در همین اپ جلویی
-- (void)finish;
+- (void)pauseToggle;      // مکث/ادامه؛ بعد از خطا یعنی تلاش دوباره
+- (void)copyNow;          // کپی متن تا اینجا
+- (void)insertHere;       // درج در همین اپ جلویی
+- (void)dropPending;      // دور ریختن هرچه هنوز درج نشده
+- (void)toggleMode;       // جمع در پنل ↔ درج زنده، با حفظ متن
+- (void)switchLang;       // چرخش فارسی/انگلیسی
+- (void)polishCollected;  // پاس فارسی روی متن جمع‌شده، به خواست خودِ کاربر
+- (void)finish;           // ممکن است منتظر پاس پایانی بماند، بعد ببندد
+- (void)finishNow;        // بدون معطلی؛ مسیر خروج اپ از این می‌رود
 @end
+
+// ---------- رونویسی فایل (حالت دسته‌ای، بی‌رابط) ----------
+// هر فایلی که AVFoundation باز کند به پی‌سی‌ام خام s16le مونو ۱۶ کیلوهرتز، تکه‌تکه.
+// کل فایل هیچ‌وقت در حافظه نمی‌آید، پس فایل ۹۰ دقیقه‌ای هم به همان چند مگابایت
+// فایل کوتاه کار می‌کند.
+@interface ZFileDecoder : NSObject
++ (BOOL)supportsPath:(NSString *)path;          // ogg/opus/mkv/webm نه: دیمکسر ندارند
+@property (nonatomic, readonly) NSTimeInterval duration;
+- (instancetype)initWithURL:(NSURL *)url error:(NSError **)err;
+- (NSData *)nextChunk:(NSError **)err;          // نال: پایان فایل، یا خطا در err
+- (void)cancel;
+@end
+
+// zemzeme --transcribe <files...> [--lang fa-IR] [--jobs N] [--out DIR] [--srt] [--speed X]
+// بی‌رابط و مستقل از اپ منوبار: نه آیتم نوار وضعیت می‌سازد نه اجازه اکسسبیلیتی
+// می‌خواهد، و سشن‌هایش (pair های تصادفی خودشان) با دیکته‌ی زنده‌ی در جریان قاطی
+// نمی‌شوند. jobs محافظه‌کارانه است که کلید مشترک زیر پای مسیر زنده در نرود.
+int ZBatchMain(NSArray<NSString *> *args);
 
 // ---------- فونت و سلف‌تست ----------
 void ZRegisterFonts(void);

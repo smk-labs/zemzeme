@@ -21,7 +21,7 @@ clang -fobjc-arc -O2 -Wall -Wno-unused-function \
   Sources-objc/*.m \
   -framework AppKit -framework AVFoundation -framework Carbon \
   -framework CoreText -framework ApplicationServices -framework QuartzCore \
-  -framework AudioToolbox \
+  -framework AudioToolbox -framework CoreMedia \
   -o .build/zemzeme
 
 rm -rf "$APP"
@@ -31,7 +31,7 @@ cp Info.plist "$APP/Contents/Info.plist"
 # اسکریپت‌های همراه داخل بسته: نسخه‌دار، خواندنی، هرجا اپ برود با آن می‌روند.
 # venv و مدل‌ها (~۵۰۰ مگ) عمدا بیرون می‌مانند؛ setup.sh آن‌ها را در
 # ~/Library/Application Support/Zemzeme/py می‌گذارد.
-cp ../serve.py ../index.html py/polish.py "$APP/Contents/Resources/"
+cp ../serve.py ../index.html py/polish.py py/terms.txt "$APP/Contents/Resources/"
 for f in "$HOME/Library/Fonts/Vazirmatn-Regular.ttf" "$HOME/Library/Fonts/Vazirmatn-Medium.ttf"; do
   [ -f "$f" ] && cp "$f" "$APP/Contents/Resources/" || true
 done
