@@ -278,9 +278,25 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 @property (nonatomic) ZMode mode;
 @end
 
-// رنگ وضعیت، یک منبع حقیقت: نقطه‌ی روی پنل و نشانگر کنار کرسر هر دو از همین
-// می‌خوانند، پس معنی سبز/قرمز/نارنجی/خاکستری در دو جا واگرا نمی‌شود.
+// رنگ وضعیت، یک منبع حقیقت: نشان روی پنل، نشانگر کنار کرسر و آیتم منوبار هر سه
+// از همین می‌خوانند، پس معنی سبز/قرمز/نارنجی/خاکستری جایی واگرا نمی‌شود.
 NSColor *ZStatusColor(ZPanelModel *m);
+
+// ---------- نشان زمزمه (mark.m) ----------
+// حباب گفتار با سه میله‌ی صدای خالی‌شده از دلش: «حرف می‌زنی، پیام می‌شود». یک
+// تعریف برداری برای همه جا؛ پهن‌تر از بلندی‌اش است (نسبت ZMarkAspect)، پس هر
+// جایی که وسط‌چین می‌کند باید عرض را جدا حساب کند نه با یک ثابت مربع.
+extern const CGFloat ZMarkAspect;
+void ZMarkDraw(NSRect box, NSColor *color);     // وسط box، با حفظ نسبت
+NSImage *ZMarkImage(CGFloat height, NSColor *tint);  // نال یعنی template برای منوبار بی‌کار
+int ZMarkIconMain(NSString *dir);               // iconset آیکون بسته، برای build.sh
+void ZMarkShot(NSString *dir);                  // mark.png برای --uishot
+
+// ویوی نشان: جای NSView رنگی قبلی. رنگ که عوض شود خودش دوباره می‌کشد؛ ضربان و
+// مقیاس بلندی صدا مثل قبل روی layer همین ویو سوارند.
+@interface ZMarkView : NSView
+@property (nonatomic, strong) NSColor *color;
+@end
 
 // ---------- نشانگر کنار کرسر (حالت کرسر) ----------
 // پنجره‌ی ۲۲ نقطه‌ای بدون قاب که فقط یک دایره‌ی رنگی در خود دارد و بالای کرسرِ اپِ
@@ -323,6 +339,8 @@ NSColor *ZStatusColor(ZPanelModel *m);
 // ---------- سشن تسمه‌نقاله ----------
 @interface ZSession : NSObject <ZEngineDelegate>
 @property (nonatomic, copy) void (^onFinish)(void);
+// هر رندر با همان مدل پنل صدا می‌شود؛ دلیگیت اپ از همین آیتم منوبار را رنگ می‌کند
+@property (nonatomic, copy) void (^onModel)(ZPanelModel *m);
 @property (nonatomic, strong, readonly) id<ZEngine> engine;
 - (instancetype)initWithEngine:(id<ZEngine>)engine panel:(ZPanel *)panel;
 - (void)start;

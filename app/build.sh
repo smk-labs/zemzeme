@@ -32,6 +32,12 @@ cp Info.plist "$APP/Contents/Info.plist"
 # venv و مدل‌ها (~۵۰۰ مگ) عمدا بیرون می‌مانند؛ setup.sh آن‌ها را در
 # ~/Library/Application Support/Zemzeme/py می‌گذارد.
 cp ../serve.py ../index.html py/polish.py py/terms.txt "$APP/Contents/Resources/"
+
+# آیکون بسته از خود باینری تازه می‌آید (نشان یک بار در mark.m تعریف شده، بیت‌مپی در
+# ریپو نیست) و iconutil سیستم به icns تبدیلش می‌کند. قبل از امضا، چون داخل بسته است.
+rm -rf .build/icon.iconset
+.build/zemzeme --appicon .build/icon.iconset
+iconutil -c icns .build/icon.iconset -o "$APP/Contents/Resources/Zemzeme.icns"
 for f in "$HOME/Library/Fonts/Vazirmatn-Regular.ttf" "$HOME/Library/Fonts/Vazirmatn-Medium.ttf"; do
   [ -f "$f" ] && cp "$f" "$APP/Contents/Resources/" || true
 done

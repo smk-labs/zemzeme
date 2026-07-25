@@ -72,6 +72,7 @@ int ZSelfTest(NSString *file, NSString *lang) {
     ZSession *_session;
     ZHotkeyTap *_hotkeys;
     CFAbsoluteTime _lastToggleAt;    // دیبانس toggle داخلی در برابر toggle بیرونی (Karabiner)
+    NSColor *_menubarTint;           // رنگ فعلی آیتم منوبار؛ رندر پرتکرار تصویر نو نسازد
     BOOL _axPrompted;                // پنجره درخواست اکسسبیلیتی فقط یک بار در هر اجرا
 }
 
@@ -142,6 +143,7 @@ int ZSelfTest(NSString *file, NSString *lang) {
         }
         [_panel makeShots:args[i + 1]];
         [ZCheatSheet shot:args[i + 1]];
+        ZMarkShot(args[i + 1]);
         // پنل رونویسی آخر می‌آید و خودش خروج را صدا می‌زند: عکس‌هایش پله‌پله و با
         // فرصت رندر گرفته می‌شوند (جدول ویو-محور بی‌چرخیدن ران‌لوپ خالی درمی‌آید).
         [ZBatchPanel.shared makeShots:args[i + 1] then:^{ [NSApp terminate:nil]; }];
@@ -230,6 +232,20 @@ int ZSelfTest(NSString *file, NSString *lang) {
         if (!me) return;
         me->_session = nil;
         me->_hotkeys.sessionActive = NO;
+        // آیتم منوبار به template برمی‌گردد که باز با نوار روشن و تیره و هایلایت وفق بیاید
+        me->_menubarTint = nil;
+        me->_statusItem.button.image = ZMarkImage(18, nil);
+    };
+    // در طول سشن آیتم منوبار همان رنگ وضعیت پنل را دارد. تصویر template رنگ را
+    // نادیده می‌گیرد، پس نسخه‌ی رنگی template نیست و با خود رنگ کشیده می‌شود؛ و چون
+    // render با هر متن خاکستری صدا می‌خورد، فقط سر عوض شدن واقعی رنگ تصویر نو می‌سازیم.
+    s.onModel = ^(ZPanelModel *m) {
+        __strong typeof(ws) me = ws;
+        if (!me) return;
+        NSColor *c = ZStatusColor(m);
+        if ([c isEqual:me->_menubarTint]) return;
+        me->_menubarTint = c;
+        me->_statusItem.button.image = ZMarkImage(18, c);
     };
     // شاید موقع لانچ دسترسی نبود؛ همین‌جا یک‌بار دیگر امتحان کن (بی‌ضرر اگر از قبل فعال است)
     [_hotkeys enable];
@@ -248,8 +264,8 @@ int ZSelfTest(NSString *file, NSString *lang) {
 
 - (void)setupStatusItem {
     _statusItem = [NSStatusBar.systemStatusBar statusItemWithLength:NSSquareStatusItemLength];
-    _statusItem.button.image = [NSImage imageWithSystemSymbolName:@"waveform"
-                                         accessibilityDescription:@"زمزمه"];
+    _statusItem.button.image = ZMarkImage(18, nil);
+    _statusItem.button.image.accessibilityDescription = @"زمزمه";
     NSMenu *menu = [NSMenu new];
     menu.delegate = self;
     _statusItem.menu = menu;
@@ -457,6 +473,9 @@ int main(int argc, const char *argv[]) {
         // چون گارد «یک نمونه» در applicationDidFinishLaunching است و اینجا
         // هیچ‌وقت به آن نمی‌رسیم.
         if ([args containsObject:@"--transcribe"]) return ZBatchMain(args);
+        // آیکون بسته برای build.sh؛ مثل حالت دسته‌ای قبل از NSApplication برمی‌گردد
+        NSUInteger ic = [args indexOfObject:@"--appicon"];
+        if (ic != NSNotFound && ic + 1 < args.count) return ZMarkIconMain(args[ic + 1]);
         NSApplication *app = NSApplication.sharedApplication;
         static ZAppDelegate *delegate;
         delegate = [ZAppDelegate new];

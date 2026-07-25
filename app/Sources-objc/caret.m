@@ -4,11 +4,13 @@
 #import "zemzeme.h"
 #import <ApplicationServices/ApplicationServices.h>
 
-static const CGFloat kDotSize = 14;
-// پنجره از خود نقطه بزرگ‌تر است: نقطه با بلندی صدا تا ۱٫۵ برابر باد می‌کند و
-// بیرون از پنجره بریده می‌شد.
-static const CGFloat kWinSize = 22;
-static const CGFloat kPad = (kWinSize - kDotSize) / 2;
+static const CGFloat kDotSize = 14;   // بلندی نشان؛ عرضش از ZMarkAspect درمی‌آید
+// پنجره از خود نشان بزرگ‌تر است: نشان با بلندی صدا تا ۱٫۵ برابر باد می‌کند و
+// بیرون از پنجره بریده می‌شد. نشان پهن‌تر از بلند است، پس پنجره دو ثابت جدا دارد
+// و وسط‌چین کردن روی عرض انجام می‌شود، نه با یک ثابت مربع.
+static const CGFloat kWinH = 22;
+static const CGFloat kWinW = 24;
+static const CGFloat kPadY = (kWinH - kDotSize) / 2;
 static const CGFloat kGapY = 4;         // فاصله‌ی عمودی نقطه از خط متن
 static const CGFloat kWinInset = 12;    // فروکاست پنجره: چقدر تو رفته از گوشه‌ی بالا-چپ
 static const CGFloat kParkInset = 24;   // فروکاست آخر: فاصله از گوشه‌ی صفحه
@@ -234,7 +236,7 @@ static NSRect ZFromAX(CGRect r) {
 
 @implementation ZCaretDot {
     NSPanel *_win;
-    NSView *_dot;
+    ZMarkView *_dot;
     NSTimer *_timer;
     dispatch_queue_t _q;
     BOOL _busy;        // پرس‌وجوی قبلی هنوز برنگشته؛ اپ کند نباید صف بسازد
@@ -249,7 +251,7 @@ static NSRect ZFromAX(CGRect r) {
         // همان تنظیمات پنل شناور، چون همان‌ها درست‌اند: نه فوکس می‌گیرد، نه اپ را
         // فعال می‌کند، روی همه‌ی Space ها و روی فول‌اسکرین می‌ماند و با رفتن اپ به
         // پس‌زمینه پنهان نمی‌شود.
-        _win = [[NSPanel alloc] initWithContentRect:NSMakeRect(0, 0, kWinSize, kWinSize)
+        _win = [[NSPanel alloc] initWithContentRect:NSMakeRect(0, 0, kWinW, kWinH)
                                           styleMask:NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel
                                             backing:NSBackingStoreBuffered defer:NO];
         _win.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces
@@ -270,11 +272,11 @@ static NSRect ZFromAX(CGRect r) {
         // شود و به اپ زیرین برسد؛ وگرنه یک سوراخ کور روی متن ساخته بودیم.
         _win.ignoresMouseEvents = YES;
 
-        NSView *host = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, kWinSize, kWinSize)];
-        _dot = [[NSView alloc] initWithFrame:NSMakeRect(kPad, kPad, kDotSize, kDotSize)];
-        _dot.wantsLayer = YES;
-        _dot.layer.cornerRadius = kDotSize / 2;
-        // سایه‌ی نرم: نقطه روی هر پس‌زمینه‌ای ممکن است بنشیند و بی این، روی رنگ
+        NSView *host = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, kWinW, kWinH)];
+        _dot = [[ZMarkView alloc] initWithFrame:
+            NSMakeRect((kWinW - kDotSize * ZMarkAspect) / 2, kPadY,
+                       kDotSize * ZMarkAspect, kDotSize)];
+        // سایه‌ی نرم: نشان روی هر پس‌زمینه‌ای ممکن است بنشیند و بی این، روی رنگ
         // نزدیک به خودش گم می‌شود.
         _dot.layer.shadowColor = NSColor.blackColor.CGColor;
         _dot.layer.shadowOpacity = 0.35f;
@@ -345,11 +347,11 @@ static NSRect ZFromAX(CGRect r) {
         // ولی اگر اپی رنج واقعی برگرداند باز هم وسطِ همان می‌نشیند نه کنارش.
         NSRect c = ZFromAX(hit.rect);
         NSPoint ref = NSMakePoint(NSMidX(c), NSMidY(c));
-        CGFloat below = NSMinY(c) - kGapY - kPad - kDotSize;
+        CGFloat below = NSMinY(c) - kGapY - kPadY - kDotSize;
         // ته صفحه جا نیست: همان‌جا برمی‌گردد بالای کرسر، باز هم مثل خود مک
         CGFloat y = below >= NSMinY([self screenNear:ref].frame)
-            ? below : NSMaxY(c) + kGapY - kPad;
-        return [self clamp:NSMakePoint(NSMidX(c) - kWinSize / 2, y) near:ref];
+            ? below : NSMaxY(c) + kGapY - kPadY;
+        return [self clamp:NSMakePoint(NSMidX(c) - kWinW / 2, y) near:ref];
     }
     if (hit.src == ZCaretWindow) {
         // پایین-چپِ داخل پنجره، نه بالا-چپ. بالا-چپ روی پنجره‌ی تمام‌صفحه یعنی
@@ -385,12 +387,12 @@ static NSRect ZFromAX(CGRect r) {
 
 - (NSPoint)clamp:(NSPoint)p near:(NSPoint)ref {
     NSRect f = [self screenNear:ref].frame;
-    return NSMakePoint(MIN(MAX(p.x, NSMinX(f)), NSMaxX(f) - kWinSize),
-                       MIN(MAX(p.y, NSMinY(f)), NSMaxY(f) - kWinSize));
+    return NSMakePoint(MIN(MAX(p.x, NSMinX(f)), NSMaxX(f) - kWinW),
+                       MIN(MAX(p.y, NSMinY(f)), NSMaxY(f) - kWinH));
 }
 
 - (void)render:(ZPanelModel *)m {
-    _dot.layer.backgroundColor = ZStatusColor(m).CGColor;
+    _dot.color = ZStatusColor(m);
     BOOL live = m.listening && !m.paused;
     if (live && !_pulsing) [self startPulse];
     if (!live && _pulsing) [self stopPulse];

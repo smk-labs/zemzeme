@@ -48,7 +48,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
 @implementation ZPanel {
     NSPanel *_panel;
     ZDragEffectView *_effect;
-    NSView *_dot;
+    ZMarkView *_dot;
     NSImageView *_grip;
     NSTextField *_text;
     NSView *_chipBg;
@@ -100,9 +100,9 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
         _effect.layer.borderWidth = 0.5;
         _panel.contentView = _effect;
 
-        _dot = [[NSView alloc] initWithFrame:NSMakeRect(kPW - 25, (kBarH - 9) / 2, 9, 9)];
-        _dot.wantsLayer = YES;
-        _dot.layer.cornerRadius = 4.5;
+        // نشان پهن‌تر از بلند است، پس قاب با ZMarkAspect حساب می‌شود نه مربع ۹
+        _dot = [[ZMarkView alloc] initWithFrame:
+            NSMakeRect(kPW - 16 - 9 * ZMarkAspect, (kBarH - 9) / 2, 9 * ZMarkAspect, 9)];
         [_effect addSubview:_dot];
 
         // دستگیرهٔ کشیدن: فقط راهنمای دیداری (کل پس‌زمینه از قبل قابل کشیدن است)، کنار نقطه
@@ -113,7 +113,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
         _grip = [NSImageView imageViewWithImage:gripImg ?: [NSImage new]];
         _grip.contentTintColor = NSColor.secondaryLabelColor;
         _grip.toolTip = @"بکش تا جابه‌جا شود";
-        _grip.frame = NSMakeRect(kPW - 25 - 8 - 16, (kBarH - 9) / 2, 16, 9);
+        _grip.frame = NSMakeRect(kPW - 16 - 9 * ZMarkAspect - 8 - 16, (kBarH - 9) / 2, 16, 9);
         [_effect addSubview:_grip];
 
         _text = [NSTextField labelWithString:@""];
@@ -640,7 +640,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
         _btnPause.toolTip = @"مکث شنیدن (⌥Space)";
     }
 
-    _dot.layer.backgroundColor = ZStatusColor(m).CGColor;
+    _dot.color = ZStatusColor(m);
     if (m.listening && !m.paused && !_pulsing) [self startPulse];
     if ((!m.listening || m.paused) && _pulsing) [self stopPulse];
 
@@ -1386,6 +1386,8 @@ static NSString *ZModeLabel(ZMode m) {
     // در حالت کرسر پنل پنهان است؛ رندر کردنش یعنی قد کشیدن و چیدن یک پنجره‌ی نادیده
     if (_mode == ZModeCursor) [_dot render:m];
     else [_panel render:m];
+    // منوبار هم از همین مدل رنگ می‌گیرد؛ کانال وضعیت دومی ساخته نشده
+    if (self.onModel) self.onModel(m);
 }
 
 @end
