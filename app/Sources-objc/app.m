@@ -159,8 +159,15 @@ int ZSelfTest(NSString *file, NSString *lang) {
         if (!_session) [self startSession];
     } else if ([url isEqualToString:@"zemzeme://stop"]) {
         [_session finish];
-    } else {
+    } else if ([url isEqualToString:@"zemzeme://quit"]) {
+        // خروج نرم برای بیلد تازه: مسیر terminate سشن باز را تمام می‌کند و متنش را
+        // نگه می‌دارد. با سیگنال (pkill) این مسیر اجرا نمی‌شود و متن دور می‌ریزد.
+        [NSApp terminate:nil];
+    } else if ([url isEqualToString:@"zemzeme://toggle"] || !url.length) {
         [self toggleSession];
+    } else {
+        // قبلا هر آدرس ناشناسی سشن را روشن می‌کرد؛ یک غلط تایپی یعنی ضبط ناخواسته
+        ZLog(@"app: unknown url, ignored");
     }
 }
 

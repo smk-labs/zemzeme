@@ -24,6 +24,9 @@
     NSDate *_lastResultAt;       // آخرین فریمِ نتیجه‌دار، نه هر فریمی
     NSTimeInterval _voiceSinceResult;   // جمع ثانیه‌های صدای واقعی از آخرین نتیجه
     NSDate *_prevLevelAt;        // برای اندازه‌گیری همان جمع
+    NSDate *_stallGraceUntil;    // تا این لحظه استریمِ تازه متهم به گیر کردن نمی‌شود
+    NSString *_drainCarry;       // متن معلقِ سر چرخش، اگر سشن قدیمی final نداد
+    BOOL _drainGotFinal;
     NSInteger _endsSinceResult;
     BOOL _gotResultThisCycle;
     NSString *_lastInterim;
@@ -239,6 +242,10 @@ static NSString *ZMergeInterim(NSString *best, NSString *cur) {
     NSData *pre = _replay.length ? [_replay copy] : nil;
     [_feedLock unlock];
     if (pre) [s feed:pre];
+    // استریمی که با بازپخش شروع می‌شود اول باید همان صدای کهنه را بالا بفرستد و
+    // بشنود؛ در آن فاصله نتیجه‌ای نمی‌آید و این «گیر کردن» نیست. بدون این مهلت،
+    // خودِ بازپخش باعث تشخیص گیرِ بعدی می‌شد و حلقه هر دور بدتر می‌شد.
+    _stallGraceUntil = [NSDate dateWithTimeIntervalSinceNow:pre.length / 32000.0 + 2.0];
     _lastRateLogAt = NSDate.date;
     _lastRateLogBytes = 0;
     ZLog(@"engine: stream open pair=%@ lang=%@ engine=google codec=%@ preroll=%luB",
@@ -248,7 +255,10 @@ static NSString *ZMergeInterim(NSString *best, NSString *cur) {
 - (void)handleEvent:(ZSpeechEvent *)ev from:(ZGoogleStream *)s {
     if (!s) return;
     if (s == _draining) {
-        for (NSString *f in ev.finals) [self deliverFinal:f];
+        for (NSString *f in ev.finals) {
+            _drainGotFinal = YES;
+            [self deliverFinal:f];
+        }
         return;
     }
     if (s != _stream) return;
@@ -280,10 +290,9 @@ static NSString *ZMergeInterim(NSString *best, NSString *cur) {
         if (_lastInterim.length > _salvageBest.length) _salvageBest = [_lastInterim copy];
         [self.delegate engineInterim:_lastInterim];
     }
-    // چرخش فرصت‌طلبانه سر مرز یک نتیجه قطعی. عدد از ۲۴۰ به ۹۰ ثانیه آمد: صدای پیوسته‌ی
-    // طولانی همان چیزی است که سشن گوگل را از کار می‌انداخت، و سر مرز final بافر بازپخش
-    // خالی است، پس این چرخش نه دیده می‌شود نه چیزی از دست می‌دهد.
-    if (ev.finals.count && [NSDate.date timeIntervalSinceDate:_streamStartedAt] > 90) {
+    // مرز یک متن قطعی بهترین جای چرخش است: هیچ متن معلقی در کار نیست. اگر تا سقف
+    // اجباری (tick) چنین مرزی پیش بیاید، همان‌جا عوض می‌کنیم.
+    if (ev.finals.count && [NSDate.date timeIntervalSinceDate:_streamStartedAt] > kZRotateAtFinalSec) {
         [self rotate];
     }
 }
@@ -291,6 +300,13 @@ static NSString *ZMergeInterim(NSString *best, NSString *cur) {
 - (void)handleClose:(NSString *)reason from:(ZGoogleStream *)s {
     if (s && s == _draining) {
         _draining = nil;
+        // سشن قدیمی هیچ متن قطعی نداد؟ آن‌وقت متن معلقِ لحظه‌ی چرخش را خودمان درج
+        // می‌کنیم. بدون این، متن خاکستریِ سر چرخش با interim سشن تازه پاک می‌شد.
+        if (!_drainGotFinal && _drainCarry.length) {
+            ZLog(@"engine: drain gave nothing, carrying %lu chars", (unsigned long)_drainCarry.length);
+            [self deliverFinal:_drainCarry];
+        }
+        _drainCarry = nil;
         ZLog(@"engine: drained pair=%@ (%@)", s.pair, reason);
         return;
     }
@@ -385,7 +401,8 @@ static NSString *ZMergeInterim(NSString *best, NSString *cur) {
     NSTimeInterval voiced = _voiceSinceResult;
     [_feedLock unlock];
     NSTimeInterval sinceResult = [now timeIntervalSinceDate:_lastResultAt];
-    if (voiced > kZStallVoiceSec && sinceResult > kZStallSec) {
+    BOOL graced = _stallGraceUntil && [now compare:_stallGraceUntil] == NSOrderedAscending;
+    if (!graced && voiced > kZStallVoiceSec && sinceResult > kZStallSec) {
         ZLog(@"engine: stalled %.0fs (voice %.1fs) with no result, recycling pair=%@",
              sinceResult, voiced, _stream.pair);
         // مسیر close خودش salvage می‌کند و آن درست است: salvage متنی را می‌گیرد که
@@ -400,15 +417,32 @@ static NSString *ZMergeInterim(NSString *best, NSString *cur) {
         [_stream cancel];    // مسیر close ری‌استارت را می‌برد
         return;
     }
-    if (age > 285) [self rotate];    // چرخش اجباری قبل از سقف سرور
+    // چرخش اجباری قبل از سقف ~۳۰ ثانیه‌ای صدای سرور. این مسیر عادی است، نه استثنا:
+    // اگر همیشه قبل از سقف عوض کنیم، هیچ‌وقت به گیر کردن و بازپخش نمی‌رسیم.
+    if (age > kZRotateSec) [self rotate];
 }
 
+// چرخش نرم: برعکس مسیر گیر کردن، اینجا آپلود سالم تمام می‌شود، پس سرور همه‌ی صدا را
+// دارد و متن قطعی‌اش را می‌دهد. یعنی بازپخش نباید انجام شود، وگرنه همان حرف‌ها دو بار
+// درج می‌شوند. متن معلق هم به‌عنوان بیمه کنار گذاشته می‌شود، برای وقتی که سشن قدیمی
+// دست‌خالی بست.
 - (void)rotate {
     if (!_running || !_stream) return;
     ZGoogleStream *old = _stream;
     ZLog(@"engine: rotate pair=%@ age=%.0fs", old.pair, [NSDate.date timeIntervalSinceDate:_streamStartedAt]);
     [_draining cancel];
     _draining = old;
+    _drainGotFinal = NO;
+    _drainCarry = ZMergeInterim(_salvageBest, _lastInterim);
+    // مسئولیت این متن از این لحظه با مسیر drain است، پس دفترِ salvage پاک می‌شود که
+    // بعدا همان حرف‌ها را دوباره درج نکند. نمایش دست‌نخورده می‌ماند و interim سشن
+    // تازه جایش را می‌گیرد، پس چیزی روی صفحه پرت‌وپلا نمی‌شود.
+    _lastInterim = @"";
+    _salvageBest = @"";
+    [_feedLock lock];
+    _replay.length = 0;
+    _voiceSinceResult = 0;
+    [_feedLock unlock];
     [old finishUpload];
     __weak typeof(self) ws = self;
     __weak ZGoogleStream *wold = old;

@@ -46,11 +46,20 @@ if [ -d ../Zemzeme.app ]; then
   rm -rf ../Zemzeme.app
 fi
 
-# جایگزینی روی اپِ باز کار نصفه می‌دهد، پس اول بسته شود
+# جایگزینی روی اپِ باز کار نصفه می‌دهد، پس اول بسته شود. خروج نرم با پیام quit، نه
+# kill: مسیر terminate اپ سشن بازِ دیکته را تمام می‌کند و متنش را نگه می‌دارد.
+# با pkill (سیگنال) آن مسیر اجرا نمی‌شود و هرچه گفته شده بی‌صدا دور می‌ریزد.
 WAS_RUNNING=0
-pgrep -x zemzeme >/dev/null && WAS_RUNNING=1 || true
-pkill -x zemzeme >/dev/null 2>&1 || true
-for _ in $(seq 30); do pgrep -x zemzeme >/dev/null || break; sleep 0.1; done
+if pgrep -x zemzeme >/dev/null; then
+  WAS_RUNNING=1
+  open -g 'zemzeme://quit' >/dev/null 2>&1 || true
+  for _ in $(seq 40); do pgrep -x zemzeme >/dev/null || break; sleep 0.1; done
+  if pgrep -x zemzeme >/dev/null; then
+    echo "warn: نرم بیرون نرفت، kill می‌شود (متن سشن باز از دست می‌رود)"
+    pkill -x zemzeme >/dev/null 2>&1 || true
+    for _ in $(seq 20); do pgrep -x zemzeme >/dev/null || break; sleep 0.1; done
+  fi
+fi
 
 rm -rf "$DEST"
 ditto "$APP" "$DEST"          # ditto نه cp: امضا و ویژگی‌های فایل سالم منتقل می‌شوند
