@@ -10,8 +10,10 @@ import threading
 import time
 import os
 
-ROOT = os.path.dirname(os.path.abspath(__file__))
-SESSIONS = os.path.join(ROOT, "sessions")
+ROOT = os.path.dirname(os.path.abspath(__file__))   # صفحه از همین‌جا سرو می‌شود
+# بسته اپ خواندنی است، پس داده جای دیگری می‌نشیند؛ اپ مسیر را با ZEMZEME_DATA می‌دهد
+DATA = os.environ.get("ZEMZEME_DATA") or ROOT
+SESSIONS = os.path.join(DATA, "sessions")
 os.makedirs(SESSIONS, exist_ok=True)
 PORT = 17635
 
@@ -87,7 +89,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         elif self.path == "/log":
             length = int(self.headers.get("Content-Length", 0))
             line = self.rfile.read(length).decode("utf-8", "replace")
-            with open(os.path.join(ROOT, "log.txt"), "a") as f:
+            with open(os.path.join(DATA, "log.txt"), "a") as f:
                 f.write(time.strftime("%H:%M:%S ") + line + "\n")
             self.send_response(200)
             self.end_headers()

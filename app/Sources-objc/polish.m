@@ -61,16 +61,20 @@ static const NSTimeInterval kPolishFailsafe = 0.40;
 }
 
 - (void)spawnDaemon {
-    NSString *py = [ZRoot() URLByAppendingPathComponent:@"app/py/.venv/bin/python3"].path;
-    NSString *script = [ZRoot() URLByAppendingPathComponent:@"app/py/polish.py"].path;
+    // اسکریپت همراه اپ می‌آید، ولی venv و مدل‌ها (~۵۰۰ مگ) بیرون بسته می‌مانند
+    NSString *py = [ZSupport() URLByAppendingPathComponent:@"py/.venv/bin/python3"].path;
+    NSString *script = [ZRes() URLByAppendingPathComponent:@"polish.py"].path;
     if (![NSFileManager.defaultManager isExecutableFileAtPath:py]) {
         ZLog(@"polish: venv نیست (%@)؛ یک بار bash app/py/setup.sh را اجرا کن", py);
         return;
     }
+    NSMutableDictionary *env = [NSProcessInfo.processInfo.environment mutableCopy];
+    env[@"ZEMZEME_MODELS"] = [ZSupport() URLByAppendingPathComponent:@"py/models"].path;
     NSTask *p = [NSTask new];
     p.executableURL = [NSURL fileURLWithPath:py];
     p.arguments = @[script];
-    p.currentDirectoryURL = ZRoot();
+    p.environment = env;
+    p.currentDirectoryURL = ZSupport();
     p.standardOutput = NSFileHandle.fileHandleWithNullDevice;
     p.standardError = NSFileHandle.fileHandleWithNullDevice;
     NSError *e = nil;
@@ -149,7 +153,7 @@ static const NSTimeInterval kPolishFailsafe = 0.40;
     NSString *entry = [NSString stringWithFormat:@"%@ %@ %dms\n< %@\n> %@\n",
                        [df stringFromDate:NSDate.date], outcome, ms, raw, out];
     NSData *d = [entry dataUsingEncoding:NSUTF8StringEncoding];
-    NSString *path = [ZRoot() URLByAppendingPathComponent:@"polish.log"].path;
+    NSString *path = [ZSupport() URLByAppendingPathComponent:@"polish.log"].path;
     [_logLock lock];
     NSFileHandle *h = [NSFileHandle fileHandleForWritingAtPath:path];
     if (!h) {

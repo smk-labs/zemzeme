@@ -3,7 +3,8 @@
 import os
 import sys
 
-MODELS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
+MODELS = os.environ.get("ZEMZEME_MODELS") or os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "models")
 SRC = os.path.join(MODELS, "model.onnx")
 DST = os.path.join(MODELS, "model-int8.onnx")
 

@@ -12,7 +12,9 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-MODELS = os.path.join(ROOT, "models")
+# اسکریپت داخل بسته اپ می‌نشیند و مدل‌ها بیرون؛ اپ مسیر را با ZEMZEME_MODELS می‌دهد.
+# بدون آن، همان models کنار خود فایل (حالت توسعه در پوشه پروژه).
+MODELS = os.environ.get("ZEMZEME_MODELS") or os.path.join(ROOT, "models")
 PORT = 17636
 MAX_CHARS = 4000          # تکه بلندتر از این پاس نمی‌خورد (تکه‌های دیکته کوتاه‌اند)
 SPELL_GATE_MS = 120       # از این به بعد دیگر املای واژه جدید چک نمی‌شود

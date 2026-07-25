@@ -7,7 +7,8 @@
 #import <AVFoundation/AVFoundation.h>
 
 // ---------- مسیرها، لاگ، اعداد فارسی ----------
-NSURL *ZRoot(void);          // پوشه dictate (کنار serve.py)
+NSURL *ZRes(void);           // خواندنی‌های همراه اپ: serve.py, index.html, polish.py
+NSURL *ZSupport(void);       // ~/Library/Application Support/Zemzeme: داده، لاگ، venv
 NSURL *ZSessionsDir(void);
 void ZLog(NSString *fmt, ...) NS_FORMAT_FUNCTION(1, 2);
 NSString *ZFaDigits(NSString *s);

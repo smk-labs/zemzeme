@@ -120,8 +120,9 @@ int ZSelfTest(NSString *file, NSString *lang) {
     if ([ZInjector accessibilityOK]) [_hotkeys enable];
     // دیمن پاس از همین حالا گرم شود که تکه اول اولین سشن سرد نخورد
     if (ZSettings.shared.polishEnabled) [ZPolish.shared prepare];
-    ZLog(@"app: launched root=%@ ax=%d polish=%d",
-         ZRoot().path, [ZInjector accessibilityOK], ZSettings.shared.polishEnabled);
+    ZLog(@"app: launched res=%@ data=%@ ax=%d polish=%d",
+         ZRes().path, ZSupport().path,
+         [ZInjector accessibilityOK], ZSettings.shared.polishEnabled);
 }
 
 - (void)applicationWillTerminate:(NSNotification *)n {

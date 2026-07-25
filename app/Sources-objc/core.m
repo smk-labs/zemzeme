@@ -4,24 +4,42 @@
 
 // ---------- مسیرها ----------
 
-NSURL *ZRoot(void) {
-    static NSURL *root;
+// دو ریشه جدا، و هیچ مسیر هاردکدی: خواندنی‌ها داخل بسته، نوشتنی‌ها در
+// Application Support. پس بسته هرجا بنشیند (مثلا /Applications) کار می‌کند و
+// پوشه پروژه هم فقط پوشه پروژه می‌ماند.
+
+NSURL *ZRes(void) {
+    static NSURL *res;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        // exe: dictate/Zemzeme.app/Contents/MacOS/zemzeme یا dictate/app/.build/zemzeme
-        NSURL *u = [NSURL fileURLWithPath:NSProcessInfo.processInfo.arguments[0]].URLByResolvingSymlinksInPath;
-        for (int i = 0; i < 4; i++) u = u.URLByDeletingLastPathComponent;
-        if ([NSFileManager.defaultManager fileExistsAtPath:[u URLByAppendingPathComponent:@"serve.py"].path]) {
-            root = u;
-        } else {
-            root = [NSURL fileURLWithPath:[NSHomeDirectory() stringByAppendingPathComponent:@"Projects/hobby/mem/dictate"]];
+        NSURL *b = NSBundle.mainBundle.resourceURL;
+        if ([NSFileManager.defaultManager fileExistsAtPath:[b URLByAppendingPathComponent:@"serve.py"].path]) {
+            res = b;
+            return;
         }
+        // حالت توسعه: باینری خام app/.build/zemzeme، اسکریپت‌ها سه پله بالاتر
+        NSURL *u = [NSURL fileURLWithPath:NSProcessInfo.processInfo.arguments[0]].URLByResolvingSymlinksInPath;
+        for (int i = 0; i < 3; i++) u = u.URLByDeletingLastPathComponent;
+        res = u;
     });
-    return root;
+    return res;
+}
+
+NSURL *ZSupport(void) {
+    static NSURL *dir;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSURL *base = [NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory
+                                                          inDomains:NSUserDomainMask].firstObject;
+        dir = [base URLByAppendingPathComponent:@"Zemzeme"];
+        [NSFileManager.defaultManager createDirectoryAtURL:dir
+                              withIntermediateDirectories:YES attributes:nil error:nil];
+    });
+    return dir;
 }
 
 NSURL *ZSessionsDir(void) {
-    return [ZRoot() URLByAppendingPathComponent:@"sessions"];
+    return [ZSupport() URLByAppendingPathComponent:@"sessions"];
 }
 
 // ---------- لاگ ----------
@@ -42,7 +60,7 @@ void ZLog(NSString *fmt, ...) {
     NSString *line = [NSString stringWithFormat:@"%@ %@\n", [df stringFromDate:NSDate.date], msg];
     NSData *d = [line dataUsingEncoding:NSUTF8StringEncoding];
     [lock lock];
-    NSString *path = [ZRoot() URLByAppendingPathComponent:@"app.log"].path;
+    NSString *path = [ZSupport() URLByAppendingPathComponent:@"app.log"].path;
     NSFileHandle *h = [NSFileHandle fileHandleForWritingAtPath:path];
     if (!h) {
         [NSFileManager.defaultManager createFileAtPath:path contents:d attributes:nil];

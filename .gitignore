@@ -1,17 +1,16 @@
-log.txt
-app.log
-polish.log
-app/py/.venv/
-app/py/models/
-sessions/
-nohup.out
 .DS_Store
 __pycache__/
+nohup.out
 app/.build/
-Zemzeme.app/
 tools/stress-*.log
 tools/stress-run.out
+
+# داده و لاگ و venv حالا در ~/Library/Application Support/Zemzeme هستند؛
+# این‌ها فقط برای پوشه‌های جامانده از قبل و بیلد محلی
+Zemzeme.app/
+sessions/
+app.log
+log.txt
 polish.log
 app/py/.venv/
-app/py/__pycache__/
 app/py/models/

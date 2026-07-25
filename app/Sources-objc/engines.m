@@ -506,8 +506,11 @@ static NSString *const kRelayBase = @"http://127.0.0.1:17635";
 + (void)spawnServer {
     NSTask *p = [NSTask new];
     p.executableURL = [NSURL fileURLWithPath:@"/usr/bin/env"];
-    p.arguments = @[@"python3", [ZRoot() URLByAppendingPathComponent:@"serve.py"].path];
-    p.currentDirectoryURL = ZRoot();
+    p.arguments = @[@"python3", [ZRes() URLByAppendingPathComponent:@"serve.py"].path];
+    NSMutableDictionary *env = [NSProcessInfo.processInfo.environment mutableCopy];
+    env[@"ZEMZEME_DATA"] = ZSupport().path;   // صفحه از بسته می‌آید، داده بیرون می‌نشیند
+    p.environment = env;
+    p.currentDirectoryURL = ZSupport();
     p.standardOutput = NSFileHandle.fileHandleWithNullDevice;
     p.standardError = NSFileHandle.fileHandleWithNullDevice;
     NSError *e = nil;
