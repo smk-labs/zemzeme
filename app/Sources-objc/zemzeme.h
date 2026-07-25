@@ -25,6 +25,7 @@ typedef NS_ENUM(NSInteger, ZSound) {
     ZSoundCopy,       // کپی
     ZSoundMode,       // عوض کردن حالت
     ZSoundLang,       // عوض کردن زبان
+    ZSoundPolish,     // پاس ویرایش نشست
 };
 void ZPlay(ZSound s);
 NSString *ZFaDigits(NSString *s);
@@ -36,12 +37,22 @@ typedef NS_ENUM(NSInteger, ZInsertMode) {
     ZInsertPaste = 1,    // پیست تکه‌ای (برای ریموت دسکتاپ امن‌تر)
 };
 
+// سه حالت دیکته، یک تنظیم. Command راست + E وسط سشن بینشان می‌چرخد، همیشه با حفظ
+// متن. عددها عمدا از صفر و یک شروع می‌شوند: تنظیم روی دیسک همان کلید BOOL قدیمی
+// «collect» است و NO/YES دقیقا همین دو مقدار را می‌خوانند، پس تنظیم کاربر قدیمی
+// بدون هیچ کد مهاجرتی سر جایش می‌ماند.
+typedef NS_ENUM(NSInteger, ZMode) {
+    ZModeLive = 0,       // درج زنده سر کرسر، با نوار شناور و دُم خاکستری
+    ZModeCollect = 1,    // جمع در ادیتور خود پنل، درج یکجا در پایان
+    ZModeCursor = 2,     // مثل دیکته‌ی خود مک: بی‌پنل، فقط یک نقطه کنار کرسر. درج همان مسیر زنده است
+};
+
 @interface ZSettings : NSObject
 + (instancetype)shared;
 @property (nonatomic, copy) NSString *lang;         // fa-IR | en-US
 @property (nonatomic, copy) NSString *engineName;   // google | chrome
 @property (nonatomic) ZInsertMode insertMode;       // روش درج (تایپ/پیست)
-@property (nonatomic) BOOL collectMode;             // جمع در پنل به جای درج زنده
+@property (nonatomic) ZMode mode;                   // حالتی که سشن بعدی با آن شروع می‌شود
 @property (nonatomic) BOOL internalHotkey;
 @property (nonatomic) BOOL polishEnabled;           // پاس ویرایش فارسی؛ پیش‌فرض روشن
 @property (nonatomic) BOOL latinTerms;              // وام‌واژه فنی به لاتین؛ پیش‌فرض خاموش
@@ -235,7 +246,24 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 @property (nonatomic, copy) NSString *lang;
 @property (nonatomic) BOOL waitingForTarget;
 @property (nonatomic, copy) NSString *targetName;
-@property (nonatomic) BOOL collect;     // حالت جمع در پنل (ادیتور)
+@property (nonatomic) ZMode mode;
+@end
+
+// رنگ وضعیت، یک منبع حقیقت: نقطه‌ی روی پنل و نشانگر کنار کرسر هر دو از همین
+// می‌خوانند، پس معنی سبز/قرمز/نارنجی/خاکستری در دو جا واگرا نمی‌شود.
+NSColor *ZStatusColor(ZPanelModel *m);
+
+// ---------- نشانگر کنار کرسر (حالت کرسر) ----------
+// پنجره‌ی ۲۲ نقطه‌ای بدون قاب که فقط یک دایره‌ی رنگی در خود دارد و بالای کرسرِ اپِ
+// فوکس‌دار می‌نشیند. نه فوکس می‌گیرد نه کلیک (`ignoresMouseEvents`)، پس کلیک روی
+// همان نقطه به اپ زیرین می‌رسد. جای کرسر با اکسسبیلیتی و روی نخ پس‌زمینه پرسیده
+// می‌شود (۶ هرتز)، چون هر فراخوان AX می‌تواند کند باشد یا اصلا جواب ندهد؛ سه پله
+// فروکاست دارد و هیچ‌وقت ناپدید نمی‌شود: تا سشن زنده است باید پیدا باشد.
+@interface ZCaretDot : NSObject
+- (void)show;                     // پنجره را بالا می‌آورد و دنبال کردن کرسر را شروع می‌کند
+- (void)hide;                     // تایمر همان لحظه می‌ایستد
+- (void)render:(ZPanelModel *)m;  // فقط رنگ و ضربان وضعیت
+- (void)pulseLevel:(float)level;
 @end
 
 @interface ZPanel : NSObject
@@ -245,7 +273,7 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 @property (nonatomic, copy) void (^onTrash)(void);      // انصراف از هرچه هنوز درج نشده
 @property (nonatomic, copy) void (^onInsertAll)(void);  // درج هرچه در پنل جمع شده
 @property (nonatomic, copy) void (^onLangSwitch)(void); // چرخش زبان
-@property (nonatomic, copy) void (^onModeToggle)(void); // جمع در پنل ↔ درج زنده
+@property (nonatomic, copy) void (^onModeToggle)(void); // چرخش حالت: زنده ← جمع ← کرسر
 @property (nonatomic, copy) void (^onPolishNow)(void);  // اعمال پاس فارسی روی متن جمع‌شده
 - (void)show;
 - (void)hide;
@@ -272,7 +300,7 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 - (void)copyNow;          // کپی متن تا اینجا
 - (void)insertHere;       // درج در همین اپ جلویی
 - (void)dropPending;      // دور ریختن هرچه هنوز درج نشده
-- (void)toggleMode;       // جمع در پنل ↔ درج زنده، با حفظ متن
+- (void)toggleMode;       // چرخش زنده ← جمع ← کرسر، با حفظ متن
 - (void)switchLang;       // چرخش فارسی/انگلیسی
 - (void)polishCollected;  // پاس فارسی روی متن جمع‌شده، به خواست خودِ کاربر
 - (void)finish;           // ممکن است منتظر پاس پایانی بماند، بعد ببندد

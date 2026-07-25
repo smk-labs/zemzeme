@@ -246,9 +246,9 @@ int ZSelfTest(NSString *file, NSString *lang) {
     }
     [menu addItem:NSMenuItem.separatorItem];
 
-    // دو رادیوی «درج زنده / جمع در پنل» از اینجا برداشته شد: حالا دکمه‌ی E روی پنل
-    // همان کار را وسط سشن و با حفظ متن می‌کند، و دو جای تنظیم برای یک چیز فقط گیج‌کننده
-    // بود. حالت شروع همان حالتی است که آخرین بار با E انتخاب شده.
+    // رادیوی حالت‌ها از اینجا برداشته شد و با آمدن حالت سوم (کرسر) هم برنمی‌گردد:
+    // دکمه‌ی E وسط سشن بین هر سه می‌چرخد و با حفظ متن، و دو جای تنظیم برای یک چیز
+    // فقط گیج‌کننده بود. حالت شروع همان حالتی است که آخرین بار با E انتخاب شده.
     NSMenuItem *pol = [self icon:[self item:menu title:@"ویرایش فارسی" action:@selector(menuTogglePolish) key:@""]
                            symbol:@"wand.and.stars"];
     pol.state = ZSettings.shared.polishEnabled ? NSControlStateValueOn : NSControlStateValueOff;
@@ -338,7 +338,7 @@ int ZSelfTest(NSString *file, NSString *lang) {
         @[@"کپی متن تا اینجا", @"Command راست + C"],
         @[@"دور ریختن متن درج‌نشده", @"Command راست + D"],
         @[@"عوض کردن زبان", @"Command راست + L"],
-        @[@"جمع در پنل ↔ درج زنده", @"Command راست + E"],
+        @[@"چرخش حالت: زنده ← جمع ← کرسر", @"Command راست + E"],
         @[@"پاس ویرایش روی متن جمع‌شده", @"Command راست + P"],
         @[@"درج سر کرسر همین اپ", @"Command راست + V"],
     ];

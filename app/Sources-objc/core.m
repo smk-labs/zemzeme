@@ -93,7 +93,8 @@ void ZPlay(ZSound s) {
                   @(ZSoundTrash):  @"Basso",     // دور ریختن، عمدا ناخوشایند
                   @(ZSoundCopy):   @"Purr",
                   @(ZSoundMode):   @"Submarine",
-                  @(ZSoundLang):   @"Frog"};
+                  @(ZSoundLang):   @"Frog",
+                  @(ZSoundPolish): @"Hero"};    // پاس نشست
         cache = [NSMutableDictionary dictionary];
     });
     NSString *n = names[@(s)];
@@ -178,8 +179,15 @@ NSFont *ZFont(CGFloat size, BOOL medium) {
 }
 - (void)setInsertMode:(ZInsertMode)m { [self.d setInteger:m forKey:@"insertMode"]; }
 
-- (BOOL)collectMode { return [self.d boolForKey:@"collect"]; }
-- (void)setCollectMode:(BOOL)v { [self.d setBool:v forKey:@"collect"]; }
+// کلید همان «collect» قدیمی است و عمدا عوض نشده: مقدار BOOL ذخیره‌شده‌ی نسخه‌های
+// قبل با integerForKey دقیقا ۰ و ۱ خوانده می‌شود، یعنی همان ZModeLive و ZModeCollect،
+// پس انتخاب کاربر قدیمی بدون هیچ کد مهاجرتی سر جایش می‌ماند. مقدار بیرون از بازه
+// (کلید دستکاری‌شده) به زنده برمی‌گردد، نه به حالتی که کاربر نمی‌شناسد.
+- (ZMode)mode {
+    NSInteger v = [self.d integerForKey:@"collect"];
+    return (v >= ZModeLive && v <= ZModeCursor) ? (ZMode)v : ZModeLive;
+}
+- (void)setMode:(ZMode)v { [self.d setInteger:v forKey:@"collect"]; }
 
 - (BOOL)internalHotkey { return [self.d boolForKey:@"internalHotkey"]; }
 - (void)setInternalHotkey:(BOOL)v { [self.d setBool:v forKey:@"internalHotkey"]; }

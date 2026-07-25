@@ -15,6 +15,17 @@
 }
 @end
 
+// سبز یعنی دارد می‌شنود، قرمز یعنی اتصال مشکل دارد (قطعی موقت یا تسلیم)، نارنجی
+// در حال وصل شدن، خاکستری مکث. قبلا شنیدن قرمز بود، یعنی حالت سلامت و حالت خرابی
+// یک رنگ داشتند. اینجا بیرون از ZPanel نشسته چون حالت کرسر پنلی ندارد و نشانگر
+// کنار کرسر باید دقیقا همین معنی‌ها را بگوید، نه کپیِ کمی متفاوتشان.
+NSColor *ZStatusColor(ZPanelModel *m) {
+    if (m.paused)             return NSColor.systemGrayColor;
+    if (m.error || m.trouble) return [NSColor colorWithRed:0.88 green:0.19 blue:0.19 alpha:1];
+    if (m.listening)          return [NSColor colorWithRed:0.20 green:0.78 blue:0.35 alpha:1];
+    return NSColor.systemOrangeColor;
+}
+
 // ---------- ZPanel ----------
 // نوار باریک بدون گرفتن فوکس، روی همه Space ها و فول‌اسکرین. سه دکمه بیشتر ندارد:
 // بستن، مکث/ادامه، کپی. متن خاکستری تا سه خط می‌پیچد و پنل قدش را خودش تنظیم می‌کند.
@@ -540,25 +551,33 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
 
 - (void)render:(ZPanelModel *)m {
     _lastModel = m;
-    [self setCollectVisible:m.collect];
+    // حالت کرسر پنل را اصلا نشان نمی‌دهد، پس اینجا فقط دو حالتِ پنل‌دار می‌مانند و
+    // «جمع یا نه» همان یک پرسش قبلی است.
+    BOOL collect = m.mode == ZModeCollect;
+    [self setCollectVisible:collect];
 
     // زبان روی همان دکمه دیده می‌شود: آیکون یکی است و تولتیپ می‌گوید الان کدام زبان
     // است و زدنش چه می‌کند. متن روی دکمه نمی‌گذاریم که ردیف یک‌دست بماند.
     BOOL en = [m.lang hasPrefix:@"en"];
     _btnLang.toolTip = en ? @"زبان: انگلیسی. برای رفتن به فارسی بزن (Command راست + L)"
                           : @"زبان: فارسی. برای رفتن به انگلیسی بزن (Command راست + L)";
-    // آیکون حالت، همان چیزی که با زدنش می‌گیری
-    [self setButton:_btnMode symbol:m.collect ? @"bolt.fill" : @"square.and.pencil"];
-    _btnMode.toolTip = m.collect
-        ? @"رفتن به درج زنده؛ متن جمع‌شده هم با خودش می‌آید (Command راست + E)"
-        : @"رفتن به جمع در پنل، جایی که می‌شود ویرایش کرد (Command راست + E)";
+    // آیکون حالت، همان چیزی که با زدنش می‌گیری. چرخه سه‌تایی است، پس آیکون از
+    // حالتِ بعدی خوانده می‌شود نه از حالت فعلی.
+    ZMode next = (ZMode)((m.mode + 1) % (ZModeCursor + 1));
+    [self setButton:_btnMode symbol:next == ZModeCollect ? @"square.and.pencil"
+                                : next == ZModeCursor ? @"text.cursor" : @"bolt.fill"];
+    _btnMode.toolTip = next == ZModeCollect
+        ? @"رفتن به جمع در پنل، جایی که می‌شود ویرایش کرد (Command راست + E)"
+        : next == ZModeCursor
+        ? @"رفتن به حالت کنار کرسر: پنل می‌رود و فقط یک نقطه می‌ماند (Command راست + E)"
+        : @"رفتن به درج زنده؛ متن جمع‌شده هم با خودش می‌آید (Command راست + E)";
     // پاس دستی و درج فقط در حالت جمع معنا دارند
-    _btnPolish.hidden = !m.collect;
-    _btnInsert.hidden = !m.collect && !m.waitingForTarget;
+    _btnPolish.hidden = !collect;
+    _btnInsert.hidden = !collect && !m.waitingForTarget;
 
     // چیپ صف (فقط تسمه‌نقاله، وقتی مقصد جلو نیست)
     NSString *chip = @"";
-    if (!m.collect && m.queued > 0) {
+    if (!collect && m.queued > 0) {
         chip = [ZFaDigits([NSString stringWithFormat:@"%ld", (long)m.queued]) stringByAppendingString:@" در صف"];
     }
     _chipBg.toolTip = (m.waitingForTarget && m.targetName.length)
@@ -582,7 +601,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     // بعد خودش می‌رود. بدون این، زدن دکمه هیچ نشانه‌ای روی صفحه نداشت.
     // متن خاکستری در حالت جمع اینجا نمی‌آید: آنجا دنبال متن سفیدِ ادیتور استریم می‌شود،
     // چون در این نوار نصفه می‌ماند و آدم نمی‌فهمد ادامه‌اش چه بود.
-    NSString *interimHere = m.collect ? @"" : m.interim;
+    NSString *interimHere = collect ? @"" : m.interim;
     if (_flash.length) {
         _text.stringValue = _flash;
         _text.font = ZFont(12.5, YES);
@@ -620,19 +639,11 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
         _btnPause.toolTip = @"مکث شنیدن (⌥Space)";
     }
 
-    // نقطه، با کد رنگ درست: سبز یعنی دارد می‌شنود، قرمز یعنی اتصال مشکل دارد،
-    // نارنجی همان «در حال وصل شدن» قبلی، خاکستری مکث. قبلا شنیدن قرمز بود، یعنی
-    // حالت سلامت و حالت خرابی یک رنگ داشتند.
-    NSColor *color;
-    if (m.paused)                  color = NSColor.systemGrayColor;
-    else if (m.error || m.trouble) color = [NSColor colorWithRed:0.88 green:0.19 blue:0.19 alpha:1];
-    else if (m.listening)          color = [NSColor colorWithRed:0.20 green:0.78 blue:0.35 alpha:1];
-    else                           color = NSColor.systemOrangeColor;
-    _dot.layer.backgroundColor = color.CGColor;
+    _dot.layer.backgroundColor = ZStatusColor(m).CGColor;
     if (m.listening && !m.paused && !_pulsing) [self startPulse];
     if ((!m.listening || m.paused) && _pulsing) [self stopPulse];
 
-    [self resizeTo:m.collect ? kBarH + kEditorH : [self conveyorHeight]];
+    [self resizeTo:collect ? kBarH + kEditorH : [self conveyorHeight]];
 }
 
 - (void)pulseLevel:(float)level {
@@ -725,7 +736,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     error.error = YES;
 
     ZPanelModel *collect = [ZPanelModel new];
-    collect.collect = YES;
+    collect.mode = ZModeCollect;
     collect.listening = YES;
     collect.interim = @"و این هم متن خاکستری در جریان";
 
@@ -736,7 +747,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     [_panel orderFrontRegardless];
     for (NSArray *pair in states) {
         ZPanelModel *m = pair[1];
-        if (m.collect) {
+        if (m.mode == ZModeCollect) {
             [self clearEditor];
             [self appendFinalToEditor:@"متن قطعی‌شده اینجا جمع می‌شود و با کیبورد خودت قابل ویرایش است."];
             [self appendFinalToEditor:@"تهش با دکمه درج، یکجا سر کرسر می‌نشیند."];
@@ -761,10 +772,23 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
 // مدل تسمه‌نقاله: پنل فقط بافر خاکستری است؛ هر تکه قطعی، بعد از پاس ویرایش،
 // همان لحظه سر کرسرِ اپ مقصد درج می‌شود. اگر اپ جلویی عوض شود درج می‌ایستد و
 // صف جمع می‌شود (⌥V یعنی همینجا درج کن). در حالت «جمع در پنل» به جای درج زنده،
-// متن در ادیتور خود پنل می‌نشیند و تهش یکجا درج یا کپی می‌شود.
+// متن در ادیتور خود پنل می‌نشیند و تهش یکجا درج یا کپی می‌شود. حالت «کرسر» دقیقا
+// همان تسمه‌نقاله‌ی زنده است، فقط بی‌پنل: به جای نوار، یک نقطه کنار کرسر. پس در
+// همه‌ی این کد تنها پرسشِ حالت این است که «جمع هست یا نه»، و کرسر هیچ شاخه‌ی درجِ
+// جداگانه‌ای نمی‌سازد.
+
+// نام حالت برای لاگ و برای فیدبک روی صفحه؛ دو جا، یک منبع
+static NSString *ZModeSlug(ZMode m) {
+    return m == ZModeCollect ? @"collect" : (m == ZModeCursor ? @"cursor" : @"live");
+}
+
+static NSString *ZModeLabel(ZMode m) {
+    return m == ZModeCollect ? @"جمع در پنل" : (m == ZModeCursor ? @"کنار کرسر" : @"درج زنده");
+}
 
 @implementation ZSession {
     ZPanel *_panel;
+    ZCaretDot *_dot;          // فقط در حالت کرسر ساخته می‌شود؛ بیشتر سشن‌ها لازمش ندارند
     ZInjector *_injector;
     NSRunningApplication *_target;
     NSMutableArray<NSString *> *_queue;       // تکه‌های قطعیِ هنوز درج‌نشده (تسمه‌نقاله)
@@ -774,7 +798,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     BOOL _errorState;
     BOOL _troubleState;       // قطعی موقت: نقطه قرمز، ولی سشن زنده است
     BOOL _listening;
-    BOOL _collect;
+    ZMode _mode;
     NSMutableArray<NSString *> *_pasteBuf;
     NSTimer *_pasteTimer;
     NSURL *_sessionFile;
@@ -806,10 +830,11 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
 }
 
 - (void)start {
-    _collect = ZSettings.shared.collectMode;
+    _mode = ZSettings.shared.mode;
     _target = NSWorkspace.sharedWorkspace.frontmostApplication;
-    ZLog(@"session: start target=%@ engine=%@ lang=%@ collect=%d",
-         _target.bundleIdentifier ?: @"?", ZSettings.shared.engineName, ZSettings.shared.lang, _collect);
+    ZLog(@"session: start target=%@ engine=%@ lang=%@ mode=%@",
+         _target.bundleIdentifier ?: @"?", ZSettings.shared.engineName, ZSettings.shared.lang,
+         ZModeSlug(_mode));
     ZPlay(ZSoundStart);
     __weak typeof(self) ws = self;
     _frontObserver = [NSWorkspace.sharedWorkspace.notificationCenter
@@ -826,8 +851,8 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     _panel.onLangSwitch = ^{ [ws switchLang]; };
     _panel.onModeToggle = ^{ [ws toggleMode]; };
     _panel.onPolishNow = ^{ [ws polishCollected]; };
-    if (_collect) [_panel clearEditor];
-    [_panel show];
+    if (_mode == ZModeCollect) [_panel clearEditor];
+    [self applyModeChrome];
     if (![ZInjector accessibilityOK]) {
         _statusText = @"دسترسی Accessibility نیست؛ درج کار نمی‌کند، متن آخر کار کپی می‌شود";
     }
@@ -842,7 +867,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
 - (void)engineInterim:(NSString *)text {
     _interim = [text copy];
     // در حالت جمع، خاکستری همان بالا دنبال متن سفید استریم می‌شود، نه در نوار پایین
-    if (_collect) [_panel showInterimInEditor:_interim];
+    if (_mode == ZModeCollect) [_panel showInterimInEditor:_interim];
     [self render];
 }
 
@@ -861,7 +886,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     // حالت جمع: خام می‌نشیند در ادیتور. پاس ویرایش وسط کار روی متنی که داری ویرایشش
     // می‌کنی می‌افتد و ویرایش‌هایت را می‌شوید، پس تا خودت نخواهی (دکمه پاس) یا تا
     // لحظه‌ی درج و پایان، اجرا نمی‌شود.
-    if (_collect && !_finished) {
+    if (_mode == ZModeCollect && !_finished) {
         [self acceptFinal:raw];
         [self drainPolish];
         return;
@@ -891,7 +916,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
 
 - (void)acceptFinal:(NSString *)text {
     [_transcript addObject:text];
-    if (_collect) {
+    if (_mode == ZModeCollect) {
         [_panel appendFinalToEditor:text];
     } else {
         [_queue addObject:text];
@@ -929,7 +954,8 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
 }
 
 - (void)engineLevel:(float)rms {
-    [_panel pulseLevel:rms];
+    if (_mode == ZModeCursor) [_dot pulseLevel:rms];
+    else [_panel pulseLevel:rms];
 }
 
 // ---------- اکشن‌ها ----------
@@ -956,9 +982,10 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
 
 // کپی متن تا اینجا (ماندگار)
 - (void)copyNow {
-    NSString *t = _collect ? [_panel editorText]
-                           : [[_transcript componentsJoinedByString:@" "]
-                              stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSString *t = _mode == ZModeCollect
+        ? [_panel editorText]
+        : [[_transcript componentsJoinedByString:@" "]
+           stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (t.length) [ZInjector copyFinal:t];
     ZPlay(ZSoundCopy);
     [_panel flash:t.length
@@ -977,7 +1004,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     // پاسخ دیررسِ پاس ویرایشِ در پرواز نباید بعدا بنشیند
     if (_polishInFlight) _dropNextPolish = YES;
     [_polishPending removeAllObjects];
-    if (_collect) {
+    if (_mode == ZModeCollect) {
         // سطل آشغال یعنی «هرچه گفته‌ام و درج نشده دور برود»، پس متن جمع‌شده‌ی پنل هم
         // با آن می‌رود. قبلا فقط خاکستری پاک می‌شد و متن سفیدِ ادیتور می‌ماند، که
         // کاربردی نبود: در حالت جمع هیچ‌چیز درج نشده، پس همه‌اش «درج‌نشده» است.
@@ -985,8 +1012,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
         [_panel clearEditor];
         [_transcript removeAllObjects];
         ZLog(@"session: trashed collected text (%lu chunks)", (unsigned long)drop);
-    }
-    if (!_collect) {
+    } else {
         // این تکه‌ها به ترتیب در _transcript هم نشسته‌اند، پس دقیقا همان تعداد از
         // دُمش برداشته می‌شود که کپی پایانی هم متن دورریخته را نداشته باشد.
         NSUInteger drop = _queue.count + _pasteBuf.count;
@@ -1002,37 +1028,56 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     [self render];
 }
 
-// عوض کردن حالت وسط کار، بدون گم شدن متن. دو حالت یک نوار مشترک دارند و تنها فرق
-// جمع این است که فضای ویرایش هم دارد، پس عوض کردنش فقط جای متن معلق را عوض می‌کند.
+// چرخش حالت وسط کار، بدون گم شدن متن: زنده ← جمع ← کرسر ← زنده.
+// تنها حالتی که متن را پیش خودش نگه می‌دارد جمع است؛ زنده و کرسر هر دو از همان صف
+// و همان مسیر درج می‌خورند، پس بینشان چیزی جابه‌جا نمی‌شود و فقط نمای روی صفحه عوض
+// می‌شود. قرارداد قدیمی سر جایش است و برای حالت تازه هم برقرار: بیرون آمدن از جمع
+// متن را درج می‌کند یا با خودش می‌برد، هیچ‌وقت دور نمی‌ریزد. دور ریختن کار سطل آشغال است.
 - (void)toggleMode {
-    if (_collect) {
-        // جمع به زنده: متن جمع‌شده می‌رود همان‌جا که داشتی می‌نوشتی، و یک نسخه هم در
-        // کلیپ‌بورد می‌ماند. به هیچ حالتی دور ریخته نمی‌شود؛ دور ریختن کار سطل آشغال است.
+    ZMode next = (ZMode)((_mode + 1) % (ZModeCursor + 1));
+    if (_mode == ZModeCollect) {
+        // متن جمع‌شده می‌رود همان‌جا که داشتی می‌نوشتی، و یک نسخه هم در کلیپ‌بورد می‌ماند
         NSString *t = [[_panel editorText] stringByTrimmingCharactersInSet:
                        NSCharacterSet.whitespaceAndNewlineCharacterSet];
-        _collect = NO;
-        ZSettings.shared.collectMode = NO;
         [_panel clearEditor];
         if (t.length) {
             [_queue addObject:t];
             [ZInjector copyFinal:t];
-            [self pump];    // مقصد جلو نبود؟ در صف می‌ماند و چیپ نشانش می‌دهد
         }
-    } else {
-        // زنده به جمع: صفِ تایپ‌نشده می‌رود در ادیتور، دنبال هرچه از قبل آنجا بود.
+    }
+    _mode = next;
+    ZSettings.shared.mode = next;
+    if (next == ZModeCollect) {
+        // صفِ تایپ‌نشده می‌رود در ادیتور، دنبال هرچه از قبل آنجا بود.
         // clearEditor اینجا نبود و نباید باشد: متن دور قبلی را می‌شست.
         NSString *q = [[_queue arrayByAddingObjectsFromArray:_pasteBuf]
                        componentsJoinedByString:@" "];
         [_queue removeAllObjects];
         [_pasteBuf removeAllObjects];
-        _collect = YES;
-        ZSettings.shared.collectMode = YES;
         if (q.length) [_panel appendFinalToEditor:q];
     }
+    [self applyModeChrome];
+    // بعد از عوض شدن حالت، نه قبلش: pump خودش حالت جمع را رد می‌کند و متن جمع‌شده‌ی
+    // بالا باید با حالت تازه سنجیده شود. مقصد جلو نبود؟ در صف می‌ماند.
+    [self pump];
     ZPlay(ZSoundMode);
-    ZLog(@"session: mode -> %@", _collect ? @"collect" : @"live");
-    [_panel flash:_collect ? @"حالت: جمع در پنل" : @"حالت: درج زنده"];
+    ZLog(@"session: mode -> %@", ZModeSlug(next));
+    [_panel flash:[@"حالت: " stringByAppendingString:ZModeLabel(next)]];
     [self render];
+}
+
+// پنل و نشانگر دقیقا یکی‌شان دیده می‌شود، هیچ‌وقت هر دو: قرار حالت کرسر این است که
+// هیچ‌چیز جلوی صفحه را نگیرد. نشانگر تنبل ساخته می‌شود، چون بیشتر سشن‌ها هرگز به
+// این حالت نمی‌روند و ساختن یک پنجره‌ی بی‌مصرف سر هر سشن بیهوده است.
+- (void)applyModeChrome {
+    if (_mode == ZModeCursor) {
+        [_panel hide];
+        if (!_dot) _dot = [ZCaretDot new];
+        [_dot show];
+    } else {
+        [_dot hide];
+        [_panel show];
+    }
 }
 
 // چرخش زبان. موتور خودش استریم را با زبان تازه ری‌استارت می‌کند و متن خاکستری را
@@ -1073,11 +1118,14 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
 
 // دکمه‌ی پاس: فقط اعمال روی ادیتور، بی‌آن‌که چیزی درج یا بسته شود
 - (void)polishCollected {
-    if (!_collect) return;
+    if (_mode != ZModeCollect) return;
     [_panel flash:@"پاس ویرایش…"];
     __weak typeof(self) ws = self;
     [self withPolishedCollected:^(NSString *text) {
         __strong typeof(ws) s = ws;
+        // صدا سر نشستنِ پاس، نه سر شروعش: تنها نشانه‌ی «تمام شد» همین است، چون
+        // پاس روی نخ پس‌زمینه می‌رود و ممکن است چند صد میلی‌ثانیه طول بکشد.
+        ZPlay(ZSoundPolish);
         [s->_panel flash:@"پاس ویرایش انجام شد"];
     }];
 }
@@ -1085,7 +1133,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
 // ⌥V یا دکمه «درج در همین اپ»: هرچه هست، سر کرسر همین اپ جلویی
 - (void)insertHere {
     _target = NSWorkspace.sharedWorkspace.frontmostApplication;
-    if (_collect) {
+    if (_mode == ZModeCollect) {
         if (![_panel editorText].length) return;
         // V درج می‌کند ولی سشن را نمی‌بندد: ادیتور خالی می‌شود و می‌توانی ادامه بدهی.
         // بستن کار Esc است. قبلا هر دو یک کار می‌کردند و V هم پنل را می‌بست.
@@ -1102,7 +1150,15 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
         }];
         return;
     }
+    // زنده و کرسر: صف همین‌جا خالی می‌شود. صدا فقط وقتی واقعا چیزی رفت، وگرنه زدن V
+    // روی صف خالی (یا وقتی مقصد جلو نیست و صف سر جایش می‌ماند) دروغ می‌گفت. در حالت
+    // کرسر پنلی نیست که چیپ صف را نشان بدهد، پس همین صدا تنها خبر است.
+    BOOL had = _queue.count > 0;
     [self pump];
+    if (had && !_queue.count) {
+        ZPlay(ZSoundInsert);
+        [_panel flash:@"درج شد"];
+    }
     [self render];
 }
 
@@ -1123,7 +1179,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
 }
 
 - (void)pump {
-    if (_collect || !_queue.count) return;
+    if (_mode == ZModeCollect || !_queue.count) return;
     if (![ZInjector accessibilityOK] || ![self targetIsFront] || [ZInjector secureInputActive]) return;
     NSString *chunk = [[_queue componentsJoinedByString:@" "] stringByAppendingString:@" "];
     [_queue removeAllObjects];
@@ -1159,7 +1215,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     if (_finished || _finishing) return;
     // V بعد از درج ادیتور را خالی می‌کند، پس همین «خالی نبودن» گارد کافی است و
     // _collectInserted لازم نیست: متن درج‌شده دیگر اینجا نیست.
-    if (_collect && ZSettings.shared.polishEnabled && [_panel editorText].length) {
+    if (_mode == ZModeCollect && ZSettings.shared.polishEnabled && [_panel editorText].length) {
         _finishing = YES;
         __weak typeof(self) ws = self;
         [self withPolishedCollected:^(NSString *text) {
@@ -1190,7 +1246,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     [self flushPasteBuf];
     // پایان: در حالت زنده باقی صف، در حالت جمع کل متن ادیتور؛ اگر مقصد جلوست درج
     // می‌شود، وگرنه کپیِ زیر همین تابع نجاتش می‌دهد. اگر ⌥V/دکمه درج قبلا درج کرده
-    if (_collect) {
+    if (_mode == ZModeCollect) {
         NSString *t = [_panel editorText];
         if (t.length && [self targetIsFront]) {
             [self injectText:[t stringByAppendingString:@" "]];
@@ -1200,14 +1256,16 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
         [_queue removeAllObjects];
     }
     // بیمه: کل متن سشن، یک بار، ماندگار در کلیپ‌بورد؛ پشتِ صف درج که با پیست مسابقه نگیرد
-    NSString *full = _collect ? [_panel editorText]
-                              : [[_transcript componentsJoinedByString:@" "]
-                                 stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSString *full = _mode == ZModeCollect
+        ? [_panel editorText]
+        : [[_transcript componentsJoinedByString:@" "]
+           stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (full.length) [_injector copyFinalAfterPending:full];
     ZPlay(ZSoundFinish);
     if (_frontObserver) [NSWorkspace.sharedWorkspace.notificationCenter removeObserver:_frontObserver];
     _frontObserver = nil;
     [_panel hide];
+    [_dot hide];    // تایمر دنبال‌کردن کرسر همین‌جا می‌ایستد، نه یک تیک بعد
     ZLog(@"session: finished, %lu chunks, %lu chars copied",
          (unsigned long)_transcript.count, (unsigned long)full.length);
     if (self.onFinish) self.onFinish();
@@ -1239,10 +1297,12 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     m.error = _errorState;
     m.trouble = _troubleState;
     m.lang = ZSettings.shared.lang;
-    m.collect = _collect;
-    m.waitingForTarget = !_collect && _queue.count > 0 && ![self targetIsFront];
+    m.mode = _mode;
+    m.waitingForTarget = _mode != ZModeCollect && _queue.count > 0 && ![self targetIsFront];
     m.targetName = _target.localizedName ?: @"";
-    [_panel render:m];
+    // در حالت کرسر پنل پنهان است؛ رندر کردنش یعنی قد کشیدن و چیدن یک پنجره‌ی نادیده
+    if (_mode == ZModeCursor) [_dot render:m];
+    else [_panel render:m];
 }
 
 @end
