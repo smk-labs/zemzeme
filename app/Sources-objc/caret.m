@@ -20,11 +20,12 @@ static const float kAXTimeout = 0.15f;
 
 // ---------- پیدا کردن کرسر با اکسسبیلیتی ----------
 // شکست اینجا استثنا نیست، قاعده است: اپ‌های Electron و وب‌ویو معمولا رنج متن را
-// نمی‌دهند و ریموت دسکتاپ هیچ‌چیز نمی‌دهد. پس سه پله داریم و هر پله فقط یعنی
+// نمی‌دهند و ریموت دسکتاپ هیچ‌چیز نمی‌دهد. پس چهار پله داریم و هر پله فقط یعنی
 // «پله‌ی بعد»؛ هیچ فراخوانی نه می‌اندازد نه معطل می‌کند.
 typedef NS_ENUM(NSInteger, ZCaretSource) {
     ZCaretNone = 0,     // هیچ: نقطه گوشه‌ی صفحه پارک می‌شود
-    ZCaretWindow,       // فقط پنجره‌ی فوکس‌دار: بالا-چپِ داخل همان پنجره
+    ZCaretWindow,       // فقط پنجره‌ی فوکس‌دار: پایین-چپِ داخل همان پنجره
+    ZCaretField,        // قاب خود المنت فوکس‌دار (باکس تایپ)، بی‌مختصات کرسر داخلش
     ZCaretExact,        // خود نقطه‌ی درج
 };
 
@@ -91,6 +92,28 @@ static BOOL ZBoundsForRange(AXUIElementRef el, CFRange range, CGRect *out) {
         && ZRectUsable(r);
     CFRelease(bounds);
     if (ok) *out = r;
+    return ok;
+}
+
+// قاب خود المنتِ فوکس‌دار، فقط اگر شبیه فیلد ورودی باشد نه سند تمام‌قد (سقف بلندی
+// همان منطق ZRectUsable: یک باکس تایپ است، نه کل صفحه). اپ‌های Electron مثل
+// دسکتاپ Claude رنج متن نمی‌دهند ولی بعد از بیدارباش قاب باکس تایپشان را می‌دهند،
+// و «زیر همان باکس» خیلی به کرسر واقعی نزدیک‌تر است تا «گوشه‌ی پنجره».
+static BOOL ZFieldFrame(AXUIElementRef el, CGRect *out) {
+    CFTypeRef pos = ZCopyAttr(el, kAXPositionAttribute);
+    CFTypeRef size = ZCopyAttr(el, kAXSizeAttribute);
+    CGPoint p = CGPointZero;
+    CGSize s = CGSizeZero;
+    BOOL ok = pos && size
+        && CFGetTypeID(pos) == AXValueGetTypeID() && CFGetTypeID(size) == AXValueGetTypeID()
+        && AXValueGetValue((AXValueRef)pos, kAXValueCGPointType, &p)
+        && AXValueGetValue((AXValueRef)size, kAXValueCGSizeType, &s)
+        && isfinite(p.x) && isfinite(p.y)
+        && s.width >= 40 && s.height >= 12 && s.height <= 400
+        && !(p.x == 0 && p.y == 0);
+    if (pos) CFRelease(pos);
+    if (size) CFRelease(size);
+    if (ok) *out = CGRectMake(p.x, p.y, s.width, s.height);
     return ok;
 }
 
@@ -194,9 +217,10 @@ static ZCaretHit ZFindCaret(pid_t frontPid) {
         CFRelease(sel);
     }
 
-    // پله ۲: پنجره‌ی همان عنصر. اپی که رنج نمی‌دهد معمولا پنجره را می‌دهد، پس
-    // دست‌کم نقطه روی همان پنجره می‌ماند نه گوشه‌ی صفحه. اینجا هم یک بار بیدارباش
-    // می‌فرستیم: Chromium نیمه‌بیدار عنصر فوکس‌دار می‌دهد ولی رنج متن نه.
+    // پله ۲: قاب خود المنت، بعد پنجره‌ی همان عنصر. اپی که رنج نمی‌دهد معمولا یکی
+    // از این دو را می‌دهد، پس دست‌کم نقطه نزدیک تایپ می‌ماند نه گوشه‌ی صفحه. اینجا
+    // هم یک بار بیدارباش می‌فرستیم: Chromium نیمه‌بیدار عنصر فوکس‌دار می‌دهد ولی
+    // رنج متن نه.
     if (hit.src == ZCaretNone) {
         if (frontPid > 0) {
             AXUIElementRef app = AXUIElementCreateApplication(frontPid);
@@ -206,13 +230,19 @@ static ZCaretHit ZFindCaret(pid_t frontPid) {
                 CFRelease(app);
             }
         }
-        AXUIElementRef win = ZCopyElement(focused, kAXWindowAttribute);
-        CGRect f;
-        if (win && ZWindowFrame(win, &f)) {
-            hit.src = ZCaretWindow;
-            hit.rect = f;
+        CGRect ff;
+        if (ZFieldFrame(focused, &ff)) {
+            hit.src = ZCaretField;
+            hit.rect = ff;
+        } else {
+            AXUIElementRef win = ZCopyElement(focused, kAXWindowAttribute);
+            CGRect f;
+            if (win && ZWindowFrame(win, &f)) {
+                hit.src = ZCaretWindow;
+                hit.rect = f;
+            }
+            if (win) CFRelease(win);
         }
-        if (win) CFRelease(win);
     }
     CFRelease(focused);
     return hit;
@@ -339,8 +369,9 @@ static NSRect ZFromAX(CGRect r) {
 // سه پله‌ی فروکاست، به همین ترتیب. هیچ پله‌ای پنجره را پنهان نمی‌کند: تا سشن زنده
 // است کاربر باید بتواند ببیند که دیکته روشن است.
 - (NSPoint)originFor:(ZCaretHit)hit {
-    if (hit.src == ZCaretExact) {
-        // درست زیر کرسر و وسط‌چین با آن، همان کاری که دیکته‌ی خود مک می‌کند. بالای
+    if (hit.src == ZCaretExact || hit.src == ZCaretField) {
+        // درست زیر کرسر و وسط‌چین با آن، همان کاری که دیکته‌ی خود مک می‌کند. برای
+        // پله‌ی فیلد همان حساب روی قاب باکس تایپ می‌نشیند: زیر لبه‌ی پایین، وسط‌چین. بالای
         // کرسر جای بدی بود: روی خط قبلی می‌افتاد و سر خط اولِ سند می‌رفت روی نوار
         // عنوان. زیرِ کرسر همیشه یک خط پایین‌تر است، یعنی جایی که هنوز چیزی ننوشته‌ای.
         // مرکز افقی از NSMidX می‌آید نه NSMinX: رنجِ طول‌صفر عرض ندارد و این دو یکی‌اند،
