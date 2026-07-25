@@ -71,6 +71,10 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 - (void)pause;     // شنیدن می‌ایستد؛ میکروفن گرم می‌ماند که ادامه آنی باشد
 - (void)resume;
 - (void)stop;
+// انصراف: متن خاکستری و صدای پشتش دور ریخته می‌شوند و شنیدن از همین لحظه ادامه دارد.
+// فقط پاک کردن نمایش کافی نیست: سشن در جریان همان صدا را دارد و متن قطعی‌اش را
+// می‌فرستد، پس باید قطع شود.
+- (void)dropPending;
 @end
 
 // ---------- بافر بک‌لاگ صدا ----------
@@ -199,6 +203,7 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 @property (nonatomic, copy) void (^onClose)(void);
 @property (nonatomic, copy) void (^onPauseToggle)(void);
 @property (nonatomic, copy) void (^onCopyNow)(void);
+@property (nonatomic, copy) void (^onTrash)(void);      // انصراف از هرچه هنوز درج نشده
 @property (nonatomic, copy) void (^onInsertAll)(void);  // فقط حالت جمع: دکمه «درج در همین اپ»
 - (void)show;
 - (void)hide;

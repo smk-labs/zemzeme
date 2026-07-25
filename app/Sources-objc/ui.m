@@ -45,7 +45,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     NSTextField *_text;
     NSView *_chipBg;
     NSTextField *_chipLabel;
-    NSButton *_btnClose, *_btnPause, *_btnCopy, *_btnInsert;
+    NSButton *_btnClose, *_btnPause, *_btnCopy, *_btnTrash, *_btnInsert;
     NSScrollView *_editorScroll;
     NSTextView *_editor;
     NSTimer *_saveOriginTimer;
@@ -125,6 +125,9 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
         _btnClose = [self makeButton:@"xmark" tip:@"بستن و درج همه (Esc)" action:@selector(closeTap)];
         _btnPause = [self makeButton:@"pause.fill" tip:@"مکث و ادامه شنیدن (⌥Space)" action:@selector(pauseTap)];
         _btnCopy = [self makeButton:@"doc.on.doc" tip:@"کپی متن تا اینجا (⌥C)" action:@selector(copyTap)];
+        _btnTrash = [self makeButton:@"trash"
+                                 tip:@"دور ریختن هرچه گفته‌ای و هنوز درج نشده؛ شنیدن ادامه دارد"
+                              action:@selector(trashTap)];
 
         _btnInsert = [NSButton buttonWithTitle:@"درج در همین اپ" target:self action:@selector(insertTap)];
         _btnInsert.bezelStyle = NSBezelStyleRounded;
@@ -173,7 +176,8 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     _btnClose.frame = NSMakeRect(10, cy, 24, 24);
     _btnPause.frame = NSMakeRect(38, cy, 24, 24);
     _btnCopy.frame = NSMakeRect(66, cy, 24, 24);
-    CGFloat left = 98;
+    _btnTrash.frame = NSMakeRect(94, cy, 24, 24);
+    CGFloat left = 126;
     if (!_btnInsert.hidden) {
         [_btnInsert sizeToFit];
         _btnInsert.frame = NSMakeRect(left, (kBarH - _btnInsert.frame.size.height) / 2,
@@ -321,7 +325,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
 // جای متن، با همان حسابی که layoutViews می‌کند. از فریمِ خودِ لیبل خوانده نمی‌شود،
 // چون آن یک رندر عقب است و درست همان لحظه‌ای که چیپ ظاهر می‌شود غلط می‌دهد.
 - (CGFloat)textWidth {
-    CGFloat left = 98;
+    CGFloat left = 126;
     if (!_btnInsert.hidden) left += _btnInsert.frame.size.width + 8;
     if (!_chipBg.hidden) left += _chipBg.frame.size.width + 8;
     return MAX(40, (_grip.frame.origin.x - 8) - left);
@@ -452,7 +456,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
         _chipLabel.stringValue = chip;
         [_chipLabel sizeToFit];
         CGFloat w = _chipLabel.frame.size.width + 16;
-        _chipBg.frame = NSMakeRect(98, (kBarH - 18) / 2, w, 18);
+        _chipBg.frame = NSMakeRect(126, (kBarH - 18) / 2, w, 18);
         _chipLabel.frame = NSMakeRect(8, 0, w - 16, 17);
     }
 
@@ -523,6 +527,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
 - (void)closeTap { if (self.onClose) self.onClose(); }
 - (void)pauseTap { if (self.onPauseToggle) self.onPauseToggle(); }
 - (void)copyTap { if (self.onCopyNow) self.onCopyNow(); }
+- (void)trashTap { if (self.onTrash) self.onTrash(); }
 - (void)insertTap { if (self.onInsertAll) self.onInsertAll(); }
 
 // اسکرین‌شات برای بازبینی طراحی (بدون نیاز به اجازه ضبط صفحه)
@@ -674,6 +679,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     _panel.onClose = ^{ [ws finish]; };
     _panel.onPauseToggle = ^{ [ws pauseToggle]; };
     _panel.onCopyNow = ^{ [ws copyNow]; };
+    _panel.onTrash = ^{ [ws dropPending]; };
     _panel.onInsertAll = ^{ [ws insertHere]; };
     if (_collect) [_panel clearEditor];
     [_panel show];
@@ -787,6 +793,31 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
                            : [[_transcript componentsJoinedByString:@" "]
                               stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (t.length) [ZInjector copyFinal:t];
+}
+
+// سطل آشغال: هرچه گفته شده و هنوز درج نشده دور می‌رود، شنیدن ادامه دارد.
+// موتور متن خاکستری و صدای پشتش را می‌ریزد؛ اینجا بقیه‌ی خط لوله پاک می‌شود.
+// حالت جمع فرق دارد: آنجا متن قطعی داخل ادیتور خودِ کاربر است و دست‌کارش نمی‌کنیم،
+// چون کاربر همان‌جا می‌تواند ویرایشش کند. متن درج‌شده هم برنمی‌گردد، چون از دست ما
+// خارج شده. `sessions/` هم خام و کامل می‌ماند: آن دفتر است، خروجی نیست.
+- (void)dropPending {
+    [self.engine dropPending];
+    _interim = @"";
+    // پاسخ دیررسِ پاس ویرایشِ در پرواز نباید بعدا بنشیند
+    if (_polishInFlight) _dropNextPolish = YES;
+    [_polishPending removeAllObjects];
+    if (!_collect) {
+        // این تکه‌ها به ترتیب در _transcript هم نشسته‌اند، پس دقیقا همان تعداد از
+        // دُمش برداشته می‌شود که کپی پایانی هم متن دورریخته را نداشته باشد.
+        NSUInteger drop = _queue.count + _pasteBuf.count;
+        [_queue removeAllObjects];
+        [_pasteBuf removeAllObjects];
+        if (drop > _transcript.count) drop = _transcript.count;
+        if (drop) {
+            [_transcript removeObjectsInRange:NSMakeRange(_transcript.count - drop, drop)];
+        }
+    }
+    [self render];
 }
 
 // ⌥V یا دکمه «درج در همین اپ»: هرچه هست، سر کرسر همین اپ جلویی

@@ -154,6 +154,32 @@ static NSString *ZMergeInterim(NSString *best, NSString *cur) {
     if (was) ZLog(@"engine: stopped by user");
 }
 
+// انصراف. سه چیز باید همزمان برود، وگرنه حرف‌ها از یکی از راه‌ها برمی‌گردند:
+// متن خاکستری، صدای بازپخش، و خودِ سشن‌های در جریان که همان صدا را دارند و متن
+// قطعی‌شان را می‌فرستند. سشن تازه از همین لحظه شروع می‌کند، پس شنیدن قطع نمی‌شود.
+- (void)dropPending {
+    if (!_running) return;
+    _lastInterim = @"";
+    _salvageBest = @"";
+    _drainCarry = nil;
+    _drainGotFinal = YES;      // بیمه‌ی چرخش هم لازم نیست؛ کاربر همین را نمی‌خواهد
+    [self.delegate engineInterim:@""];
+    [_feedLock lock];
+    _feedTarget = nil;
+    _replay.length = 0;
+    _voiceSinceResult = 0;
+    [_feedLock unlock];
+    // نال کردن قبل از cancel: مسیر close این‌ها را «غریبه» می‌بیند، پس نه salvage
+    // می‌کند نه ری‌استارت، و متن قطعیِ دیررسشان هم دور ریخته می‌شود.
+    ZGoogleStream *old = _stream, *dr = _draining;
+    _stream = nil;
+    _draining = nil;
+    [old cancel];
+    [dr cancel];
+    ZLog(@"engine: dropped pending text and audio");
+    if (!_paused) [self openStream];
+}
+
 - (void)startMicAndStream {
     __weak typeof(self) ws = self;
     _mic.onChunk = ^(NSData *pcm) {
@@ -538,6 +564,16 @@ static NSString *const kRelayBase = @"http://127.0.0.1:17635";
     _paused = NO;
     [self cmd:@{@"kind": @"cmd", @"cmd": @"start"}];
     [self.delegate engineState:ZEngineConnecting message:@""];
+}
+
+// انصراف در موتور فال‌بک: خودِ صفحه کروم متن معلق را نگه داشته، پس تشخیصش stop و
+// start می‌شود که آن متن آنجا هم دور برود، نه فقط روی پنل.
+- (void)dropPending {
+    if (!_running) return;
+    [self.delegate engineInterim:@""];
+    [self cmd:@{@"kind": @"cmd", @"cmd": @"stop"}];
+    if (!_paused) [self cmd:@{@"kind": @"cmd", @"cmd": @"start"}];
+    ZLog(@"relay: dropped pending text");
 }
 
 - (void)stop {
