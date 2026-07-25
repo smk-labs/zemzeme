@@ -208,6 +208,9 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 + (void)copyFinal:(NSString *)text;                     // کپی ماندگار پایانی
 - (void)type:(NSString *)text delayMicros:(useconds_t)d;
 - (void)paste:(NSString *)text delayMicros:(useconds_t)d;
+// دُم موقت حالت کرسر: n نویسه‌ی آخر پاک، متن تازه تایپ، هر دو پشت سر هم و تجزیه‌ناپذیر.
+// n فقط نویسه‌های تایپ‌شده‌ی خودمان است؛ متن کاربر از این راه پاک نمی‌شود.
+- (void)replaceLast:(NSUInteger)n with:(NSString *)text delayMicros:(useconds_t)d;
 - (void)copyFinalAfterPending:(NSString *)text;         // پشت صف درج، که مسابقه با پیست نگیرد
 @end
 

@@ -38,13 +38,8 @@ static const CGFloat kBarPad = 10;    // فاصله اولین دکمه از ل�
 static const CGFloat kBarStep = 28;   // گام هر دکمه (۲۴ عرض + ۴ فاصله)
 static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جمع
 
-// پس‌زمینهٔ پنل: NSVisualEffectView به‌خودی‌خود opaque حساب می‌شود و
-// mouseDownCanMoveWindow پیش‌فرض NO برمی‌گرداند، پس movableByWindowBackground پنل
-// روی هیچ پیکسلی اثر نداشت. اینجا صریحا اجازهٔ کشیدن از پس‌زمینه داده می‌شود؛
+// پس‌زمینهٔ پنل (تعریفش در zemzeme.h است، چون کارت میان‌برها هم همین را می‌خواهد):
 // دکمه‌ها/برچسب/ادیتور چون خودشان mouseDown را می‌گیرند دست‌نخورده می‌مانند.
-@interface ZDragEffectView : NSVisualEffectView
-@end
-
 @implementation ZDragEffectView
 - (BOOL)mouseDownCanMoveWindow { return YES; }
 - (void)mouseDown:(NSEvent *)event { [self.window performWindowDragWithEvent:event]; }
@@ -806,6 +801,10 @@ static NSString *ZModeLabel(ZMode m) {
     BOOL _finishing;          // منتظر پاس ویرایشِ پایانی حالت جمع
     id _frontObserver;
     // خط لوله پاس ویرایش: ترتیب تکه‌ها حفظ می‌شود، یکی‌یکی
+    // دُم موقت حالت کرسر: آنچه از متن خاکستریِ در جریان همین حالا سر کرسر تایپ شده.
+    // مالکش ماییم تا تکه‌ی قطعی برسد و جایش را بگیرد؛ از آن به بعد متن کاربر است.
+    NSString *_tail;
+    CFAbsoluteTime _tailSyncAt;
     NSMutableArray<NSString *> *_polishPending;
     BOOL _polishBusy;
     NSString *_polishInFlight;   // خامِ تکه در پرواز؛ موقع بستن برمی‌گردد سر صف
@@ -821,6 +820,7 @@ static NSString *ZModeLabel(ZMode m) {
         _transcript = [NSMutableArray array];
         _pasteBuf = [NSMutableArray array];
         _polishPending = [NSMutableArray array];
+        _tail = @"";
         _interim = @"";
         _statusText = @"";
         _sessionFile = [ZSessionsDir() URLByAppendingPathComponent:
@@ -868,7 +868,49 @@ static NSString *ZModeLabel(ZMode m) {
     _interim = [text copy];
     // در حالت جمع، خاکستری همان بالا دنبال متن سفید استریم می‌شود، نه در نوار پایین
     if (_mode == ZModeCollect) [_panel showInterimInEditor:_interim];
+    // در حالت کرسر پنلی نیست، پس خاکستری جایی برای نشستن ندارد. به جایش همین حالا
+    // سر کرسر تایپ می‌شود: کاربر حرفش را همان لحظه می‌بیند، نه چند ثانیه بعد وقتی
+    // گوگل تکه را قطعی کرد. رنگ خاکستری از دست می‌رود (تایپ مصنوعی متن ساده است و
+    // نشان‌دار کردنش کار یک input method است، نه یک اپ بیرونی)، ولی سرعت می‌ماند.
+    else if (_mode == ZModeCursor) [self syncTail:_interim];
     [self render];
+}
+
+// همان دُم موقت را با متن تازه یکی می‌کند: پیشوند مشترک دست نمی‌خورد و فقط تفاوت
+// پاک و دوباره تایپ می‌شود، پس هر بروزرسانی چند نویسه است نه کل جمله.
+- (void)syncTail:(NSString *)want {
+    if (![self canTypeTail]) return;
+    NSString *cur = _tail;
+    NSString *next = want ?: @"";
+    if ([cur isEqualToString:next]) return;
+    // گوگل چند بار در ثانیه متن خاکستری را بازنویسی می‌کند؛ بی این سقف، صفِ درج
+    // پر می‌شد از پاک‌کن و تایپِ نیم‌کاره و متن روی صفحه می‌لرزید.
+    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+    if (next.length && now - _tailSyncAt < 0.12) return;
+    _tailSyncAt = now;
+    NSUInteger keep = 0, max = MIN(cur.length, next.length);
+    while (keep < max && [cur characterAtIndex:keep] == [next characterAtIndex:keep]) keep++;
+    [_injector replaceLast:cur.length - keep
+                      with:[next substringFromIndex:keep]
+               delayMicros:ZSettings.shared.typeDelayMicros];
+    _tail = next;
+}
+
+// تایپِ دُم موقت فقط جایی که هم بی‌خطر است هم برگشت‌پذیر: مقصد باید جلو باشد
+// (وگرنه پاک‌کن‌ها می‌روند سراغ اپ دیگری) و روش درج باید تایپ باشد نه پیست، چون
+// در ریموت دسکتاپ هر رفت‌وبرگشت کند و نامطمئن است.
+- (BOOL)canTypeTail {
+    return _mode == ZModeCursor && [self targetIsFront]
+        && [ZInjector accessibilityOK] && ![ZInjector secureInputActive]
+        && [ZSettings.shared insertModeForBundleId:_target.bundleIdentifier] == ZInsertType;
+}
+
+// دُم را پاک می‌کند (چیزی که خودمان تایپ کرده‌ایم و هنوز قطعی نشده)
+- (void)wipeTail {
+    if (_tail.length && [self canTypeTail]) {
+        [_injector replaceLast:_tail.length with:@"" delayMicros:ZSettings.shared.typeDelayMicros];
+    }
+    _tail = @"";
 }
 
 // تکه قطعی: اول خام روی دیسک (sessions طلای تست است و خام می‌ماند)،
@@ -918,11 +960,32 @@ static NSString *ZModeLabel(ZMode m) {
     [_transcript addObject:text];
     if (_mode == ZModeCollect) {
         [_panel appendFinalToEditor:text];
+    } else if (_tail.length || [self canTypeTail]) {
+        // حالت کرسر: متنِ پاس‌خورده جای همان دُمِ خامی را می‌گیرد که لحظه‌ای پیش
+        // تایپ شده بود. دیفِ پیشوندی یعنی معمولا فقط چند نویسه‌ی آخر عوض می‌شود، نه
+        // کل جمله. اگر بین این دو، مقصد از جلو رفته باشد، دُم دیگر قابل ویرایش نیست:
+        // آن را رها می‌کنیم و متن قطعی می‌رود در صف، چون از دست دادن متن بدتر از
+        // تکرار چند کلمه است.
+        if ([self canTypeTail]) {
+            [self syncTailNow:[text stringByAppendingString:@" "]];
+            _tail = @"";
+        } else {
+            ZLog(@"session: tail abandoned (%lu chars), final queued", (unsigned long)_tail.length);
+            _tail = @"";
+            [_queue addObject:text];
+            [self pump];
+        }
     } else {
         [_queue addObject:text];
         [self pump];
     }
     [self render];
+}
+
+// مثل syncTail ولی بی‌سقفِ زمانی: تکه‌ی قطعی حق ندارد پشت throttle بماند
+- (void)syncTailNow:(NSString *)want {
+    _tailSyncAt = 0;
+    [self syncTail:want];
 }
 
 - (void)engineState:(ZEngineState)state message:(NSString *)msg {
@@ -1001,6 +1064,9 @@ static NSString *ZModeLabel(ZMode m) {
 - (void)dropPending {
     [self.engine dropPending];
     _interim = @"";
+    // دُم موقتِ حالت کرسر هم «درج‌نشده» حساب می‌شود: هنوز قطعی نشده و مالکش ماییم،
+    // پس سطل آشغال باید از روی صفحه هم برش دارد، نه فقط از صف.
+    [self wipeTail];
     // پاسخ دیررسِ پاس ویرایشِ در پرواز نباید بعدا بنشیند
     if (_polishInFlight) _dropNextPolish = YES;
     [_polishPending removeAllObjects];
@@ -1035,6 +1101,10 @@ static NSString *ZModeLabel(ZMode m) {
 // متن را درج می‌کند یا با خودش می‌برد، هیچ‌وقت دور نمی‌ریزد. دور ریختن کار سطل آشغال است.
 - (void)toggleMode {
     ZMode next = (ZMode)((_mode + 1) % (ZModeCursor + 1));
+    // از کرسر که بیرون می‌رویم، دُم موقت باید برداشته شود: تکه‌ی قطعیِ همان حرف بعدا
+    // از راه صف می‌آید و اگر دُم بماند، دو بار نوشته می‌شود. مقصد همین حالا جلوست
+    // (کاربر تازه میان‌بر را زده)، پس پاک کردنش امن است.
+    [self wipeTail];
     if (_mode == ZModeCollect) {
         // متن جمع‌شده می‌رود همان‌جا که داشتی می‌نوشتی، و یک نسخه هم در کلیپ‌بورد می‌ماند
         NSString *t = [[_panel editorText] stringByTrimmingCharactersInSet:
@@ -1243,6 +1313,12 @@ static NSString *ZModeLabel(ZMode m) {
     [self.engine stop];    // موتور قبل از بستن salvage می‌کند و finalها همین‌جا می‌رسند
     // هرچه در خط لوله پاس مانده، بدون معطلی خام پذیرفته می‌شود
     [self drainPolish];
+    // اگر دُمی از salvage جان سالم برد (یعنی موتور دست‌خالی بست)، همان‌جا سر کرسر
+    // می‌ماند و دیگر مال کاربر است؛ فقط مالکیتش را رها می‌کنیم
+    if (_tail.length) {
+        [_transcript addObject:_tail];
+        _tail = @"";
+    }
     [self flushPasteBuf];
     // پایان: در حالت زنده باقی صف، در حالت جمع کل متن ادیتور؛ اگر مقصد جلوست درج
     // می‌شود، وگرنه کپیِ زیر همین تابع نجاتش می‌دهد. اگر ⌥V/دکمه درج قبلا درج کرده

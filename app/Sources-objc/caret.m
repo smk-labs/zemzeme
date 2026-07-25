@@ -111,19 +111,55 @@ static BOOL ZWindowFrame(AXUIElementRef win, CGRect *out) {
     return ok;
 }
 
+// اپ‌های Chromium (و هر Electron) درخت اکسسبیلیتی را تنبل می‌سازند: تا وقتی یک ابزار
+// کمکی سراغشان نرود، نه عنصر فوکس‌دار می‌دهند نه رنج متن، و نقطه محکوم است به گوشه‌ی
+// پنجره. دو کلید برای بیدار کردنشان هست و هر دو یک بار به ازای هر pid زده می‌شوند:
+// `AXManualAccessibility` که Electron خودش مستندش کرده ولی روی خیلی از نسخه‌ها
+// advertise نشده و kAXErrorAttributeUnsupported (-25205) می‌دهد
+// (electron/electron#37465)، و `AXEnhancedUserInterface` که همان چیزی است که
+// VoiceOver می‌گذارد و Chromium را وادار به ساختن کل درخت می‌کند.
+// چون این دومی روی اپ اثر می‌گذارد و تا ری‌استارت اپ می‌ماند، سر بستن سشن پس گرفته
+// می‌شود: بیدار نگه داشتن اپ‌های کاربر بعد از پایان دیکته کار ما نیست.
+static NSMutableSet<NSNumber *> *ZPokedPids(void) {
+    static NSMutableSet *s;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ s = [NSMutableSet set]; });
+    return s;    // فقط روی صف caret دست می‌خورد، پس قفل لازم ندارد
+}
+
+static void ZWakeAccessibility(AXUIElementRef app, pid_t pid) {
+    if ([ZPokedPids() containsObject:@(pid)]) return;
+    [ZPokedPids() addObject:@(pid)];
+    AXError m = AXUIElementSetAttributeValue(app, CFSTR("AXManualAccessibility"), kCFBooleanTrue);
+    AXError e = AXUIElementSetAttributeValue(app, CFSTR("AXEnhancedUserInterface"), kCFBooleanTrue);
+    ZLog(@"caret: woke ax for pid=%d manual=%d enhanced=%d", pid, m, e);
+}
+
+static void ZCaretSleepAll(void) {
+    for (NSNumber *pid in ZPokedPids()) {
+        AXUIElementRef app = AXUIElementCreateApplication(pid.intValue);
+        if (!app) continue;
+        AXUIElementSetMessagingTimeout(app, kAXTimeout);
+        AXUIElementSetAttributeValue(app, CFSTR("AXEnhancedUserInterface"), kCFBooleanFalse);
+        AXUIElementSetAttributeValue(app, CFSTR("AXManualAccessibility"), kCFBooleanFalse);
+        CFRelease(app);
+    }
+    [ZPokedPids() removeAllObjects];
+}
+
 // pid از نخ اصلی می‌آید (NSWorkspace را از نخ پس‌زمینه نمی‌خوانیم)
 static ZCaretHit ZFindCaret(pid_t frontPid) {
     ZCaretHit hit = {ZCaretNone, CGRectZero};
     AXUIElementRef focused = ZCopyElement(ZSystemElement(), kAXFocusedUIElementAttribute);
     if (!focused) {
-        // پله ۳: اپ‌های Electron و وب‌ویو معمولا هیچ عنصر فوکس‌داری نمی‌دهند (اندازه‌گیری
-        // شد: VS Code هیچ)، ولی پنجره‌ی فوکس‌دارِ خودِ اپ را می‌دهند. بدون این پله،
-        // نقطه برای همان اپ‌هایی که بیشترین احتمال شکست را دارند می‌رفت گوشه‌ی صفحه،
-        // یعنی دورترین جای ممکن از جایی که کاربر دارد تایپ می‌کند.
+        // پله ۳: پنجره‌ی فوکس‌دارِ خودِ اپ. اپی که عنصر فوکس‌دار نمی‌دهد معمولا این را
+        // می‌دهد. سر راه، اگر Chromium خوابیده باشد بیدارش می‌کنیم: تیک بعدی ممکن است
+        // کرسر واقعی داشته باشد و اصلا به این پله نرسد.
         if (frontPid > 0) {
             AXUIElementRef app = AXUIElementCreateApplication(frontPid);
             if (app) {
                 AXUIElementSetMessagingTimeout(app, kAXTimeout);
+                ZWakeAccessibility(app, frontPid);
                 AXUIElementRef win = ZCopyElement(app, kAXFocusedWindowAttribute);
                 CGRect f;
                 if (win && ZWindowFrame(win, &f)) {
@@ -158,8 +194,17 @@ static ZCaretHit ZFindCaret(pid_t frontPid) {
     }
 
     // پله ۲: پنجره‌ی همان عنصر. اپی که رنج نمی‌دهد معمولا پنجره را می‌دهد، پس
-    // دست‌کم نقطه روی همان پنجره می‌ماند نه گوشه‌ی صفحه.
+    // دست‌کم نقطه روی همان پنجره می‌ماند نه گوشه‌ی صفحه. اینجا هم یک بار بیدارباش
+    // می‌فرستیم: Chromium نیمه‌بیدار عنصر فوکس‌دار می‌دهد ولی رنج متن نه.
     if (hit.src == ZCaretNone) {
+        if (frontPid > 0) {
+            AXUIElementRef app = AXUIElementCreateApplication(frontPid);
+            if (app) {
+                AXUIElementSetMessagingTimeout(app, kAXTimeout);
+                ZWakeAccessibility(app, frontPid);
+                CFRelease(app);
+            }
+        }
         AXUIElementRef win = ZCopyElement(focused, kAXWindowAttribute);
         CGRect f;
         if (win && ZWindowFrame(win, &f)) {
@@ -258,6 +303,10 @@ static NSRect ZFromAX(CGRect r) {
     _timer = nil;
     [self stopPulse];
     [_win orderOut:nil];
+    // بیدارباشی که به اپ‌های Chromium داده‌ایم پس گرفته می‌شود، روی همان صفی که
+    // ست شده بود. روشن ماندنش بعد از پایان دیکته یعنی هزینه‌ی درخت اکسسبیلیتی را
+    // تا ری‌استارت اپ به کاربر تحمیل کرده‌ایم، بی‌آنکه دیگر لازممان باشد.
+    dispatch_async(_q, ^{ ZCaretSleepAll(); });
 }
 
 - (void)tick {
@@ -297,9 +346,13 @@ static NSRect ZFromAX(CGRect r) {
                       near:NSMakePoint(NSMinX(c), NSMidY(c))];
     }
     if (hit.src == ZCaretWindow) {
+        // پایین-چپِ داخل پنجره، نه بالا-چپ. بالا-چپ روی پنجره‌ی تمام‌صفحه یعنی
+        // گوشه‌ی بالای مانیتور، که کاربر گفت اصلا دیده نمی‌شود؛ و اپ‌هایی که به این
+        // پله می‌افتند (چت و پیام‌رسان و Electron) اینپوتشان پایین صفحه است، پس
+        // پایین حدسِ نزدیک‌تری به کرسر واقعی است.
         NSRect w = ZFromAX(hit.rect);
-        return [self clamp:NSMakePoint(NSMinX(w) + kWinInset, NSMaxY(w) - kWinInset - kWinSize)
-                      near:NSMakePoint(NSMidX(w), NSMaxY(w) - 1)];
+        return [self clamp:NSMakePoint(NSMinX(w) + kWinInset, NSMinY(w) + kWinInset)
+                      near:NSMakePoint(NSMidX(w), NSMinY(w) + 1)];
     }
     NSRect vf = [self activeScreen].visibleFrame;
     return NSMakePoint(NSMinX(vf) + kParkInset, NSMinY(vf) + kParkInset);

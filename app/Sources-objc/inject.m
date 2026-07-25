@@ -55,6 +55,43 @@
     });
 }
 
+// جای دُم موقت را عوض می‌کند: n نویسه‌ی آخر پاک و متن تازه تایپ می‌شود، هر دو در یک
+// بلاک روی همان صف سریال. یکی نشدنشان یعنی کاربر یک لحظه متن نصفه ببیند، یا بدتر،
+// تایپِ بعدی وسط پاک کردنِ قبلی بنشیند. فقط برای نویسه‌هایی به کار می‌رود که خودمان
+// همین حالا تایپشان کرده‌ایم؛ متن خودِ کاربر هیچ‌وقت از اینجا پاک نمی‌شود.
+- (void)replaceLast:(NSUInteger)n with:(NSString *)text delayMicros:(useconds_t)d {
+    NSData *utf16 = [text dataUsingEncoding:NSUTF16LittleEndianStringEncoding];
+    dispatch_async(_q, ^{
+        for (NSUInteger i = 0; i < n; i++) {
+            for (int down = 1; down >= 0; down--) {
+                CGEventRef e = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)kVK_Delete, down != 0);
+                if (!e) continue;
+                CGEventPost(kCGSessionEventTap, e);
+                CFRelease(e);
+            }
+            if (d > 0) usleep(d);
+        }
+        const UniChar *units = utf16.bytes;
+        NSUInteger count = utf16.length / 2, i = 0;
+        while (i < count) {
+            NSUInteger k = MIN((NSUInteger)18, count - i);
+            CGEventRef down = CGEventCreateKeyboardEvent(NULL, 0, true);
+            if (down) {
+                CGEventKeyboardSetUnicodeString(down, k, units + i);
+                CGEventPost(kCGSessionEventTap, down);
+                CFRelease(down);
+            }
+            CGEventRef up = CGEventCreateKeyboardEvent(NULL, 0, false);
+            if (up) {
+                CGEventPost(kCGSessionEventTap, up);
+                CFRelease(up);
+            }
+            if (d > 0) usleep(d);
+            i += k;
+        }
+    });
+}
+
 // پیست تکه‌ای: کپی با نشونه transient (تاریخچه‌گیرها رد می‌کنند) و Cmd+V.
 // همه چیز روی یک صف سریال تا دو پیست پشت هم مسابقه کلیپ‌بورد نگیرند
 // (باگ واقعی: برگرداندن کلیپ‌بورد قبلی وسط پیست بعدی می‌نشست و متن قدیمی پیست می‌شد؛
