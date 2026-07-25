@@ -58,6 +58,12 @@ static NSString *const kBase = @"https://www.google.com/speech-api/full-duplex/v
     // شبکه ضعیف فرصت جبران داشته باشد و زودتر از واچ‌داگ نمیرد.
     cfg.timeoutIntervalForRequest = 3600;
     cfg.timeoutIntervalForResource = 600;
+    // کش پاسخ برای این دو تا بی‌معناست (هیچ‌وقت دوباره درخواست نمی‌شوند) و حافظه را
+    // نگه می‌دارد: مسیر دسته‌ای که صدها سشن پشت‌سرهم می‌سازد، MALLOC_SMALL اش تا
+    // بالای ۱۰۰ مگابایت رفته بود. دیکته‌ی زنده هم که هر ۲۰ ثانیه سشن عوض می‌کند
+    // همین را می‌پرداخت، فقط آرام‌تر.
+    cfg.URLCache = nil;
+    cfg.requestCachePolicy = NSURLRequestReloadIgnoringLocalCacheData;
     _session = [NSURLSession sessionWithConfiguration:cfg delegate:self delegateQueue:nil];
 
     _downTask = [_session dataTaskWithRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:down]]];
