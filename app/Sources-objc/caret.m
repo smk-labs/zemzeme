@@ -9,8 +9,7 @@ static const CGFloat kDotSize = 14;
 // بیرون از پنجره بریده می‌شد.
 static const CGFloat kWinSize = 22;
 static const CGFloat kPad = (kWinSize - kDotSize) / 2;
-static const CGFloat kGapX = 4;         // فاصله‌ی نقطه از خود کرسر
-static const CGFloat kGapY = 3;
+static const CGFloat kGapY = 4;         // فاصله‌ی عمودی نقطه از خط متن
 static const CGFloat kWinInset = 12;    // فروکاست پنجره: چقدر تو رفته از گوشه‌ی بالا-چپ
 static const CGFloat kParkInset = 24;   // فروکاست آخر: فاصله از گوشه‌ی صفحه
 static const NSTimeInterval kPoll = 1.0 / 6.0;   // ۶ هرتز: چشم روان می‌بیند، AX هم له نمی‌شود
@@ -339,11 +338,18 @@ static NSRect ZFromAX(CGRect r) {
 // است کاربر باید بتواند ببیند که دیکته روشن است.
 - (NSPoint)originFor:(ZCaretHit)hit {
     if (hit.src == ZCaretExact) {
+        // درست زیر کرسر و وسط‌چین با آن، همان کاری که دیکته‌ی خود مک می‌کند. بالای
+        // کرسر جای بدی بود: روی خط قبلی می‌افتاد و سر خط اولِ سند می‌رفت روی نوار
+        // عنوان. زیرِ کرسر همیشه یک خط پایین‌تر است، یعنی جایی که هنوز چیزی ننوشته‌ای.
+        // مرکز افقی از NSMidX می‌آید نه NSMinX: رنجِ طول‌صفر عرض ندارد و این دو یکی‌اند،
+        // ولی اگر اپی رنج واقعی برگرداند باز هم وسطِ همان می‌نشیند نه کنارش.
         NSRect c = ZFromAX(hit.rect);
-        // چپِ کرسر و بالای خط: نه روی حرف‌ها، نه روی خطی که دارد نوشته می‌شود
-        return [self clamp:NSMakePoint(NSMinX(c) - kDotSize - kGapX - kPad,
-                                       NSMaxY(c) + kGapY - kPad)
-                      near:NSMakePoint(NSMinX(c), NSMidY(c))];
+        NSPoint ref = NSMakePoint(NSMidX(c), NSMidY(c));
+        CGFloat below = NSMinY(c) - kGapY - kPad - kDotSize;
+        // ته صفحه جا نیست: همان‌جا برمی‌گردد بالای کرسر، باز هم مثل خود مک
+        CGFloat y = below >= NSMinY([self screenNear:ref].frame)
+            ? below : NSMaxY(c) + kGapY - kPad;
+        return [self clamp:NSMakePoint(NSMidX(c) - kWinSize / 2, y) near:ref];
     }
     if (hit.src == ZCaretWindow) {
         // پایین-چپِ داخل پنجره، نه بالا-چپ. بالا-چپ روی پنجره‌ی تمام‌صفحه یعنی
@@ -370,12 +376,15 @@ static NSRect ZFromAX(CGRect r) {
 // نقطه را داخل همان صفحه‌ای نگه می‌دارد که هدف رویش است. معیار frame است نه
 // visibleFrame: کرسری که بالای پنجره‌ی فول‌اسکرین است با visibleFrame به اندازه‌ی
 // نوار منو پایین کشیده می‌شد و درست می‌افتاد روی همان متن.
-- (NSPoint)clamp:(NSPoint)p near:(NSPoint)ref {
-    NSScreen *on = nil;
+- (NSScreen *)screenNear:(NSPoint)p {
     for (NSScreen *sc in NSScreen.screens) {
-        if (NSPointInRect(ref, sc.frame)) { on = sc; break; }
+        if (NSPointInRect(p, sc.frame)) return sc;
     }
-    NSRect f = (on ?: [self activeScreen]).frame;
+    return [self activeScreen];
+}
+
+- (NSPoint)clamp:(NSPoint)p near:(NSPoint)ref {
+    NSRect f = [self screenNear:ref].frame;
     return NSMakePoint(MIN(MAX(p.x, NSMinX(f)), NSMaxX(f) - kWinSize),
                        MIN(MAX(p.y, NSMinY(f)), NSMaxY(f) - kWinSize));
 }
