@@ -4,7 +4,7 @@
 // پس نه واچ‌داگ میکروفن لازم است، نه واچ‌داگ گیر کردن، نه دور ریختن بک‌لاگ، نه نجات
 // بازپخشی. در عوض یک برش‌زن قطعی داریم: فایل روی سکوت به پاره‌های ~۲۰ ثانیه‌ای با
 // ۲٫۵ ثانیه هم‌پوشانی بریده می‌شود، هر پاره یک سشن تازه‌ی خودش را می‌گیرد، و درزها با
-// ZMergeInterim جوش می‌خورند.
+// ادغام هم‌پوشانی (ZBatchStitch، نسخه‌ی بامدارای ZMergeInterim) جوش می‌خورند.
 //
 // چرا پاره‌ی ۲۰ ثانیه‌ای (اندازه‌گیری tools/probe_markers.py روی همین نقطه):
 // یک سشن ~۳۰ ثانیه صدای پیوسته را می‌شنود و بعد ~۳۰ ثانیه کر می‌شود و همین‌طور
@@ -41,6 +41,7 @@
 @property (nonatomic, strong) NSData *pcm;
 @property (nonatomic) double startSec;     // زمان صدای اولین بایت pcm (شامل هم‌پوشانی)
 @property (nonatomic) double newFromSec;   // از اینجا به بعد محتوای تازه است
+@property (nonatomic) double endSec;       // زمان صدای آخرین بایت pcm
 @property (nonatomic, copy) NSString *text;
 @end
 
@@ -106,6 +107,47 @@ static void ZSplitTail(NSString *all, NSUInteger words, NSString **head, NSStrin
     *tail = [[w subarrayWithRange:NSMakeRange(cut, words)] componentsJoinedByString:@" "];
 }
 
+// درز دو پاره‌ی هم‌پوشان: کار ZMergeInterim، ولی بامدارا. تطبیق دقیقِ دم‌به‌سر با یک
+// توکن اختلاف در ناحیه هم‌پوشانی کور می‌شود (اندازه‌گیری روی فایل ۱۷ دقیقه‌ای: «year»
+// در یک پاره «ear» شنیده شده بود) و همان چند کلمه دو بار می‌نشست، ۵ درز از ۷۲.
+// پس تطبیق را نسبی می‌کنیم: اگر دست‌کم ۷۰٪ توکن‌ها بخوانند، هم‌پوشانی است.
+// چرا اینجا و نه در خود ZMergeInterim: مسیر زنده قرارداد خودش را دارد و رفتارش نباید
+// به‌خاطر یک قابلیت دیگر عوض شود.
+static NSString *ZBatchStitch(NSString *a, NSString *b) {
+    NSArray *A = [a componentsSeparatedByString:@" "];
+    NSArray *B = [b componentsSeparatedByString:@" "];
+    if (!a.length) return b;
+    if (!b.length) return a;
+    NSCharacterSet *punct = [NSCharacterSet characterSetWithCharactersInString:@".,!?؟،؛:\""];
+    NSMutableArray *nA = [NSMutableArray array], *nB = [NSMutableArray array];
+    for (NSArray *src in @[A, B]) {
+        NSMutableArray *dst = src == A ? nA : nB;
+        for (NSString *t in src) {
+            [dst addObject:[[t stringByTrimmingCharactersInSet:punct] lowercaseString]];
+        }
+    }
+    // پنجره‌ی جست‌وجو به اندازه‌ی هم‌پوشانی واقعی است (~۲٫۵ ثانیه، یعنی ۱۰ تا ۱۵ کلمه)
+    // با کمی حاشیه. بیشتر از این فقط شانس تطبیق الکی را بالا می‌برد.
+    NSUInteger maxK = MIN(MIN(A.count, B.count), (NSUInteger)30);
+    for (NSUInteger k = maxK; k >= 2; k--) {
+        NSUInteger match = 0;
+        for (NSUInteger i = 0; i < k; i++) {
+            if ([nA[nA.count - k + i] isEqualToString:nB[i]]) match++;
+        }
+        if (match >= 2 && match * 10 >= k * 7) {
+            NSArray *rest = [B subarrayWithRange:NSMakeRange(k, B.count - k)];
+            return rest.count ? [a stringByAppendingFormat:@" %@",
+                                 [rest componentsJoinedByString:@" "]] : a;
+        }
+    }
+    if (maxK >= 1 && [nA.lastObject isEqualToString:nB.firstObject]) {
+        NSArray *rest = [B subarrayWithRange:NSMakeRange(1, B.count - 1)];
+        return rest.count ? [a stringByAppendingFormat:@" %@",
+                             [rest componentsJoinedByString:@" "]] : a;
+    }
+    return [NSString stringWithFormat:@"%@ %@", a, b];
+}
+
 // ---------- رونویس ----------
 
 @interface ZBatchTranscriber : NSObject
@@ -117,12 +159,71 @@ static void ZSplitTail(NSString *all, NSUInteger words, NSString **head, NSStrin
 @implementation ZBatchTranscriber {
     NSInteger _nextIndex;
     NSInteger _retries;
+    NSLock *_stateLock;
+    NSInteger _deafStreak;      // پاره‌های پشت‌سرهمی که سشنشان لال برگشت
+    NSDate *_lastCooldownLog;
 }
 
-// یک پاره را روی یک سشن تازه بفرست و متنش را برگردان. متن معلق آخر (interim که
-// هیچ‌وقت قطعی نشد) هم با ZMergeInterim به دم متن می‌چسبد، وگرنه آخر هر پاره
-// چند کلمه می‌افتاد.
-- (NSString *)runPiece:(ZBatchPiece *)p attempt:(int)attempt {
+- (instancetype)init {
+    if ((self = [super init])) _stateLock = [NSLock new];
+    return self;
+}
+
+// نقطه‌ی مجانی، بعد از چند صد سشن در یک ساعت، آرام‌آرام «لال» جواب می‌دهد: /down با
+// کد ۲۰۰ باز می‌شود ولی یک فریم هم نمی‌فرستد. اندازه‌گیری‌شده: همان فایل ۳ دقیقه‌ای
+// که اول اجرا ۸۸٪ پوشش داشت، بعد از ~۴۰۰ سشن به ۶۰٪ افتاد، حتی با jobs=1.
+// پس وقتی لالی پیاپی دیدیم عقب می‌کشیم. این‌طور اجرا کند می‌شود، نه بی‌صدا ناقص.
+- (void)coolDownIfDeaf {
+    [_stateLock lock];
+    NSInteger streak = _deafStreak;
+    BOOL shouldLog = streak >= 3 &&
+        (!_lastCooldownLog || [NSDate.date timeIntervalSinceDate:_lastCooldownLog] > 20);
+    if (shouldLog) _lastCooldownLog = NSDate.date;
+    [_stateLock unlock];
+    if (streak < 3) return;
+    NSTimeInterval wait = MIN(5.0 * (streak - 2), 30.0);
+    if (shouldLog) ZLog(@"batch: %ld deaf sessions in a row, backing off %.0fs", (long)streak, wait);
+    usleep((useconds_t)(wait * 1e6));
+}
+
+- (void)noteDeaf:(BOOL)deaf {
+    [_stateLock lock];
+    _deafStreak = deaf ? _deafStreak + 1 : 0;
+    [_stateLock unlock];
+}
+
+// آیا این پاره واقعا حرف دارد؟ پاره‌ی سکوت حق دارد بی‌متن برگردد و نباید تکرار شود.
+- (BOOL)pieceHasVoice:(ZBatchPiece *)p {
+    if (p.pcm.length < 2) return NO;
+    return ZFrameRMS(p.pcm.bytes, MIN(p.pcm.length / 2, (NSUInteger)320000)) > kZBatchSilenceRMS;
+}
+
+// یک پاره، با تا سه تلاش و عقب‌کشیدن بین تلاش‌ها. بهترین نتیجه‌ی تلاش‌ها برمی‌گردد،
+// نه آخری: تلاش دوم هم ممکن است لال باشد.
+- (NSString *)runPiece:(ZBatchPiece *)p {
+    NSString *best = @"";
+    double sec = p.pcm.length / kZPcmBytesPerSec;
+    BOOL voiced = [self pieceHasVoice:p];
+    for (int attempt = 0; attempt < 3; attempt++) {
+        if (attempt) usleep((useconds_t)(4.0 * attempt * 1e6));
+        [self coolDownIfDeaf];
+        NSString *t = [self attemptPiece:p];
+        if (t.length > best.length) best = t;
+        NSUInteger words = best.length ? [best componentsSeparatedByString:@" "].count : 0;
+        // گفتار عادی ~۲٫۵ کلمه در ثانیه است؛ زیر ۰٫۴ یعنی سشن لال بوده، نه کم‌حرف
+        BOOL thin = words < (NSUInteger)(0.4 * sec);
+        [self noteDeaf:thin && voiced];
+        if (!thin || !voiced) return best;
+        _retries++;
+        ZLog(@"batch: piece %ld thin (%lu words in %.0fs), attempt %d",
+             (long)p.index, (unsigned long)words, sec, attempt + 2);
+    }
+    return best;
+}
+
+// یک تلاش: یک سشن تازه. متن معلق آخر (interim که هیچ‌وقت قطعی نشد) هم با
+// ZMergeInterim به دم متن می‌چسبد، وگرنه آخر هر پاره چند کلمه می‌افتاد.
+- (NSString *)attemptPiece:(ZBatchPiece *)p {
     ZGoogleStream *s = [[ZGoogleStream alloc] initWithLang:self.lang];
     s.rawUpload = YES;
     NSMutableArray<NSString *> *finals = [NSMutableArray array];
@@ -173,6 +274,12 @@ static void ZSplitTail(NSString *all, NSUInteger words, NSString **head, NSStrin
     // نفرستد. سقف سخت هم داریم که یک سشن نامتعارف کل اجرا را گرو نگیرد.
     NSDate *hard = [NSDate dateWithTimeIntervalSinceNow:25.0 + sec];
     NSDate *uploadEnd = NSDate.date;
+    // ساعت سکوت از پایان آپلود شروع می‌شود، نه از ساخت استریم. با --speed ۱ آپلود
+    // خودش ۲۰ ثانیه طول می‌کشد و اگر سرور در آن فاصله فریمی نداده باشد، همان لحظه‌ی
+    // finishUpload «ته‌نشین‌شده» به نظر می‌رسید و سشن قبل از رسیدن نتیجه لغو می‌شد.
+    [lock lock];
+    if ([lastEvent compare:uploadEnd] == NSOrderedAscending) lastEvent = uploadEnd;
+    [lock unlock];
     while (dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW,
                                                       (int64_t)(0.4 * NSEC_PER_SEC)))) {
         [lock lock];
@@ -198,15 +305,7 @@ static void ZSplitTail(NSString *all, NSUInteger words, NSString **head, NSStrin
     if (hanging.length) text = ZMergeInterim(text, hanging);
     text = [text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
 
-    // یک سشن خالی روی صدای واقعی یعنی سشن مرد، نه سکوت. تکرارش روی فایل بی‌خطر
-    // است (بازپخش قطعی) و جلوی گم شدن بی‌صدای ۲۰ ثانیه متن را می‌گیرد.
-    if (!text.length && attempt == 0 && ZFrameRMS(p.pcm.bytes, MIN(p.pcm.length / 2, 320000u))
-            > kZBatchSilenceRMS) {
-        ZLog(@"batch: piece %ld came back empty (%@), retrying once",
-             (long)p.index, closeReason ?: @"?");
-        _retries++;
-        return [self runPiece:p attempt:1];
-    }
+    if (!text.length) ZLog(@"batch: piece %ld silent session (%@)", (long)p.index, closeReason ?: @"?");
     return text;
 }
 
@@ -216,7 +315,11 @@ static void ZSplitTail(NSString *all, NSUInteger words, NSString **head, NSStrin
     dispatch_queue_t q = dispatch_get_global_queue(QOS_CLASS_UTILITY, 0);
     for (ZBatchPiece *p in pieces) {
         dispatch_group_async(g, q, ^{
-            p.text = [self runPiece:p attempt:0];
+            p.text = [self runPiece:p];
+            // پی‌سی‌ام دیگر لازم نیست و باید همین‌جا آزاد شود، وگرنه هر پاره‌ی
+            // ۲۰ ثانیه‌ای (~۶۴۰ کیلوبایت) تا آخر اجرا می‌ماند و فایل ۹۰ دقیقه‌ای
+            // چند صد مگابایت می‌شد. زمان‌های SRT از عددهای پاره می‌آیند، نه از صدا.
+            p.pcm = nil;
         });
     }
     dispatch_group_wait(g, DISPATCH_TIME_FOREVER);
@@ -266,6 +369,7 @@ static void ZSplitTail(NSString *all, NSUInteger words, NSString **head, NSStrin
         p.pcm = [buf subdataWithRange:NSMakeRange(0, cut)];
         p.startSec = bufStartSec;
         p.newFromSec = newFromSec;
+        p.endSec = bufStartSec + cut / kZPcmBytesPerSec;
         [pending addObject:p];
         [all addObject:p];
 
@@ -309,7 +413,7 @@ static NSString *ZBatchJoin(NSArray<ZBatchPiece *> *pieces) {
         }
         NSString *head = nil, *tail = nil;
         ZSplitTail(out, 25, &head, &tail);
-        NSString *merged = ZMergeInterim(tail, t);
+        NSString *merged = ZBatchStitch(tail, t);
         [out setString:head.length ? [NSString stringWithFormat:@"%@ %@", head, merged] : merged];
     }
     return out;
@@ -323,10 +427,25 @@ static NSString *ZBatchPolish(NSString *raw, NSString *lang) {
     NSArray *w = [raw componentsSeparatedByString:@" "];
     NSMutableArray *out = [NSMutableArray array];
     const NSUInteger per = 40;
+    NSInteger slow = 0;
+    BOOL gaveUp = NO;
     for (NSUInteger i = 0; i < w.count; i += per) {
         NSRange r = NSMakeRange(i, MIN(per, w.count - i));
         NSString *chunk = [[w subarrayWithRange:r] componentsJoinedByString:@" "];
+        if (gaveUp) {
+            [out addObject:chunk];
+            continue;
+        }
+        NSDate *t0 = NSDate.date;
         [out addObject:[ZPolish.shared polishSync:chunk lang:lang]];
+        // فایل ۹۰ دقیقه‌ای ~۴۰۰ تکه دارد؛ دیمن کند یعنی ویرایش از خودِ رونویسی
+        // طولانی‌تر شود. سه تکه‌ی کند پشت‌سرهم و بی‌خیالِ ویرایش می‌شویم: متن خام
+        // بدترین حالتِ قابل قبول است، معطلی نیم‌ساعته نه.
+        slow = [NSDate.date timeIntervalSinceDate:t0] > 3.0 ? slow + 1 : 0;
+        if (slow >= 3) {
+            gaveUp = YES;
+            ZLog(@"batch: polish daemon too slow, leaving the rest of the text raw");
+        }
     }
     return [out componentsJoinedByString:@" "];
 }
@@ -343,7 +462,7 @@ static NSString *ZBatchSRT(NSArray<ZBatchPiece *> *pieces) {
         if (!t.length) continue;
         // فقط بازه‌ی محتوای تازه؛ هم‌پوشانی سر پاره مال پاره‌ی قبلی است
         double from = p.newFromSec;
-        double to = p.startSec + p.pcm.length / kZPcmBytesPerSec;
+        double to = p.endSec;
         if (to <= from) to = from + 0.5;
         NSArray *w = [t componentsSeparatedByString:@" "];
         const NSUInteger per = 12;
