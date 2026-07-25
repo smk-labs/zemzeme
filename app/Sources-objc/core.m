@@ -85,9 +85,9 @@ void ZPlay(ZSound s) {
     static NSMutableDictionary<NSString *, NSSound *> *cache;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        names = @{@(ZSoundStart):  @"Pop",       // روشن شدن
+        names = @{@(ZSoundStart):  @"Bottle",    // روشن شدن
                   @(ZSoundPause):  @"Tink",      // کوتاه و خنثی
-                  @(ZSoundResume): @"Bottle",
+                  @(ZSoundResume): @"Pop",
                   @(ZSoundFinish): @"Glass",     // تمام شد و نشست
                   @(ZSoundInsert): @"Morse",     // درج، ولی هنوز بازیم
                   @(ZSoundTrash):  @"Basso",     // دور ریختن، عمدا ناخوشایند
