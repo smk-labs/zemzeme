@@ -92,6 +92,8 @@ def delivered(src, got, floor=0.6):
 
 
 if __name__ == "__main__":
+    if len(sys.argv) < 3:
+        sys.exit(__doc__)
     src = open(sys.argv[1]).read()
     got = open(sys.argv[2]).read()
     total = int(sys.argv[3]) if len(sys.argv) > 3 else max(items(src) or [0])

@@ -239,6 +239,9 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 - (NSString *)editorText;
 - (void)setEditorText:(NSString *)text;
 - (void)clearEditor;
+- (void)flash:(NSString *)msg;    // فیدبک کوتاه کار روی خط وضعیت
+// متن خاکستری دنبال متن سفید در همان ادیتور (حالت جمع)
+- (void)showInterimInEditor:(NSString *)interim;
 - (void)makeShots:(NSString *)dir;
 @end
 
