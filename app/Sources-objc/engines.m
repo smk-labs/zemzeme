@@ -487,20 +487,43 @@ static NSString *const kRelayBase = @"http://127.0.0.1:17635";
     [self.delegate engineState:ZEngineIdle message:@""];
 }
 
-+ (BOOL)ping {
-    __block BOOL ok = NO;
+// ۲۰۰ خالی هویت نیست: /alive باید root همین نسخه را برگرداند، وگرنه یک پروسه
+// جامانده (نسخه قدیمی یا چک‌اوت دیگر) جای سرور ما جواب می‌دهد، GET / از پوشه غلط
+// می‌آید و spawn تازه هم چون bind نمی‌شود بی‌صدا می‌میرد.
+typedef NS_ENUM(NSInteger, ZRelayPing) {
+    ZRelayDown,      // جوابی نیامد: پورت آزاد است، spawn مجاز
+    ZRelayOurs,      // سرور خودمان: root همخوان
+    ZRelayForeign,   // پورت دست دیگری است: spawn بی‌فایده، تعارض را گزارش کن
+};
+
++ (ZRelayPing)ping:(NSString **)pidOut {
+    __block ZRelayPing result = ZRelayDown;
+    __block NSString *pid = nil;
     dispatch_semaphore_t sem = dispatch_semaphore_create(0);
     NSURLSessionConfiguration *cfg = NSURLSessionConfiguration.ephemeralSessionConfiguration;
     cfg.timeoutIntervalForRequest = 1;
     NSURLSession *s = [NSURLSession sessionWithConfiguration:cfg];
     [[s dataTaskWithURL:[NSURL URLWithString:[kRelayBase stringByAppendingString:@"/alive"]]
       completionHandler:^(NSData *d, NSURLResponse *resp, NSError *e) {
-        ok = [resp isKindOfClass:NSHTTPURLResponse.class] && ((NSHTTPURLResponse *)resp).statusCode == 200;
+        if ([resp isKindOfClass:NSHTTPURLResponse.class]) {
+            NSDictionary *obj = d ? [NSJSONSerialization JSONObjectWithData:d options:0 error:nil] : nil;
+            NSString *root = [obj isKindOfClass:NSDictionary.class] &&
+                             [obj[@"root"] isKindOfClass:NSString.class] ? obj[@"root"] : nil;
+            id p = [obj isKindOfClass:NSDictionary.class] ? obj[@"pid"] : nil;
+            if ([p isKindOfClass:NSNumber.class] || [p isKindOfClass:NSString.class]) pid = [p description];
+            BOOL ours = ((NSHTTPURLResponse *)resp).statusCode == 200 && root &&
+                        ([root isEqualToString:ZRes().path] ||
+                         [root isEqualToString:ZRes().URLByResolvingSymlinksInPath.path]);
+            result = ours ? ZRelayOurs : ZRelayForeign;
+            if (!ours) ZLog(@"relay: 17635 answered but not ours (status=%ld root=%@ pid=%@)",
+                            (long)((NSHTTPURLResponse *)resp).statusCode, root, pid);
+        }
         dispatch_semaphore_signal(sem);
     }] resume];
     dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)));
     [s invalidateAndCancel];
-    return ok;
+    if (pidOut) *pidOut = pid;
+    return result;
 }
 
 + (void)spawnServer {
@@ -522,7 +545,8 @@ static NSString *const kRelayBase = @"http://127.0.0.1:17635";
 }
 
 + (void)openPage {
-    if (![self ping]) [self spawnServer];
+    // فقط وقتی پورت واقعا آزاد است spawn کن؛ روی پورت اشغال، بچه فقط می‌میرد
+    if ([self ping:NULL] == ZRelayDown) [self spawnServer];
     NSTask *p = [NSTask new];
     p.executableURL = [NSURL fileURLWithPath:@"/usr/bin/open"];
     p.arguments = @[@"-g", @"-na", @"Google Chrome", @"--args",
@@ -533,8 +557,23 @@ static NSString *const kRelayBase = @"http://127.0.0.1:17635";
 - (void)ensureServer:(NSInteger)attempt {
     __weak typeof(self) ws = self;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-        if ([ZChromeRelayEngine ping]) {
+        NSString *pid = nil;
+        ZRelayPing st = [ZChromeRelayEngine ping:&pid];
+        if (st == ZRelayOurs) {
             dispatch_async(dispatch_get_main_queue(), ^{ [ws serverReady]; });
+            return;
+        }
+        if (st == ZRelayForeign) {
+            // پورت دست پروسه دیگری است (معمولا سرور جامانده از نسخه قبل).
+            // spawn تازه bind نمی‌شود و بی‌صدا می‌میرد؛ به جای دور باطل، رک بگو.
+            NSString *msg = pid.length
+                ? [NSString stringWithFormat:@"پورت ۱۷۶۳۵ دست یک سرور دیگر است؛ در ترمینال ببندش: kill %@", pid]
+                : @"پورت ۱۷۶۳۵ دست پروسه دیگری است؛ در ترمینال: lsof -i :17635";
+            dispatch_async(dispatch_get_main_queue(), ^{
+                __strong typeof(ws) s = ws;
+                if (!s || !s->_running) return;
+                [s.delegate engineState:ZEngineGaveUp message:msg];
+            });
             return;
         }
         if (attempt == 0) [ZChromeRelayEngine spawnServer];
