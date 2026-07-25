@@ -28,14 +28,22 @@ static NSArray<NSString *> *ZUnsupportedExts(void) {
     return ![ZUnsupportedExts() containsObject:path.pathExtension.lowercaseString];
 }
 
+// یک متن، دو فراخوان: صف رابط همان لحظه‌ی افزودن فایل نشانش می‌دهد و init هم همین را
+// در NSError می‌گذارد. دو جا نوشتنش یعنی دو پیام که با هم جلو نمی‌روند.
++ (NSString *)unsupportedReason:(NSURL *)url {
+    NSString *ext = url.path.pathExtension.lowercaseString;
+    if (![ZUnsupportedExts() containsObject:ext]) return nil;
+    return [NSString stringWithFormat:
+            @"قالب .%@ را macOS باز نمی‌کند (دیمکسری برایش ندارد). "
+            @"اول به m4a یا wav تبدیلش کن.", ext];
+}
+
 - (instancetype)initWithURL:(NSURL *)url error:(NSError **)err {
     if (!(self = [super init])) return nil;
-    NSString *ext = url.path.pathExtension.lowercaseString;
-    if ([ZUnsupportedExts() containsObject:ext]) {
+    NSString *why = [ZFileDecoder unsupportedReason:url];
+    if (why) {
         if (err) *err = [NSError errorWithDomain:@"zemzeme.decode" code:10 userInfo:@{
-            NSLocalizedDescriptionKey: [NSString stringWithFormat:
-                @"قالب .%@ را macOS باز نمی‌کند (دیمکسری برایش ندارد). "
-                @"اول به m4a یا wav تبدیلش کن.", ext]}];
+            NSLocalizedDescriptionKey: why}];
         return nil;
     }
     if (![NSFileManager.defaultManager fileExistsAtPath:url.path]) {

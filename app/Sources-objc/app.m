@@ -102,7 +102,19 @@ int ZSelfTest(NSString *file, NSString *lang) {
     [self setupStatusItem];
     __weak typeof(self) ws = self;
     _hotkeys.onToggle = ^{ [ws toggleSession]; };
-    _hotkeys.onEsc = ^{ [ws sessionDo:@selector(finish)]; };
+    // Esc با اولویت: کارت راهنمای باز، اول از همه بسته می‌شود (مثل هر پنجره‌ی کوچک مک)،
+    // بعد نوبت پایان سشن است. هیچ‌کدام نبود، Esc دست‌نخورده به اپ زیرین می‌رسد.
+    _hotkeys.onEscape = ^BOOL{
+        if ([ZCheatSheet visible]) {
+            [ZCheatSheet close];
+            return YES;
+        }
+        __strong typeof(ws) me = ws;
+        if (!me || !me->_session) return NO;
+        dispatch_async(dispatch_get_main_queue(), ^{ [me sessionDo:@selector(finish)]; });
+        return YES;
+    };
+    _hotkeys.onHelp = ^{ [ZCheatSheet toggle]; };
     _hotkeys.onPauseToggle = ^{ [ws sessionDo:@selector(pauseToggle)]; };
     _hotkeys.onCopyNow = ^{ [ws sessionDo:@selector(copyNow)]; };
     _hotkeys.onInsertHere = ^{ [ws sessionDo:@selector(insertHere)]; };
@@ -110,13 +122,29 @@ int ZSelfTest(NSString *file, NSString *lang) {
     _hotkeys.onLangSwitch = ^{ [ws sessionDo:@selector(switchLang)]; };
     _hotkeys.onModeToggle = ^{ [ws sessionDo:@selector(toggleMode)]; };
     _hotkeys.onPolishNow = ^{ [ws sessionDo:@selector(polishCollected)]; };
+    // بی‌سشن هم کار می‌کند، پس مثل بقیه از sessionDo رد نمی‌شود
+    _hotkeys.onFilePanel = ^{ [ws openBatchPanel]; };
+    // دکمه‌ی «رونویسی فایل» روی نوار پنل شناور: سومین راه دسترسی. اینجا ست می‌شود نه
+    // در ZSession، چون به سشن ربطی ندارد و باید حتی بین دو سشن هم زنده باشد.
+    _panel.onFilePanel = ^{ [ws openBatchPanel]; };
 
     // حالت اسکرین‌شات طراحی: zemzeme --uishot <dir>
     NSArray *args = NSProcessInfo.processInfo.arguments;
     NSUInteger i = [args indexOfObject:@"--uishot"];
     if (i != NSNotFound && i + 1 < args.count) {
+        // با یک مسیر فایل در ادامه، جای حالت‌های نمونه یک اجرای واقعی عکس گرفته می‌شود:
+        // پنجره را بی‌اجازه‌ی ضبط صفحه فقط از داخل خود پروسه می‌توان دید.
+        if (i + 2 < args.count && ![args[i + 2] hasPrefix:@"-"]) {
+            NSString *path = args[i + 2];
+            NSURL *f = [NSURL fileURLWithPath:path.stringByExpandingTildeInPath];
+            [ZBatchPanel.shared runShots:args[i + 1] files:@[f]];
+            return;
+        }
         [_panel makeShots:args[i + 1]];
-        [NSApp terminate:nil];
+        [ZCheatSheet shot:args[i + 1]];
+        // پنل رونویسی آخر می‌آید و خودش خروج را صدا می‌زند: عکس‌هایش پله‌پله و با
+        // فرصت رندر گرفته می‌شوند (جدول ویو-محور بی‌چرخیدن ران‌لوپ خالی درمی‌آید).
+        [ZBatchPanel.shared makeShots:args[i + 1] then:^{ [NSApp terminate:nil]; }];
         return;
     }
 
@@ -165,6 +193,10 @@ int ZSelfTest(NSString *file, NSString *lang) {
         if (!_session) [self startSession];
     } else if ([url isEqualToString:@"zemzeme://stop"]) {
         [_session finish];
+    } else if ([url isEqualToString:@"zemzeme://files"]) {
+        [self openBatchPanel];
+    } else if ([url isEqualToString:@"zemzeme://keys"]) {
+        [ZCheatSheet toggle];
     } else if ([url isEqualToString:@"zemzeme://quit"]) {
         // خروج نرم برای بیلد تازه: مسیر terminate سشن باز را تمام می‌کند و متنش را
         // نگه می‌دارد. با سیگنال (pkill) این مسیر اجرا نمی‌شود و متن دور می‌ریزد.
@@ -244,6 +276,13 @@ int ZSelfTest(NSString *file, NSString *lang) {
         [self icon:ins symbol:@"text.insert"];
         ins.toolTip = @"درج در اپی که پشت پنل باز است";
     }
+    // رونویسی فایل: کنار «شروع دیکته» می‌نشیند چون هم‌رده‌ی آن است، دو راه رسیدن به متن.
+    // همیشه فعال است: به سشن ربطی ندارد و وسط دیکته هم می‌شود بازش کرد.
+    NSMenuItem *batch = [self icon:[self item:menu title:@"رونویسی فایل…"
+                                       action:@selector(menuBatch) key:@""]
+                             symbol:@"arrow.up.doc"];
+    batch.toolTip = @"فایل صوتی یا تصویری را به متن تبدیل کن: صف، پیشرفت زنده، "
+                     "متن یکجای قابل ویرایش (Command راست + F)";
     [menu addItem:NSMenuItem.separatorItem];
 
     // رادیوی حالت‌ها از اینجا برداشته شد و با آمدن حالت سوم (کرسر) هم برنمی‌گردد:
@@ -325,40 +364,17 @@ int ZSelfTest(NSString *file, NSString *lang) {
     advItem.submenu = adv;
     [menu addItem:advItem];
 
-    // یک جای مرتب برای دیدن همه‌ی میان‌برها. تولتیپ هر دکمه هم حرف خودش را می‌گوید،
-    // ولی فهرست کامل باید یک‌جا پیدا باشد، وگرنه باید روی هفت دکمه موس نگه داشت.
-    NSMenuItem *keysItem = [self icon:[[NSMenuItem alloc] initWithTitle:@"میان‌برها"
-                                                                action:nil keyEquivalent:@""]
-                                symbol:@"keyboard"];
-    NSMenu *keys = [NSMenu new];
-    NSArray *rows = @[
-        @[@"شروع و پایان سشن", @"دابل‌تپ Command راست"],
-        @[@"مکث و ادامه", @"تک‌تپ Command راست"],
-        @[@"پایان و درج همه", @"Esc"],
-        @[@"کپی متن تا اینجا", @"Command راست + C"],
-        @[@"دور ریختن متن درج‌نشده", @"Command راست + D"],
-        @[@"عوض کردن زبان", @"Command راست + L"],
-        @[@"چرخش حالت: زنده ← جمع ← کرسر", @"Command راست + E"],
-        @[@"پاس ویرایش روی متن جمع‌شده", @"Command راست + P"],
-        @[@"درج سر کرسر همین اپ", @"Command راست + V"],
-    ];
-    for (NSArray *r in rows) {
-        NSMenuItem *i = [[NSMenuItem alloc] initWithTitle:
-            [NSString stringWithFormat:@"%@  —  %@", r[0], r[1]] action:nil keyEquivalent:@""];
-        i.enabled = NO;
-        [keys addItem:i];
-    }
-    [keys addItem:NSMenuItem.separatorItem];
-    NSMenuItem *note = [[NSMenuItem alloc] initWithTitle:@"همه‌ی این حرف‌ها با ⌥ هم کار می‌کنند"
-                                                 action:nil keyEquivalent:@""];
-    note.enabled = NO;
-    [keys addItem:note];
-    NSMenuItem *note2 = [[NSMenuItem alloc] initWithTitle:@"میان‌برهای حرفی فقط در حین سشن فعال‌اند"
-                                                  action:nil keyEquivalent:@""];
-    note2.enabled = NO;
-    [keys addItem:note2];
-    keysItem.submenu = keys;
-    [menu addItem:keysItem];
+    // یک آیتم، یک کارت. زیرمنوی قبلی فهرستی از ردیف‌های غیرفعال بود: خاکستری، بی‌آیکون،
+    // و متن فارسی و لاتینِ یک‌خطی جابه‌جا خوانده می‌شد. حالا کارت واقعی باز می‌شود
+    // (ZCheatSheet) که کی‌کپ و آیکون دارد و کنار دستت باز می‌ماند تا کلیدها را تمرین کنی.
+    NSMenuItem *keysItem = [self icon:[self item:menu title:@"راهنما"
+                                          action:@selector(menuCheatSheet) key:@""]
+                                symbol:@"questionmark.circle"];
+    // نشانه‌ی ⌘H فقط برای دیده شدن است: کار واقعی را تپ سراسری می‌کند و آن هم فقط با
+    // Command راست. ماسک را دستی می‌گذاریم چون item: پیش‌فرض ⌥ می‌گذارد.
+    keysItem.keyEquivalent = @"h";
+    keysItem.keyEquivalentModifierMask = NSEventModifierFlagCommand;
+    keysItem.toolTip = @"کارت میان‌برها با Command راست + H؛ شناور می‌ماند و با Esc بسته می‌شود";
 
     [menu addItem:NSMenuItem.separatorItem];
     [self icon:[self item:menu title:@"خروج از زمزمه" action:@selector(menuQuit) key:@"q"] symbol:@"power"];
@@ -386,6 +402,10 @@ int ZSelfTest(NSString *file, NSString *lang) {
 - (void)menuPauseToggle { [self sessionDo:@selector(pauseToggle)]; }
 - (void)menuCopyNow { [self sessionDo:@selector(copyNow)]; }
 - (void)menuInsertHere { [self sessionDo:@selector(insertHere)]; }
+- (void)menuCheatSheet { [ZCheatSheet toggle]; }
+// سه راه دسترسی، یک پنل و یک صف: منوبار، Command راست + F، و دکمه‌ی نوار پنل
+- (void)openBatchPanel { [ZBatchPanel.shared show]; }
+- (void)menuBatch { [self openBatchPanel]; }
 - (void)menuLangFa { [self setLang:@"fa-IR"]; }
 - (void)menuLangEn { [self setLang:@"en-US"]; }
 - (void)setLang:(NSString *)l {

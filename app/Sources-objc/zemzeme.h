@@ -223,7 +223,13 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 // و Command راست + یک حرف برای هر دکمه. همان حروف با ⌥ هم کار می‌کنند (عادت قدیمی
 // نشکند)، چون هر دو از یک نقشه‌ی واحد (actionForCode:) می‌خوانند.
 @property (nonatomic, copy) void (^onToggle)(void);        // دابل‌تپ Command راست
-@property (nonatomic, copy) void (^onEsc)(void);            // Esc: پایان و درج
+// Esc، با اولویت: کارت راهنما باز است ببندش، وگرنه سشن را تمام کن. جواب YES یعنی
+// رویداد مصرف شد و به اپ زیرین نمی‌رسد؛ NO یعنی Esc مال ما نبود، دست‌نخورده رد شود
+// (بیرون از سشن و بی‌کارتِ باز، Esc نباید از vim و بقیه دزدیده شود). هم‌زمان (نه
+// dispatch) صدا زده می‌شود، چون تصمیم «بلعیدن یا نه» تاخیر نمی‌پذیرد؛ تپ خودش روی
+// نخ اصلی نشسته، پس امن است.
+@property (nonatomic, copy) BOOL (^onEscape)(void);
+@property (nonatomic, copy) void (^onHelp)(void);           // H: کارت راهنما، در سشن و بیرونش
 @property (nonatomic, copy) void (^onPauseToggle)(void);    // تک‌تپ Command راست، یا Space
 @property (nonatomic, copy) void (^onCopyNow)(void);        // C
 @property (nonatomic, copy) void (^onInsertHere)(void);     // V
@@ -231,10 +237,30 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 @property (nonatomic, copy) void (^onLangSwitch)(void);     // L
 @property (nonatomic, copy) void (^onModeToggle)(void);     // E
 @property (nonatomic, copy) void (^onPolishNow)(void);      // P
+// F: پنل رونویسی فایل. تنها میان‌بری که بی‌سشن هم کار می‌کند، چون به سشن ربطی ندارد
+@property (nonatomic, copy) void (^onFilePanel)(void);      // F
 @property (nonatomic) BOOL sessionActive;
 @property (nonatomic, readonly) BOOL enabled;   // تپ واقعا بالا است، نه فقط enable صدا خورده
 - (void)enable;
 - (void)disable;
+@end
+
+// ---------- پس‌زمینه‌ی شیشه‌ای قابل‌کشیدن ----------
+// NSVisualEffectView به‌خودی‌خود opaque حساب می‌شود و mouseDownCanMoveWindow پیش‌فرض
+// NO می‌دهد، پس movableByWindowBackground روی هیچ پیکسلی اثر ندارد. این زیرکلاس صریحا
+// اجازه‌ی کشیدن می‌دهد. هم نوار شناور از آن است هم کارت میان‌برها.
+@interface ZDragEffectView : NSVisualEffectView
+@end
+
+// ---------- کارت میان‌برها ----------
+// یک پنجره‌ی کوچک مرجع (چیت‌شیت): هر کار با آیکون خودش، کلیدها به شکل کی‌کپ، چیدمان
+// راست‌به‌چپ. جای فهرستِ داخل منو را گرفت: آن فهرست مجبور بود غیرفعال باشد، پس مک
+// خاکستری‌اش می‌کشید، و فارسی و لاتینِ یک‌خطی هم جابه‌جا خوانده می‌شد.
+@interface ZCheatSheet : NSObject
++ (void)toggle;                  // باز اگر بسته است، بسته اگر باز است
++ (BOOL)visible;
++ (void)close;
++ (void)shot:(NSString *)dir;    // cheatsheet.png برای بازبینی طراحی (--uishot)
 @end
 
 // ---------- پنل ----------
@@ -278,6 +304,7 @@ NSColor *ZStatusColor(ZPanelModel *m);
 @property (nonatomic, copy) void (^onLangSwitch)(void); // چرخش زبان
 @property (nonatomic, copy) void (^onModeToggle)(void); // چرخش حالت: زنده ← جمع ← کرسر
 @property (nonatomic, copy) void (^onPolishNow)(void);  // اعمال پاس فارسی روی متن جمع‌شده
+@property (nonatomic, copy) void (^onFilePanel)(void);  // باز کردن پنل رونویسی فایل
 - (void)show;
 - (void)hide;
 - (void)render:(ZPanelModel *)m;
@@ -315,11 +342,59 @@ NSColor *ZStatusColor(ZPanelModel *m);
 // کل فایل هیچ‌وقت در حافظه نمی‌آید، پس فایل ۹۰ دقیقه‌ای هم به همان چند مگابایت
 // فایل کوتاه کار می‌کند.
 @interface ZFileDecoder : NSObject
-+ (BOOL)supportsPath:(NSString *)path;          // ogg/opus/mkv/webm نه: دیمکسر ندارند
++ (BOOL)supportsPath:(NSString *)path;          // mkv/webm نه: دیمکسر ندارند
+// چرا پیام رد شدن هم از همین‌جا: صف رابط باید همان لحظه‌ی افزودن فایل دلیل رد را
+// بگوید، نه چند دقیقه بعد وسط اجرا. دو جا نوشتنش یعنی دو پیام واگرا.
++ (NSString *)unsupportedReason:(NSURL *)url;   // نال یعنی قالبش باز می‌شود
 @property (nonatomic, readonly) NSTimeInterval duration;
 - (instancetype)initWithURL:(NSURL *)url error:(NSError **)err;
 - (NSData *)nextChunk:(NSError **)err;          // نال: پایان فایل، یا خطا در err
 - (void)cancel;
+@end
+
+// یک کار دسته‌ای: چند فایل، به ترتیب، با پیشرفت زنده و لغو تمیز. همان موتور برش و
+// سشن و ادغام که مسیر خط فرمان استفاده می‌کند، فقط از بیرون قابل استفاده.
+// خروجی هر فایل یک txt کنار خودش است (یا در outDir)؛ متن هر فایل از onFileDone هم
+// می‌آید، پس فراخوان می‌تواند یکجا هم سرهمش کند.
+@interface ZBatchJob : NSObject
+- (instancetype)initWithFiles:(NSArray<NSURL *> *)files lang:(NSString *)lang;
+@property (nonatomic) NSInteger jobs;           // سشن هم‌زمان؛ پیش‌فرض ۲
+@property (nonatomic) double speed;             // ضریب تغذیه؛ ۰ یعنی بی‌مکث (پیش‌فرض)
+@property (nonatomic) BOOL rawUpload;           // l16 خام به جای FLAC؛ فقط عیب‌یابی
+@property (nonatomic) BOOL writeSRT;
+@property (nonatomic) BOOL writeTXT;            // پیش‌فرض روشن
+// پاس ویرایش روی متن هر فایل، قبل از نوشتن txt. مسیر خط فرمان روشنش می‌کند (آنجا
+// یک فایل یعنی یک خروجی)، رابط خاموش: آنجا پاس نهایی روی متن یکجا می‌نشیند.
+@property (nonatomic) BOOL polishFiles;
+@property (nonatomic, copy) NSString *outDir;   // نال: کنار خود فایل
+@property (nonatomic, readonly) unsigned long long bytesUp;
+@property (nonatomic, copy) void (^onFileProgress)(NSURL *f, double doneSec, double totalSec);
+@property (nonatomic, copy) void (^onFileDone)(NSURL *f, NSString *text, NSError *err);
+@property (nonatomic, copy) void (^onAllDone)(void);
+// جای فایل خروجی، با همان حسابی که خودش می‌کند (برای چاپ مسیر در خط فرمان)
+- (NSURL *)outputURLFor:(NSURL *)file ext:(NSString *)ext;
+- (void)start;      // نخ پس‌زمینه؛ همه‌ی کال‌بک‌ها روی نخ اصلی
+// همین نخ، بلوکه، و کال‌بک‌ها هم همان‌جا. مسیر خط فرمان از این می‌رود: آنجا نه
+// NSApplication هست نه ران‌لوپی که بچرخد، پس کال‌بکِ نخ اصلی هیچ‌وقت اجرا نمی‌شد.
+- (void)runOnThisThread;
+- (void)cancel;     // وسط کار؛ فایلِ در جریان متن نیمه‌اش را برمی‌گرداند و چیزی نوشته نمی‌شود
+@end
+
+// پاس ویرایش فارسی روی یک متن بلند، تکه‌تکه (~۴۰ کلمه). ترتیب مهم است و دلیلش سر
+// خود تابع نوشته شده: اول جوش خام، بعد ویرایش. بلوکه است، پس نخ پس‌زمینه.
+NSString *ZBatchPolishText(NSString *raw, NSString *lang);
+
+// ---------- پنل رونویسی فایل ----------
+// پنجره‌ی واقعی (نه نوار شناور): صف فایل با ترتیبِ قابل‌کشیدن، پیشرفت زنده‌ی هر ردیف،
+// و متن یکجای قابل ویرایش. یکی بیشتر نیست، چون سه راه دسترسی (منوبار، میان‌بر،
+// دکمه‌ی پنل) باید به همان صف و همان کار برسند. بستن پنجره کار در جریان را نمی‌کشد.
+@interface ZBatchPanel : NSObject
++ (instancetype)shared;
+- (void)show;
+- (void)addFiles:(NSArray<NSURL *> *)urls;
+- (void)makeShots:(NSString *)dir;                                 // حالت‌های نمونه (--uishot)
+- (void)makeShots:(NSString *)dir then:(void (^)(void))done;       // پله‌پله، با فرصت رندر
+- (void)runShots:(NSString *)dir files:(NSArray<NSURL *> *)files;  // یک اجرای واقعی زیر ذره‌بین
 @end
 
 // zemzeme --transcribe <files...> [--lang fa-IR] [--jobs N] [--out DIR] [--srt] [--speed X]

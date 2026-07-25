@@ -156,6 +156,10 @@ static NSString *ZBatchStitch(NSString *a, NSString *b) {
 @property (nonatomic) NSInteger jobs;
 @property (nonatomic) BOOL rawUp;        // آپلود خام l16 به جای FLAC (فقط عیب‌یابی)
 @property (atomic, readonly) unsigned long long bytesUp;   // بایت واقعی روی سیم
+@property (atomic) BOOL cancelled;       // لغو تعاملی؛ همه‌ی حلقه‌های طولانی نگاهش می‌کنند
+// ثانیه‌ی صدای رونویسی‌شده تا الان (جمع محتوای تازه‌ی پاره‌های تمام‌شده). سر هر پاره
+// صدا زده می‌شود، نه سر هر دسته: رابط باید هر ۲۰ ثانیه صدا یک قدم جلو برود، نه هر دسته.
+@property (nonatomic, copy) void (^onPieceDone)(double secDone);
 @end
 
 @implementation ZBatchTranscriber {
@@ -163,6 +167,7 @@ static NSString *ZBatchStitch(NSString *a, NSString *b) {
     NSInteger _retries;
     NSLock *_stateLock;
     unsigned long long _bytesUp;
+    double _secDone;
     NSInteger _deafStreak;      // پاره‌های پشت‌سرهمی که سشنشان لال برگشت
     NSDate *_lastCooldownLog;
 }
@@ -170,6 +175,16 @@ static NSString *ZBatchStitch(NSString *a, NSString *b) {
 - (instancetype)init {
     if ((self = [super init])) _stateLock = [NSLock new];
     return self;
+}
+
+// خوابِ تکه‌تکه: لغو نباید تا ته یک مکث ۳۰ ثانیه‌ای معطل بماند
+- (BOOL)nap:(NSTimeInterval)sec {
+    NSDate *until = [NSDate dateWithTimeIntervalSinceNow:sec];
+    while ([NSDate.date compare:until] == NSOrderedAscending) {
+        if (self.cancelled) return NO;
+        usleep(200000);
+    }
+    return !self.cancelled;
 }
 
 // نقطه‌ی مجانی، بعد از چند صد سشن در یک ساعت، آرام‌آرام «لال» جواب می‌دهد: /down با
@@ -186,7 +201,7 @@ static NSString *ZBatchStitch(NSString *a, NSString *b) {
     if (streak < 3) return;
     NSTimeInterval wait = MIN(5.0 * (streak - 2), 30.0);
     if (shouldLog) ZLog(@"batch: %ld deaf sessions in a row, backing off %.0fs", (long)streak, wait);
-    usleep((useconds_t)(wait * 1e6));
+    [self nap:wait];
 }
 
 - (void)noteDeaf:(BOOL)deaf {
@@ -216,7 +231,8 @@ static NSString *ZBatchStitch(NSString *a, NSString *b) {
     BOOL voiced = [self pieceHasVoice:p];
     NSUInteger prevWords = NSNotFound;
     for (int attempt = 0; attempt < 3; attempt++) {
-        if (attempt) usleep((useconds_t)(4.0 * attempt * 1e6));
+        if (self.cancelled) return best;
+        if (attempt && ![self nap:4.0 * attempt]) return best;
         [self coolDownIfDeaf];
         NSString *t = [self attemptPiece:p];
         if (t.length > best.length) best = t;
@@ -241,6 +257,7 @@ static NSString *ZBatchStitch(NSString *a, NSString *b) {
 // یک تلاش: یک سشن تازه. متن معلق آخر (interim که هیچ‌وقت قطعی نشد) هم با
 // ZMergeInterim به دم متن می‌چسبد، وگرنه آخر هر پاره چند کلمه می‌افتاد.
 - (NSString *)attemptPiece:(ZBatchPiece *)p {
+    if (self.cancelled) return @"";
     ZGoogleStream *s = [[ZGoogleStream alloc] initWithLang:self.lang];
     // FLAC پیش‌فرض است، مثل مسیر زنده: روی وویس ۶ دقیقه‌ای واقعی حجم آپلود از ۱۳ به
     // ۷ مگابایت رسید و متن ۹۹٫۴٪ همان بود (۷۷۹ کلمه در برابر ۷۸۱، یعنی در حد نوسان
@@ -279,7 +296,7 @@ static NSString *ZBatchStitch(NSString *a, NSString *b) {
         // تغذیه با ضریب سرعت: تکه‌های ۱۰۰ میلی‌ثانیه‌ای، همان دانه‌بندی مسیر زنده
         NSUInteger step = 3200;
         NSDate *t0 = NSDate.date;
-        for (NSUInteger off = 0; off < p.pcm.length; off += step) {
+        for (NSUInteger off = 0; off < p.pcm.length && !self.cancelled; off += step) {
             NSUInteger n = MIN(step, p.pcm.length - off);
             [s feed:[p.pcm subdataWithRange:NSMakeRange(off, n)]];
             double due = (off + n) / (kZPcmBytesPerSec * self.speed);
@@ -308,8 +325,8 @@ static NSString *ZBatchStitch(NSString *a, NSString *b) {
         [lock unlock];
         BOOL settled = quiet > kZBatchQuietSec &&
                        [NSDate.date timeIntervalSinceDate:uploadEnd] > 2.0;
-        if (settled || [NSDate.date compare:hard] != NSOrderedAscending) {
-            if (!settled) {
+        if (settled || self.cancelled || [NSDate.date compare:hard] != NSOrderedAscending) {
+            if (!settled && !self.cancelled) {
                 ZLog(@"batch: piece %ld hit the hard deadline, cancelling pair=%@",
                      (long)p.index, s.pair);
             }
@@ -344,6 +361,13 @@ static NSString *ZBatchStitch(NSString *a, NSString *b) {
             // ۲۰ ثانیه‌ای (~۶۴۰ کیلوبایت) تا آخر اجرا می‌ماند و فایل ۹۰ دقیقه‌ای
             // چند صد مگابایت می‌شد. زمان‌های SRT از عددهای پاره می‌آیند، نه از صدا.
             p.pcm = nil;
+            // پیشرفت از «محتوای تازه»ی پاره حساب می‌شود نه از طولش، پس هم‌پوشانی دو
+            // بار شمرده نمی‌شود و جمعِ همه دقیقا طول فایل است.
+            [self->_stateLock lock];
+            self->_secDone += MAX(0.0, p.endSec - p.newFromSec);
+            double done = self->_secDone;
+            [self->_stateLock unlock];
+            if (self.onPieceDone) self.onPieceDone(done);
         });
     }
     dispatch_group_wait(g, DISPATCH_TIME_FOREVER);
@@ -352,9 +376,9 @@ static NSString *ZBatchStitch(NSString *a, NSString *b) {
 // برش‌زن: از دیکدر می‌خواند، روی سکوت می‌برد، و دسته‌دسته (به اندازه jobs) اجرا
 // می‌کند. حافظه کراندار است: در هر لحظه فقط jobs پاره‌ی ~۲۰ ثانیه‌ای در دست است،
 // پس فایل ۹۰ دقیقه‌ای هم به همان چند مگابایت فایل ۵ دقیقه‌ای کار می‌کند.
-- (NSArray<ZBatchPiece *> *)transcribe:(ZFileDecoder *)dec
-                              progress:(void (^)(double doneSec, NSInteger pieces))onProgress
-                                 error:(NSError **)err {
+// لغو وسط کار: هرچه تا اینجا رونویسی شده برمی‌گردد (نیمه، ولی همان است که واقعا
+// شنیده شده). فراخوان خودش می‌داند لغو کرده، پس نیازی به خطای جداگانه نیست.
+- (NSArray<ZBatchPiece *> *)transcribe:(ZFileDecoder *)dec error:(NSError **)err {
     const NSUInteger overlapBytes = (NSUInteger)(kZBatchOverlapSec * kZPcmBytesPerSec);
     const NSUInteger target = (NSUInteger)(kZBatchSegSec * kZPcmBytesPerSec);
     const NSUInteger lo = (NSUInteger)(kZBatchSegMinSec * kZPcmBytesPerSec);
@@ -367,8 +391,8 @@ static NSString *ZBatchStitch(NSString *a, NSString *b) {
     double newFromSec = 0;         // اولین ثانیه‌ی محتوای تازه در buf
     BOOL eof = NO;
 
-    while (!eof || buf.length) {
-        while (!eof && buf.length < hi) {
+    while ((!eof || buf.length) && !self.cancelled) {
+        while (!eof && buf.length < hi && !self.cancelled) {
             NSError *de = nil;
             NSData *chunk = [dec nextChunk:&de];
             if (!chunk) {
@@ -410,11 +434,10 @@ static NSString *ZBatchStitch(NSString *a, NSString *b) {
         if (pending.count >= (NSUInteger)self.jobs || (eof && !buf.length)) {
             [self runBatch:pending];
             [pending removeAllObjects];
-            if (onProgress) onProgress(newFromSec, all.count);
         }
         if (eof && !buf.length) break;
     }
-    if (pending.count) [self runBatch:pending];
+    if (pending.count && !self.cancelled) [self runBatch:pending];
     if (_retries) ZLog(@"batch: %ld piece(s) needed a retry", (long)_retries);
     return all;
 }
@@ -446,7 +469,9 @@ static NSString *ZBatchJoin(NSArray<ZBatchPiece *> *pieces) {
 // پاس ویرایش فارسی روی متن نهایی، تکه‌تکه (~۴۰ کلمه) که هم‌اندازه‌ی تکه‌های مسیر
 // زنده باشد. ترتیب مهم است: اول جوش خام، بعد ویرایش. برعکسش، نیم‌فاصله و نقطه‌گذاری
 // دو پاره‌ی هم‌پوشان را ناهم‌شکل می‌کرد و ادغام درز را کور می‌کرد.
-static NSString *ZBatchPolish(NSString *raw, NSString *lang) {
+// عمومی است چون دکمه‌ی «پاس نهایی» پنل رونویسی هم دقیقا همین را روی متن یکجا می‌خواهد،
+// و دو پیاده‌سازی از یک قاعده یعنی دو رفتار واگرا.
+NSString *ZBatchPolishText(NSString *raw, NSString *lang) {
     if (!raw.length || [lang hasPrefix:@"en"]) return raw;
     NSArray *w = [raw componentsSeparatedByString:@" "];
     NSMutableArray *out = [NSMutableArray array];
@@ -505,6 +530,196 @@ static NSString *ZBatchSRT(NSArray<ZBatchPiece *> *pieces) {
     return out;
 }
 
+// ---------- کار دسته‌ای: همان موتور، از بیرون قابل استفاده ----------
+// چرا این لایه: منطق بالا اندازه‌گیری‌شده و درست است، ولی تنها فراخوانش خط فرمان بود
+// و همه‌چیز (پیشرفت، خطا، ترتیب) در fprintf گره خورده بود. اینجا فقط قرارداد بیرونی
+// اضافه می‌شود: صف فایل، کال‌بک، لغو. هیچ عددی از الگوریتم عوض نشده.
+
+@implementation ZBatchJob {
+    NSArray<NSURL *> *_files;
+    NSString *_lang;
+    NSLock *_lock;              // فقط سر لغو: بین نخ کار و نخ فراخوان
+    ZBatchTranscriber *_tr;     // فایلِ در جریان
+    ZFileDecoder *_dec;
+    BOOL _cancelled;
+    BOOL _onMain;
+    unsigned long long _bytesUp;
+}
+
+- (instancetype)initWithFiles:(NSArray<NSURL *> *)files lang:(NSString *)lang {
+    if ((self = [super init])) {
+        _files = [files copy];
+        _lang = [lang copy] ?: @"fa-IR";
+        _lock = [NSLock new];
+        _jobs = 2;              // مشترک با دیکته‌ی زنده؛ دلیل محافظه‌کاری سر ZBatchMain نوشته شده
+        _writeTXT = YES;
+        _onMain = YES;
+    }
+    return self;
+}
+
+- (unsigned long long)bytesUp {
+    [_lock lock];
+    unsigned long long v = _bytesUp;
+    [_lock unlock];
+    return v;
+}
+
+- (BOOL)isCancelled {
+    [_lock lock];
+    BOOL c = _cancelled;
+    [_lock unlock];
+    return c;
+}
+
+- (void)cancel {
+    [_lock lock];
+    _cancelled = YES;
+    ZBatchTranscriber *tr = _tr;
+    ZFileDecoder *dec = _dec;
+    [_lock unlock];
+    tr.cancelled = YES;
+    [dec cancel];    // خواندن همان‌جا می‌ایستد، پس حلقه‌ی برش هم زود تمام می‌شود
+    ZLog(@"batch: cancelled by the caller");
+}
+
+// کال‌بک‌ها یا روی نخ اصلی‌اند (رابط) یا روی همین نخ (خط فرمان). یک جا تصمیم گرفته
+// می‌شود، پس هیچ کال‌بکی دو رفتار ندارد.
+- (void)hop:(void (^)(void))block {
+    if (!_onMain) {
+        block();
+        return;
+    }
+    if (NSThread.isMainThread) block();
+    else dispatch_async(dispatch_get_main_queue(), block);
+}
+
+- (NSURL *)outputURLFor:(NSURL *)file ext:(NSString *)ext {
+    NSString *dir = self.outDir.length ? self.outDir.stringByExpandingTildeInPath
+                                       : file.URLByDeletingLastPathComponent.path;
+    NSString *base = file.lastPathComponent.stringByDeletingPathExtension;
+    return [NSURL fileURLWithPath:[dir stringByAppendingPathComponent:
+                                   [base stringByAppendingPathExtension:ext]]];
+}
+
+- (void)start {
+    _onMain = YES;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{ [self loop]; });
+}
+
+- (void)runOnThisThread {
+    _onMain = NO;
+    [self loop];
+}
+
+- (void)loop {
+    // دیمن ویرایش را از همین حالا گرم کن؛ نبودنش خطا نیست، فقط متن خام می‌ماند
+    if (self.polishFiles && [_lang hasPrefix:@"fa"] && ZSettings.shared.polishEnabled) {
+        [ZPolish.shared prepare];
+    }
+    for (NSURL *url in _files) {
+        if ([self isCancelled]) break;
+        [self runFile:url];
+    }
+    [_lock lock];
+    _tr = nil;
+    _dec = nil;
+    [_lock unlock];
+    [self hop:^{ if (self.onAllDone) self.onAllDone(); }];
+}
+
+- (void)runFile:(NSURL *)url {
+    NSError *err = nil;
+    ZFileDecoder *dec = [[ZFileDecoder alloc] initWithURL:url error:&err];
+    if (!dec) {
+        [self hop:^{ if (self.onFileDone) self.onFileDone(url, nil, err); }];
+        return;
+    }
+    double total = dec.duration;
+    NSDate *t0 = NSDate.date;
+    ZBatchTranscriber *tr = [ZBatchTranscriber new];
+    tr.lang = _lang;
+    tr.jobs = MAX(1, MIN(8, self.jobs));
+    tr.speed = self.speed;
+    tr.rawUp = self.rawUpload;
+    __weak typeof(self) ws = self;
+    tr.onPieceDone = ^(double secDone) {
+        __strong typeof(ws) s = ws;
+        if (!s) return;
+        [s hop:^{
+            if (s.onFileProgress) s.onFileProgress(url, MIN(secDone, total), total);
+        }];
+    };
+    [_lock lock];
+    if (_cancelled) {
+        [_lock unlock];
+        return;
+    }
+    _tr = tr;
+    _dec = dec;
+    [_lock unlock];
+
+    ZLog(@"batch: start %@ dur=%.0fs lang=%@ jobs=%ld speed=%.0f",
+         url.lastPathComponent, total, _lang, (long)tr.jobs, self.speed);
+    // صفرِ اول: ردیف همان لحظه «در حال کار» می‌شود و طولش را می‌فهمد، بی‌آنکه منتظر
+    // اولین پاره (~۲۰ ثانیه صدا) بماند.
+    [self hop:^{ if (self.onFileProgress) self.onFileProgress(url, 0, total); }];
+
+    NSArray<ZBatchPiece *> *pieces = [tr transcribe:dec error:&err];
+    [_lock lock];
+    _bytesUp += tr.bytesUp;
+    _tr = nil;
+    _dec = nil;
+    [_lock unlock];
+
+    if (!pieces) {
+        [self hop:^{ if (self.onFileDone) self.onFileDone(url, nil, err); }];
+        return;
+    }
+    NSString *text = ZBatchJoin(pieces);
+    if (self.polishFiles) text = ZBatchPolishText(text, _lang);
+    double el = [NSDate.date timeIntervalSinceDate:t0];
+    ZLog(@"batch: done %@ pieces=%ld chars=%lu wall=%.0fs ratio=%.1fx up=%.1fMB (%@)",
+         url.lastPathComponent, (long)pieces.count, (unsigned long)text.length, el,
+         el > 0 ? total / el : 0, tr.bytesUp / 1048576.0, self.rawUpload ? @"raw l16" : @"flac");
+
+    // لغو یعنی متن نیمه است. نوشتنش روی دیسک یعنی یک txt ناقص که بعدا کسی
+    // نمی‌فهمد ناقص است؛ پس متن برمی‌گردد ولی فایلی ساخته نمی‌شود.
+    if ([self isCancelled]) {
+        [self hop:^{ if (self.onFileDone) self.onFileDone(url, text, nil); }];
+        return;
+    }
+    if (!text.length) {
+        NSError *e = [NSError errorWithDomain:@"zemzeme.batch" code:1 userInfo:@{
+            NSLocalizedDescriptionKey: @"هیچ متنی برنگشت"}];
+        [self hop:^{ if (self.onFileDone) self.onFileDone(url, nil, e); }];
+        return;
+    }
+    NSError *werr = [self write:text pieces:pieces for:url];
+    [self hop:^{ if (self.onFileDone) self.onFileDone(url, text, werr); }];
+}
+
+// txt (و اگر خواسته شده srt) کنار خود فایل یا در outDir. خطای نوشتن به همان ردیف
+// برمی‌گردد، چون فایل بعدی ممکن است جای نوشتنی داشته باشد.
+- (NSError *)write:(NSString *)text pieces:(NSArray<ZBatchPiece *> *)pieces for:(NSURL *)url {
+    if (!self.writeTXT) return nil;
+    NSURL *txt = [self outputURLFor:url ext:@"txt"];
+    [NSFileManager.defaultManager createDirectoryAtPath:txt.URLByDeletingLastPathComponent.path
+                           withIntermediateDirectories:YES attributes:nil error:nil];
+    NSError *err = nil;
+    if (![text writeToURL:txt atomically:YES encoding:NSUTF8StringEncoding error:&err]) {
+        return err ?: [NSError errorWithDomain:@"zemzeme.batch" code:2 userInfo:@{
+            NSLocalizedDescriptionKey: @"نوشتن فایل متن نشد"}];
+    }
+    if (self.writeSRT) {
+        [ZBatchSRT(pieces) writeToURL:[self outputURLFor:url ext:@"srt"]
+                           atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    }
+    return nil;
+}
+
+@end
+
 // ---------- خط فرمان ----------
 
 static void ZBatchUsage(void) {
@@ -552,88 +767,56 @@ int ZBatchMain(NSArray<NSString *> *args) {
         ZBatchUsage();
         return 2;
     }
-    jobs = MAX(1, MIN(8, jobs));
-
-    // دیمن ویرایش را از همین حالا گرم کن؛ نبودنش خطا نیست، فقط متن خام می‌ماند
-    if ([lang hasPrefix:@"fa"] && ZSettings.shared.polishEnabled) [ZPolish.shared prepare];
-
-    int failed = 0;
+    NSMutableArray<NSURL *> *urls = [NSMutableArray array];
     for (NSString *path in files) {
-        NSURL *url = [NSURL fileURLWithPath:path.stringByExpandingTildeInPath];
-        NSError *err = nil;
-        ZFileDecoder *dec = [[ZFileDecoder alloc] initWithURL:url error:&err];
-        if (!dec) {
-            fprintf(stderr, "%s: %s\n", url.lastPathComponent.UTF8String,
-                    err.localizedDescription.UTF8String);
-            failed++;
-            continue;
-        }
-        double total = dec.duration;
-        NSDate *t0 = NSDate.date;
-        fprintf(stderr, "%s: %.1f دقیقه، lang=%s jobs=%ld\n",
-                url.lastPathComponent.UTF8String, total / 60, lang.UTF8String, (long)jobs);
-        ZLog(@"batch: start %@ dur=%.0fs lang=%@ jobs=%ld speed=%.0f",
-             url.lastPathComponent, total, lang, (long)jobs, speed);
-
-        ZBatchTranscriber *tr = [ZBatchTranscriber new];
-        tr.lang = lang;
-        tr.jobs = jobs;
-        tr.speed = speed;
-        tr.rawUp = rawUp;
-        NSArray<ZBatchPiece *> *pieces = [tr transcribe:dec
-            progress:^(double doneSec, NSInteger count) {
-                double el = [NSDate.date timeIntervalSinceDate:t0];
-                fprintf(stderr, "\r%s: %.1f از %.1f دقیقه، %ld پاره، %.0f ثانیه گذشته   ",
-                        url.lastPathComponent.UTF8String, doneSec / 60, total / 60,
-                        (long)count, el);
-                fflush(stderr);
-            } error:&err];
-        fprintf(stderr, "\n");
-        if (!pieces) {
-            fprintf(stderr, "%s: %s\n", url.lastPathComponent.UTF8String,
-                    err.localizedDescription.UTF8String);
-            failed++;
-            continue;
-        }
-
-        NSString *text = ZBatchPolish(ZBatchJoin(pieces), lang);
-        if (!text.length) {
-            fprintf(stderr, "%s: هیچ متنی برنگشت\n", url.lastPathComponent.UTF8String);
-            failed++;
-            continue;
-        }
-        NSString *dir = outDir.length ? outDir.stringByExpandingTildeInPath
-                                      : url.URLByDeletingLastPathComponent.path;
-        [NSFileManager.defaultManager createDirectoryAtPath:dir
-                               withIntermediateDirectories:YES attributes:nil error:nil];
-        NSString *base = url.lastPathComponent.stringByDeletingPathExtension;
-        NSString *txt = [dir stringByAppendingPathComponent:
-                         [base stringByAppendingPathExtension:@"txt"]];
-        if (![text writeToFile:txt atomically:YES encoding:NSUTF8StringEncoding error:&err]) {
-            fprintf(stderr, "نوشتن %s نشد: %s\n", txt.UTF8String,
-                    err.localizedDescription.UTF8String);
-            failed++;
-            continue;
-        }
-        printf("%s\n", txt.UTF8String);
-        if (srt) {
-            NSString *sp = [dir stringByAppendingPathComponent:
-                            [base stringByAppendingPathExtension:@"srt"]];
-            if ([ZBatchSRT(pieces) writeToFile:sp atomically:YES
-                                      encoding:NSUTF8StringEncoding error:nil]) {
-                printf("%s\n", sp.UTF8String);
-            }
-        }
-        double el = [NSDate.date timeIntervalSinceDate:t0];
-        fprintf(stderr, "%s: تمام. %.0f ثانیه برای %.0f ثانیه صدا (%.1f برابر سرعت واقعی)، "
-                        "%.0f مگابایت آپلود %s\n",
-                url.lastPathComponent.UTF8String, el, total, el > 0 ? total / el : 0,
-                tr.bytesUp / 1048576.0, rawUp ? "(خام)" : "(flac)");
-        ZLog(@"batch: done %@ pieces=%ld chars=%lu wall=%.0fs ratio=%.1fx",
-             url.lastPathComponent, (long)pieces.count, (unsigned long)text.length, el,
-             el > 0 ? total / el : 0);
-        ZLog(@"batch: uploaded %.1f MB (%@)", tr.bytesUp / 1048576.0, rawUp ? @"raw l16" : @"flac");
+        [urls addObject:[NSURL fileURLWithPath:path.stringByExpandingTildeInPath]];
     }
+
+    // همان موتور رابط، فقط با کال‌بک‌های چاپی و روی همین نخ: نه NSApplication در کار
+    // است نه ران‌لوپی که بچرخد، پس کال‌بکِ نخ اصلی هیچ‌وقت اجرا نمی‌شد.
+    ZBatchJob *job = [[ZBatchJob alloc] initWithFiles:urls lang:lang];
+    job.jobs = jobs;
+    job.speed = speed;
+    job.rawUpload = rawUp;
+    job.writeSRT = srt;
+    job.polishFiles = YES;    // یک فایل یعنی یک خروجی، پس پاس همین‌جا آخرِ کار است
+    job.outDir = outDir;
+
+    __block int failed = 0;
+    __block NSDate *t0 = NSDate.date;
+    __block NSString *cur = nil;
+    __block unsigned long long upSeen = 0;    // bytesUp کارِ کل است؛ تفاضلش سهم همین فایل
+    __weak ZBatchJob *wj = job;               // کار خودش بلاک را نگه می‌دارد؛ چرخه نشود
+    job.onFileProgress = ^(NSURL *f, double doneSec, double totalSec) {
+        if (![cur isEqualToString:f.lastPathComponent]) {
+            cur = f.lastPathComponent;
+            t0 = NSDate.date;
+            fprintf(stderr, "%s: %.1f دقیقه، lang=%s jobs=%ld\n",
+                    cur.UTF8String, totalSec / 60, lang.UTF8String, (long)jobs);
+        }
+        fprintf(stderr, "\r%s: %.1f از %.1f دقیقه، %.0f ثانیه گذشته   ",
+                cur.UTF8String, doneSec / 60, totalSec / 60,
+                [NSDate.date timeIntervalSinceDate:t0]);
+        fflush(stderr);
+    };
+    job.onFileDone = ^(NSURL *f, NSString *text, NSError *err) {
+        fprintf(stderr, "\n");
+        if (err || !text.length) {
+            fprintf(stderr, "%s: %s\n", f.lastPathComponent.UTF8String,
+                    err ? err.localizedDescription.UTF8String : "هیچ متنی برنگشت");
+            failed++;
+            return;
+        }
+        printf("%s\n", [wj outputURLFor:f ext:@"txt"].path.UTF8String);
+        if (srt) printf("%s\n", [wj outputURLFor:f ext:@"srt"].path.UTF8String);
+        unsigned long long up = wj.bytesUp - upSeen;
+        upSeen = wj.bytesUp;
+        fprintf(stderr, "%s: تمام. %.0f ثانیه، %.0f مگابایت آپلود %s\n",
+                f.lastPathComponent.UTF8String, [NSDate.date timeIntervalSinceDate:t0],
+                up / 1048576.0, rawUp ? "(خام)" : "(flac)");
+    };
+    [job runOnThisThread];
+
     if (failed) fprintf(stderr, "%d فایل ناتمام ماند\n", failed);
     return failed ? 1 : 0;
 }

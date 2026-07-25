@@ -54,7 +54,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     NSView *_chipBg;
     NSTextField *_chipLabel;
     NSButton *_btnClose, *_btnPause, *_btnCopy, *_btnTrash, *_btnInsert;
-    NSButton *_btnLang, *_btnMode, *_btnPolish;
+    NSButton *_btnLang, *_btnMode, *_btnPolish, *_btnFile;
     NSArray<NSButton *> *_bar;    // ترتیب دکمه‌ها؛ یک منبع حقیقت برای چیدمان و پهنای متن
     NSMutableArray<NSTextField *> *_barCaps;   // حرف میان‌بر زیر هر دکمه، به همان ترتیب
     NSUInteger _greyLen;          // طول دُم خاکستری در ته ادیتور (حالت جمع)
@@ -155,11 +155,17 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
                                action:@selector(polishTap)];
         _btnInsert = [self makeButton:@"text.insert" key:@"V" tip:@"درج سر کرسر همین اپ"
                                action:@selector(insertTap)];
+        // رونویسی فایل: در هر دو حالتِ پنل‌دار پیداست، چون به سشن ربطی ندارد. راه سوم
+        // دسترسی است، کنار آیتم منوبار و میان‌بر، و همان یک صف را باز می‌کند.
+        _btnFile = [self makeButton:@"arrow.up.doc" key:@"F"
+                                tip:@"رونویسی فایل صوتی: صف، پیشرفت و متن یکجا (Command راست + F)"
+                             action:@selector(fileTap)];
         _btnPolish.hidden = YES;
         _btnInsert.hidden = YES;
         // ترتیب چیدمان؛ layoutViews و textWidth هر دو از همین یک لیست می‌خوانند، پس
         // پیدا و ناپیدا شدن دکمه‌ها هیچ‌وقت با عدد هاردکد ناهمخوان نمی‌شود.
-        _bar = @[_btnClose, _btnPause, _btnCopy, _btnTrash, _btnLang, _btnMode, _btnPolish, _btnInsert];
+        _bar = @[_btnClose, _btnPause, _btnCopy, _btnTrash, _btnLang, _btnMode, _btnPolish,
+                 _btnInsert, _btnFile];
 
         [self layoutViews];
         [self applyColors];
@@ -674,6 +680,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
 - (void)modeTap { if (self.onModeToggle) self.onModeToggle(); }
 - (void)polishTap { if (self.onPolishNow) self.onPolishNow(); }
 - (void)insertTap { if (self.onInsertAll) self.onInsertAll(); }
+- (void)fileTap { if (self.onFilePanel) self.onFilePanel(); }
 
 // اسکرین‌شات برای بازبینی طراحی (بدون نیاز به اجازه ضبط صفحه)
 - (void)makeShots:(NSString *)dir {

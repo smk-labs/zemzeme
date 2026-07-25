@@ -266,7 +266,14 @@ static CGEventRef zHotkeyCallback(CGEventTapProxy proxy, CGEventType type, CGEve
 
 // نقشه‌ی واحد کلید به کار: هم Command راست + حرف از آن می‌خواند هم ⌥ + حرف، پس دو
 // مسیر هیچ‌وقت از هم واگرا نمی‌شوند و هر دکمه‌ی پنل دقیقا یک حرف دارد.
+// F و H استثنا هستند و بیرون از سشن هم کار می‌کنند: پنل رونویسی فایل به سشن ربطی
+// ندارد، و راهنما را کسی می‌خواهد که هنوز میان‌برها را نمی‌داند، یعنی هنوز سشنی هم
+// ندارد. هزینه‌اش را می‌دانیم: Command راست + F و + H دیگر به اپ زیرین نمی‌رسند
+// (Find و Hide با Command چپ سر جایشان هستند).
 - (void (^)(void))actionForCode:(int64_t)code {
+    if (code == 3) return self.onFilePanel;   // F، همیشه، حتی بی‌سشن
+    if (code == 4) return self.onHelp;        // H، همیشه، حتی بی‌سشن
+    if (!self.sessionActive) return nil;      // بقیه فقط در حین سشن
     switch (code) {
         case 49: return self.onPauseToggle;   // Space
         case 8:  return self.onCopyNow;       // C
@@ -284,8 +291,8 @@ static CGEventRef zHotkeyCallback(CGEventTapProxy proxy, CGEventType type, CGEve
 
     if (_physDown && !_emitted) {
         CGEventFlags mods = CGEventGetFlags(event) & kZModMask;
-        void (^cb)(void) = (self.sessionActive && mods == kCGEventFlagMaskCommand)
-            ? [self actionForCode:code] : nil;
+        // گارد سشن داخل خود نقشه است، چون یک کار (F) عمدا بی‌سشن هم کار می‌کند
+        void (^cb)(void) = mods == kCGEventFlagMaskCommand ? [self actionForCode:code] : nil;
         if (cb) {
             // میان‌بر ماست؛ نه پایین‌رفتن نه بالاآمدنش به اپ زیرین نرسد
             _emitted = YES;
@@ -299,11 +306,16 @@ static CGEventRef zHotkeyCallback(CGEventTapProxy proxy, CGEventType type, CGEve
         return event;
     }
 
-    if (!self.sessionActive) return event;    // بیرون از سشن هیچ‌کدام گرفته نمی‌شود
     CGEventFlags flags = CGEventGetFlags(event) & kZModMask;
     void (^cb)(void) = nil;
-    if (code == 53 && flags == 0) cb = self.onEsc;              // Esc خالی
-    else if (flags == kCGEventFlagMaskAlternate) cb = [self actionForCode:code];
+    // Esc: صاحبش خودش تصمیم می‌گیرد (کارت راهنما یا سشن) و می‌گوید مصرف شد یا نه.
+    // هم‌زمان، چون همین‌جا باید بدانیم رویداد را برگردانیم یا ببلعیم؛ دیر بگوییم،
+    // Esc هم به اپ زیرین رسیده و هم کار ما را کرده.
+    if (code == 53 && flags == 0) {
+        BOOL (^esc)(void) = self.onEscape;
+        return (esc && esc()) ? NULL : event;
+    }
+    if (flags == kCGEventFlagMaskAlternate) cb = [self actionForCode:code];
     if (cb) {
         dispatch_async(dispatch_get_main_queue(), cb);
         return NULL;
