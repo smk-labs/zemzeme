@@ -107,13 +107,6 @@ static NSString *const kBase = @"https://www.google.com/speech-api/full-duplex/v
     [self nudgeWriter];
 }
 
-- (NSData *)unsentPending {
-    [_lock lock];
-    NSData *d = _pending.length ? [_pending copy] : nil;
-    [_lock unlock];
-    return d;
-}
-
 - (unsigned long long)bytesFed {
     [_lock lock];
     unsigned long long v = _bytesFed;

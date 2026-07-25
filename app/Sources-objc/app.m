@@ -72,6 +72,7 @@ int ZSelfTest(NSString *file, NSString *lang) {
     ZSession *_session;
     ZHotkeyTap *_hotkeys;
     CFAbsoluteTime _lastToggleAt;    // دیبانس toggle داخلی در برابر toggle بیرونی (Karabiner)
+    BOOL _axPrompted;                // پنجره درخواست اکسسبیلیتی فقط یک بار در هر اجرا
 }
 
 - (void)applicationWillFinishLaunching:(NSNotification *)n {
@@ -115,14 +116,33 @@ int ZSelfTest(NSString *file, NSString *lang) {
         return;
     }
 
-    if (![ZInjector accessibilityOK]) [ZInjector promptAccessibility];
-    // اگر همین الان اعتماد داریم تپ را بالا بیاور؛ وگرنه شروع سشن بعدی دوباره امتحان می‌کند
-    if ([ZInjector accessibilityOK]) [_hotkeys enable];
+    [self watchAccessibility];
     // دیمن پاس از همین حالا گرم شود که تکه اول اولین سشن سرد نخورد
     if (ZSettings.shared.polishEnabled) [ZPolish.shared prepare];
     ZLog(@"app: launched res=%@ data=%@ ax=%d polish=%d",
          ZRes().path, ZSupport().path,
          [ZInjector accessibilityOK], ZSettings.shared.polishEnabled);
+}
+
+// اجازه اکسسبیلیتی معمولا بعد از لانچ می‌رسد: کاربر می‌رود در تنظیمات تیک می‌زند.
+// قبلا فقط یک بار سر لانچ پرسیده می‌شد، پس تا ری‌استارت بعدی تپ خاموش می‌ماند و
+// اپ هر بار پنجره درخواست را باز می‌کرد. حالا آرام نگاه می‌کنیم: لحظه‌ای که اجازه
+// رسید تپ بالا می‌آید، بدون ری‌استارت. پنجره درخواست هم فقط یک بار در هر اجرا.
+- (void)watchAccessibility {
+    if ([ZInjector accessibilityOK]) {
+        if (!_hotkeys.enabled) {
+            [_hotkeys enable];
+            ZLog(@"app: accessibility granted, hotkey tap up");
+        }
+        return;
+    }
+    if (!_axPrompted) {
+        _axPrompted = YES;
+        [ZInjector promptAccessibility];
+    }
+    __weak typeof(self) ws = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{ [ws watchAccessibility]; });
 }
 
 - (void)applicationWillTerminate:(NSNotification *)n {

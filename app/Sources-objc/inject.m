@@ -140,6 +140,8 @@ static CGEventRef zHotkeyCallback(CGEventTapProxy proxy, CGEventType type, CGEve
     NSInteger _tapGen;   // نسل تپِ تنها؛ رسیدن تپ دوم تایمر تک‌تپِ قبلی را لغو می‌کند
 }
 
+- (BOOL)enabled { return _tap != NULL; }
+
 - (void)enable {
     if (_tap) return;
     CGEventMask mask = CGEventMaskBit(kCGEventFlagsChanged) | CGEventMaskBit(kCGEventKeyDown);

@@ -17,10 +17,12 @@
 
     NSLock *_feedLock;
     ZGoogleStream *_feedTarget;
-    NSMutableData *_preroll;
+    NSMutableData *_replay;      // صدای بعد از آخرین نتیجه؛ سر هر ری‌استارت دوباره پخش می‌شود
     BOOL _voiceInCycle;
 
     NSDate *_lastEventAt;
+    NSDate *_lastResultAt;       // آخرین فریمِ نتیجه‌دار، نه هر فریمی
+    NSDate *_lastVoiceAt;        // آخرین لحظه‌ای که واقعا صدا بود
     NSInteger _endsSinceResult;
     BOOL _gotResultThisCycle;
     NSString *_lastInterim;
@@ -69,11 +71,12 @@ static NSString *ZMergeInterim(NSString *best, NSString *cur) {
     if ((self = [super init])) {
         _mic = [ZMic new];
         _feedLock = [NSLock new];
-        _preroll = [NSMutableData data];
+        _replay = [NSMutableData data];
         _lastInterim = @"";
         _salvageBest = @"";
         _lang = @"fa-IR";
         _lastLevelAt = NSDate.distantPast;
+        _lastVoiceAt = NSDate.distantPast;
     }
     return self;
 }
@@ -140,7 +143,7 @@ static NSString *ZMergeInterim(NSString *best, NSString *cur) {
     _draining = nil;
     [_feedLock lock];
     _feedTarget = nil;
-    _preroll.length = 0;
+    _replay.length = 0;
     [_feedLock unlock];
     [self stopMicAndTimers];
     [self state:ZEngineIdle msg:@""];
@@ -155,21 +158,18 @@ static NSString *ZMergeInterim(NSString *best, NSString *cur) {
         s->_lastChunkAt = NSDate.date;
         s->_micRetries = 0;
         if (s->_paused) return;    // در مکث، صدا دور ریخته می‌شود (بافر هم نه)
+        // هر تکه هم به استریم می‌رود هم در بافر بازپخش می‌ماند تا اولین نتیجه برسد.
+        // قبلا فقط صدای «هنوز روی سیم نرفته» نگه داشته می‌شد، که موقع گیر کردن سرور
+        // همیشه خالی بود (سیم سالم بود، سرور جواب نمی‌داد)، پس همان حرف‌ها گم می‌شدند.
         [s->_feedLock lock];
-        ZGoogleStream *t = s->_feedTarget;
-        if (t) {
-            [s->_feedLock unlock];
-            [t feed:pcm];
-        } else {
-            [s->_preroll appendData:pcm];
-            // همان سقف بک‌لاگ استریم (kZBacklogCapBytes): اگر با صدای حمل‌شده از یک
-            // استریم مرده یکی نباشد، همان لحظه دوباره قیچی می‌شود.
-            if (s->_preroll.length > kZBacklogCapBytes) {
-                [s->_preroll replaceBytesInRange:NSMakeRange(0, s->_preroll.length - kZBacklogCapBytes)
-                                       withBytes:NULL length:0];
-            }
-            [s->_feedLock unlock];
+        [s->_replay appendData:pcm];
+        if (s->_replay.length > kZReplayCapBytes) {
+            [s->_replay replaceBytesInRange:NSMakeRange(0, s->_replay.length - kZReplayCapBytes)
+                                  withBytes:NULL length:0];
         }
+        ZGoogleStream *t = s->_feedTarget;
+        [s->_feedLock unlock];
+        if (t) [t feed:pcm];
     };
     _mic.onLevel = ^(float rms) {
         __strong typeof(ws) s = ws;
@@ -177,6 +177,7 @@ static NSString *ZMergeInterim(NSString *best, NSString *cur) {
         if (rms > 0.07f) {
             [s->_feedLock lock];
             s->_voiceInCycle = YES;
+            s->_lastVoiceAt = NSDate.date;
             [s->_feedLock unlock];
         }
         NSDate *now = NSDate.date;
@@ -210,6 +211,7 @@ static NSString *ZMergeInterim(NSString *best, NSString *cur) {
     _stream = s;
     _streamStartedAt = NSDate.date;
     _lastEventAt = NSDate.date;
+    _lastResultAt = NSDate.date;
     _gotResultThisCycle = NO;
     __weak typeof(self) ws = self;
     __weak ZGoogleStream *wstream = s;
@@ -223,8 +225,10 @@ static NSString *ZMergeInterim(NSString *best, NSString *cur) {
     [_feedLock lock];
     _feedTarget = s;
     _voiceInCycle = NO;
-    NSData *pre = _preroll.length ? [_preroll copy] : nil;
-    _preroll.length = 0;
+    // بازپخش: هرچه بعد از آخرین نتیجه گفته شده دوباره از اول به استریم تازه می‌رود.
+    // پاک نمی‌شود، چون اگر این استریم هم بی‌نتیجه بمیرد باید باز هم دستمان باشد؛
+    // پاک شدنش فقط سر رسیدن نتیجه است، پس نه چیزی گم می‌شود نه تکراری درج می‌شود.
+    NSData *pre = _replay.length ? [_replay copy] : nil;
     [_feedLock unlock];
     if (pre) [s feed:pre];
     _lastRateLogAt = NSDate.date;
@@ -247,6 +251,13 @@ static NSString *ZMergeInterim(NSString *best, NSString *cur) {
     if (ev.finals.count || ev.interim.length) {
         _gotResultThisCycle = YES;
         _endsSinceResult = 0;
+        _lastResultAt = NSDate.date;
+        // گوگل تا همین لحظه شنیده و جواب داده؛ بازپخش این صدا از این به بعد فقط
+        // متن تکراری می‌سازد. (تاخیر ~۳۰۰ms نتیجه یعنی همین‌قدر صدا بی‌بیمه می‌ماند،
+        // که هزینه‌اش از ریسک دوباره‌درج شدن یک جمله کمتر است.)
+        [_feedLock lock];
+        _replay.length = 0;
+        [_feedLock unlock];
     }
     for (NSString *f in ev.finals) {
         _lastInterim = @"";
@@ -260,8 +271,11 @@ static NSString *ZMergeInterim(NSString *best, NSString *cur) {
         if (_lastInterim.length > _salvageBest.length) _salvageBest = [_lastInterim copy];
         [self.delegate engineInterim:_lastInterim];
     }
-    if (ev.finals.count && [NSDate.date timeIntervalSinceDate:_streamStartedAt] > 240) {
-        [self rotate];    // چرخش فرصت‌طلبانه سر مرز یک نتیجه قطعی
+    // چرخش فرصت‌طلبانه سر مرز یک نتیجه قطعی. عدد از ۲۴۰ به ۹۰ ثانیه آمد: صدای پیوسته‌ی
+    // طولانی همان چیزی است که سشن گوگل را از کار می‌انداخت، و سر مرز final بافر بازپخش
+    // خالی است، پس این چرخش نه دیده می‌شود نه چیزی از دست می‌دهد.
+    if (ev.finals.count && [NSDate.date timeIntervalSinceDate:_streamStartedAt] > 90) {
+        [self rotate];
     }
 }
 
@@ -272,25 +286,16 @@ static NSString *ZMergeInterim(NSString *best, NSString *cur) {
         return;
     }
     if (!s || s != _stream) return;
-    // صدای رسیده ولی هنوز سیم‌نرفته‌ی استریم مرده را حمل کن؛ وگرنه دقیقا همان صدایی
-    // که این وسط گم می‌شد (بدون این carry-forward) روی این ری‌استارت هم گم می‌ماند.
-    // فقط وقتی معنا دارد که موتور دارد ادامه می‌دهد (stop از قبل _preroll را صفر می‌کند).
-    NSData *leftover = _running ? [s unsentPending] : nil;
+    // حمل صدای سیم‌نرفته لازم نبود و برداشته شد: _replay از آن کامل‌تر است، چون صدای
+    // روی‌سیم‌رفته‌ی بی‌جواب را هم دارد و همان بود که گم می‌شد.
     [_feedLock lock];
     if (_feedTarget == s) _feedTarget = nil;
-    if (leftover.length) {
-        NSMutableData *combined = [NSMutableData dataWithData:leftover];
-        [combined appendData:_preroll];
-        if (combined.length > kZBacklogCapBytes) {
-            [combined replaceBytesInRange:NSMakeRange(0, combined.length - kZBacklogCapBytes) withBytes:NULL length:0];
-        }
-        _preroll = combined;
-        ZLog(@"engine: carried %luB unsent audio into next stream", (unsigned long)leftover.length);
-    }
     BOOL hadVoice = _voiceInCycle;
+    NSUInteger replayBytes = _replay.length;
     [_feedLock unlock];
     _stream = nil;
-    ZLog(@"engine: closed pair=%@ reason=%@ result=%d voice=%d", s.pair, reason, _gotResultThisCycle, hadVoice);
+    ZLog(@"engine: closed pair=%@ reason=%@ result=%d voice=%d replay=%.1fs",
+         s.pair, reason, _gotResultThisCycle, hadVoice, replayBytes / 32000.0);
     [self salvage];
     if (!_running || _paused) return;
     if (hadVoice && !_gotResultThisCycle) _endsSinceResult++;
@@ -360,8 +365,25 @@ static NSString *ZMergeInterim(NSString *best, NSString *cur) {
         _lastRateLogAt = rnow;
         _lastRateLogBytes = cur;
     }
-    NSTimeInterval quiet = [NSDate.date timeIntervalSinceDate:_lastEventAt];
-    NSTimeInterval age = [NSDate.date timeIntervalSinceDate:_streamStartedAt];
+    NSDate *now = NSDate.date;
+    NSTimeInterval quiet = [now timeIntervalSinceDate:_lastEventAt];
+    NSTimeInterval age = [now timeIntervalSinceDate:_streamStartedAt];
+    // گیر کردن واقعی: سرور زنده است و فریم می‌فرستد، ولی دیگر متنی نمی‌دهد. واچ‌داگ
+    // «سکوت رویداد» این را هیچ‌وقت نمی‌دید، چون فریم endpointer/status حساب رویداد
+    // می‌شد و تایمر را تازه می‌کرد؛ کاربر مجبور بود دستی مکث و ادامه بزند. حالا
+    // معیار درست است: دارد حرف می‌زند ولی نتیجه‌ای نمی‌آید.
+    [_feedLock lock];
+    NSTimeInterval sinceVoice = [now timeIntervalSinceDate:_lastVoiceAt];
+    [_feedLock unlock];
+    NSTimeInterval sinceResult = [now timeIntervalSinceDate:_lastResultAt];
+    if (sinceVoice < 1.5 && sinceResult > kZStallSec) {
+        ZLog(@"engine: stalled %.0fs with voice, recycling pair=%@", sinceResult, _stream.pair);
+        // مسیر close خودش salvage می‌کند و آن درست است: salvage متنی را می‌گیرد که
+        // تا آخرین نتیجه تشخیص داده شده بود، و بازپخش صدای بعد از همان نتیجه است.
+        // مرزشان یکی است، پس نه کلمه‌ای گم می‌شود نه دو بار درج می‌شود.
+        [_stream cancel];
+        return;
+    }
     if (quiet > 12) {
         ZLog(@"engine: watchdog quiet %.0fs, recycling pair=%@", quiet, _stream.pair);
         [self salvage];

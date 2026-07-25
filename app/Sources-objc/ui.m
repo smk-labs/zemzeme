@@ -252,16 +252,75 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
 
 // ---------- اندازه ----------
 
+// آخرین تکه‌ای از متن که واقعا در سه خطِ موجود جا می‌شود.
+// قبلا با یک عدد ثابت (۱۶۵ کاراکتر) بریده می‌شد، ولی پهنای همین لیبل ثابت نیست:
+// دکمه «درج همینجا» و چیپ صف که بیایند، از ۳۴۵ پیکسل به ~۲۰۰ می‌رسد. آن‌وقت متن از
+// سه خط می‌زد بیرون و AppKit ته متن را می‌انداخت، یعنی درست همان کلمه‌های تازه‌ای که
+// کاربر می‌خواست ببیند. حالا اندازه می‌گیریم و از سرِ متن کم می‌کنیم تا جا شود.
+- (NSString *)visibleTail:(NSString *)full {
+    CGFloat w = [self textWidth];
+    NSDictionary *attrs = @{NSFontAttributeName: _text.font};
+    CGFloat cap = [self conveyorMaxTextHeight];
+    if ([full boundingRectWithSize:NSMakeSize(w, 10000)
+                          options:NSStringDrawingUsesLineFragmentOrigin
+                       attributes:attrs].size.height <= cap) {
+        return full;
+    }
+    // دوجستجوی دودویی روی مرز کلمه: کوتاه‌ترین دمی که جا می‌شود
+    NSArray<NSString *> *words = [full componentsSeparatedByString:@" "];
+    NSUInteger lo = 0, hi = words.count;      // lo کلمه از اول انداخته می‌شود
+    while (lo < hi) {
+        NSUInteger mid = (lo + hi) / 2;
+        NSString *cand = [@"… " stringByAppendingString:
+            [[words subarrayWithRange:NSMakeRange(mid, words.count - mid)] componentsJoinedByString:@" "]];
+        CGFloat h = [cand boundingRectWithSize:NSMakeSize(w, 10000)
+                                      options:NSStringDrawingUsesLineFragmentOrigin
+                                   attributes:attrs].size.height;
+        if (h <= cap) hi = mid; else lo = mid + 1;
+    }
+    if (lo >= words.count) return words.lastObject ?: @"";
+    return [@"… " stringByAppendingString:
+        [[words subarrayWithRange:NSMakeRange(lo, words.count - lo)] componentsJoinedByString:@" "]];
+}
+
+// قد یک خط و سه خط با همین فونت، اندازه‌گیری‌شده نه حدسی. عدد ثابت ۲۰ که قبلا بود
+// از قد واقعی خط (~۲۲) کمتر است، پس هم شمارش خط را زیاد نشان می‌داد هم سقف سه خط را
+// کوتاه می‌کرد و متن به دو خط قناعت می‌کرد.
+- (CGFloat)lineHeight {
+    return [@"م" boundingRectWithSize:NSMakeSize(10000, 10000)
+                             options:NSStringDrawingUsesLineFragmentOrigin
+                          attributes:@{NSFontAttributeName: _text.font}].size.height;
+}
+
+// سقف واقعی، همان قدی که فریم لیبل سر سه خط می‌گیرد. با هر عددی بزرگ‌تر از این،
+// AppKit خط سوم را می‌انداخت و درست دم متن گم می‌شد؛ با کوچک‌تر، متن به دو خط قناعت
+// می‌کرد. رشد هر خط پنل هم از همین قد خط می‌آید، نه از عدد ثابت ۲۱ که کمی کم بود.
+- (CGFloat)conveyorLineStep { return ceil([self lineHeight]); }
+
+- (CGFloat)conveyorMaxTextHeight {
+    return kBarH + 2 * [self conveyorLineStep] - 22;
+}
+
+// جای متن، با همان حسابی که layoutViews می‌کند. از فریمِ خودِ لیبل خوانده نمی‌شود،
+// چون آن یک رندر عقب است و درست همان لحظه‌ای که چیپ ظاهر می‌شود غلط می‌دهد.
+- (CGFloat)textWidth {
+    CGFloat left = 98;
+    if (!_btnInsert.hidden) left += _btnInsert.frame.size.width + 8;
+    if (!_chipBg.hidden) left += _chipBg.frame.size.width + 8;
+    return MAX(40, (_grip.frame.origin.x - 8) - left);
+}
+
 // قد نوار در حالت تسمه‌نقاله: تا سه خط با متن بلند می‌شود
 - (CGFloat)conveyorHeight {
     NSString *s = _text.stringValue;
     if (!s.length) return kBarH;
-    CGFloat w = _text.frame.size.width > 0 ? _text.frame.size.width : kPW - 160;
+    CGFloat w = [self textWidth];
     NSRect r = [s boundingRectWithSize:NSMakeSize(w, 1000)
                                options:NSStringDrawingUsesLineFragmentOrigin
                             attributes:@{NSFontAttributeName: _text.font}];
-    NSInteger lines = MIN(3, MAX(1, (NSInteger)ceil(r.size.height / 20.0)));
-    return kBarH + (lines - 1) * 21;
+    CGFloat lh = [self lineHeight];
+    NSInteger lines = MIN(3, MAX(1, (NSInteger)round(r.size.height / MAX(1.0, lh))));
+    return kBarH + (lines - 1) * [self conveyorLineStep];
 }
 
 - (void)resizeTo:(CGFloat)h {
@@ -344,22 +403,6 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
 - (void)render:(ZPanelModel *)m {
     [self setCollectVisible:m.collect];
 
-    // متن: خاکستری لحظه‌ای؛ وقتی نیست، خط وضعیت.
-    // متن خیلی بلند از اولش بریده می‌شود که حرف‌های تازه همیشه دیده شوند.
-    if (m.interim.length) {
-        NSString *t = m.interim;
-        if (t.length > 170) t = [@"…" stringByAppendingString:[t substringFromIndex:t.length - 165]];
-        _text.stringValue = t;
-        _text.font = ZFont(15, NO);
-        _text.textColor = NSColor.secondaryLabelColor;
-    } else {
-        _text.stringValue = m.status;
-        _text.font = ZFont(12.5, NO);
-        _text.textColor = m.error ? NSColor.systemRedColor : NSColor.tertiaryLabelColor;
-    }
-    _text.alignment = ([m.lang isEqualToString:@"en-US"] && m.interim.length)
-        ? NSTextAlignmentLeft : NSTextAlignmentRight;
-
     // چیپ صف (فقط تسمه‌نقاله، وقتی مقصد جلو نیست)
     NSString *chip = @"";
     if (!m.collect && m.queued > 0) {
@@ -378,6 +421,21 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
         _chipBg.frame = NSMakeRect(98, (kBarH - 18) / 2, w, 18);
         _chipLabel.frame = NSMakeRect(8, 0, w - 16, 17);
     }
+
+    // متن: خاکستری لحظه‌ای؛ وقتی نیست، خط وضعیت. بعد از چیپ می‌آید، نه قبلش: پهنای
+    // جای متن به دیده‌شدن چیپ و دکمه بستگی دارد و بریدن متن باید با پهنای همین فریم
+    // حساب شود، نه با پهنای فریم قبلی.
+    if (m.interim.length) {
+        _text.font = ZFont(15, NO);
+        _text.stringValue = [self visibleTail:m.interim];
+        _text.textColor = NSColor.secondaryLabelColor;
+    } else {
+        _text.stringValue = m.status;
+        _text.font = ZFont(12.5, NO);
+        _text.textColor = m.error ? NSColor.systemRedColor : NSColor.tertiaryLabelColor;
+    }
+    _text.alignment = ([m.lang isEqualToString:@"en-US"] && m.interim.length)
+        ? NSTextAlignmentLeft : NSTextAlignmentRight;
 
     // دکمه مکث سه چهره دارد: مکث، ادامه، تلاش دوباره بعد از خطا
     if (m.error) {
@@ -454,6 +512,19 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     queued.waitingForTarget = YES;
     queued.targetName = @"Windows App";
 
+    // بدترین حالت بریدن متن: هم خیلی بلند، هم چیپ صف جای متن را تنگ کرده.
+    // قبلا با عدد ثابت ۱۶۵ کاراکتری بریده می‌شد و همین حالت از سه خط می‌زد بیرون،
+    // یعنی دم متن (تازه‌ترین حرف‌ها) دیده نمی‌شد.
+    ZPanelModel *longNarrow = [ZPanelModel new];
+    longNarrow.interim = @"حالا یک جمله واقعا طولانی می‌گویم که ببینیم نوار چه می‌کند، چون وقتی "
+        @"آدم پیوسته حرف می‌زند و مکث نمی‌کند این متن خاکستری همین‌طور بلند و بلندتر می‌شود "
+        @"و باید همیشه آخرش پیدا باشد نه اولش، وگرنه آدم نمی‌فهمد کجای حرفش است و همین "
+        @"چیزی بود که آزار می‌داد و باید درست می‌شد";
+    longNarrow.listening = YES;
+    longNarrow.queued = 12;
+    longNarrow.waitingForTarget = YES;
+    longNarrow.targetName = @"Windows App";
+
     ZPanelModel *error = [ZPanelModel new];
     error.status = @"شبکه ناپایداره؛ دکمه تلاش دوباره یا ⌥Space";
     error.error = YES;
@@ -464,7 +535,8 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     collect.interim = @"و این هم متن خاکستری در جریان";
 
     NSArray *states = @[@[@"listening", listening], @[@"multiline", multiline], @[@"paused", paused],
-                        @[@"queued", queued], @[@"error", error], @[@"collect", collect]];
+                        @[@"queued", queued], @[@"long-narrow", longNarrow],
+                        @[@"error", error], @[@"collect", collect]];
     [_panel orderFrontRegardless];
     for (NSArray *pair in states) {
         ZPanelModel *m = pair[1];

@@ -74,12 +74,22 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 @end
 
 // ---------- بافر بک‌لاگ صدا ----------
-// سقف مشترک برای _pending استریم (stream.m) و _preroll موتور (engines.m): چقدر صدای
-// خام می‌تواند روی شبکه ضعیف/بین اتصال‌ها معطل بماند قبل از این‌که قدیمی‌ترینش دور
-// ریخته شود. هر دو باید یک عدد باشند وگرنه صدای حمل‌شده از استریم مرده به preroll
-// همان لحظه دوباره قیچی می‌شود.
+// سقف _pending استریم (stream.m): چقدر صدای خام می‌تواند روی شبکه ضعیف معطل بماند
+// قبل از این‌که قدیمی‌ترینش دور ریخته شود.
 #define kZBacklogSec 60
 #define kZBacklogCapBytes ((NSUInteger)(32000 * kZBacklogSec))
+
+// ---------- بافر بازپخش موتور ----------
+// _replay موتور (engines.m) صدای «بعد از آخرین نتیجه» را نگه می‌دارد و سر هر
+// ری‌استارت به استریم تازه می‌دهدش. چرا: صدایی که روی سیم رفته ولی گوگل نتیجه‌اش را
+// نداده، بدون این بافر برای همیشه گم می‌شود (کاری که _pending نمی‌کند، چون بعد از
+// نوشتن روی سیم خالی می‌شود). سر هر نتیجه پاک می‌شود، پس هیچ‌وقت متن تکراری نمی‌سازد.
+#define kZReplaySec 30
+#define kZReplayCapBytes ((NSUInteger)(32000 * kZReplaySec))
+
+// حرف می‌زند و این‌قدر ثانیه هیچ نتیجه‌ای نمی‌آید: استریم مرده، ولی فریم می‌فرستد.
+// واچ‌داگ قدیمی «سکوت رویداد» این حالت را نمی‌دید، چون فریم endpointer/status می‌آمد.
+#define kZStallSec 5.0
 
 // ---------- فشرده‌ساز FLAC برای آپلود ----------
 // پی‌سی‌ام خام s16le مونو ۱۶ کیلوهرتز را با AudioConverter سیستم (AudioToolbox) به
@@ -102,7 +112,6 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 - (void)feed:(NSData *)pcm;      // s16le مونو ۱۶ کیلوهرتز
 - (void)finishUpload;            // پایان نرم: نتیجه‌های آخر می‌آیند
 - (void)cancel;
-- (NSData *)unsentPending;       // پی‌سی‌ام صف‌شده که هنوز سیم نرفته؛ برای حمل به استریم بعدی
 @end
 
 // ---------- میکروفن ----------
@@ -153,6 +162,7 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 @property (nonatomic, copy) void (^onCopyNow)(void);        // ⌥C یا Command راست+C
 @property (nonatomic, copy) void (^onInsertHere)(void);     // ⌥V
 @property (nonatomic) BOOL sessionActive;
+@property (nonatomic, readonly) BOOL enabled;   // تپ واقعا بالا است، نه فقط enable صدا خورده
 - (void)enable;
 - (void)disable;
 @end
