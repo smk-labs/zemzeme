@@ -75,6 +75,42 @@ void ZLog(NSString *fmt, ...) {
     fprintf(stderr, "%s", line.UTF8String);
 }
 
+// ---------- صدای کارها ----------
+// نمونه‌ها کش می‌شوند چون ساختن NSSound هر بار از دیسک می‌خواند و روی مسیر کلید
+// تاخیر می‌دهد. قبل از هر پخش stop، وگرنه فشار دادن سریع دو دکمه صدای اول را
+// نصفه رها می‌کند و پخش دوم بی‌صدا می‌ماند.
+void ZPlay(ZSound s) {
+    if (!ZSettings.shared.soundsEnabled) return;
+    static NSDictionary<NSNumber *, NSString *> *names;
+    static NSMutableDictionary<NSString *, NSSound *> *cache;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        names = @{@(ZSoundStart):  @"Pop",       // روشن شدن
+                  @(ZSoundPause):  @"Tink",      // کوتاه و خنثی
+                  @(ZSoundResume): @"Bottle",
+                  @(ZSoundFinish): @"Glass",     // تمام شد و نشست
+                  @(ZSoundInsert): @"Morse",     // درج، ولی هنوز بازیم
+                  @(ZSoundTrash):  @"Basso",     // دور ریختن، عمدا ناخوشایند
+                  @(ZSoundCopy):   @"Purr",
+                  @(ZSoundMode):   @"Submarine",
+                  @(ZSoundLang):   @"Frog"};
+        cache = [NSMutableDictionary dictionary];
+    });
+    NSString *n = names[@(s)];
+    if (!n) return;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NSSound *snd = cache[n];
+        if (!snd) {
+            snd = [NSSound soundNamed:n];
+            if (!snd) return;
+            cache[n] = snd;
+        }
+        snd.volume = 0.35f;
+        if (snd.isPlaying) [snd stop];
+        [snd play];
+    });
+}
+
 NSString *ZTimestampId(void) {
     static NSDateFormatter *df;
     static dispatch_once_t once;
@@ -158,6 +194,12 @@ NSFont *ZFont(CGFloat size, BOOL medium) {
 // انتخاب صریح کاربر باشد نه رفتار پیش‌فرض.
 - (BOOL)latinTerms { return [self.d boolForKey:@"latinTerms"]; }
 - (void)setLatinTerms:(BOOL)v { [self.d setBool:v forKey:@"latinTerms"]; }
+
+- (BOOL)soundsEnabled {
+    NSObject *o = [self.d objectForKey:@"sounds"];
+    return o ? [self.d boolForKey:@"sounds"] : YES;    // پیش‌فرض روشن
+}
+- (void)setSoundsEnabled:(BOOL)v { [self.d setBool:v forKey:@"sounds"]; }
 
 - (BOOL)upstreamFLAC {
     NSObject *o = [self.d objectForKey:@"upstreamFLAC"];

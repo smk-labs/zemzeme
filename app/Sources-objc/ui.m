@@ -780,7 +780,6 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     NSURL *_sessionFile;
     BOOL _finished;
     BOOL _finishing;          // منتظر پاس ویرایشِ پایانی حالت جمع
-    BOOL _collectInserted;    // حالت جمع: insertHere قبلا درج کرده؛ finish دوباره درج نکند
     id _frontObserver;
     // خط لوله پاس ویرایش: ترتیب تکه‌ها حفظ می‌شود، یکی‌یکی
     NSMutableArray<NSString *> *_polishPending;
@@ -811,6 +810,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     _target = NSWorkspace.sharedWorkspace.frontmostApplication;
     ZLog(@"session: start target=%@ engine=%@ lang=%@ collect=%d",
          _target.bundleIdentifier ?: @"?", ZSettings.shared.engineName, ZSettings.shared.lang, _collect);
+    ZPlay(ZSoundStart);
     __weak typeof(self) ws = self;
     _frontObserver = [NSWorkspace.sharedWorkspace.notificationCenter
         addObserverForName:NSWorkspaceDidActivateApplicationNotification object:nil queue:NSOperationQueue.mainQueue
@@ -934,24 +934,33 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
 
 // ---------- اکشن‌ها ----------
 
-// ⌥Space: مکث/ادامه؛ بعد از خطا، تلاش دوباره
+// تک‌تپ Command راست: مکث/ادامه؛ بعد از خطا، تلاش دوباره
 - (void)pauseToggle {
     if (_errorState) {
         _errorState = NO;
         [self.engine startWithLang:ZSettings.shared.lang];
+        ZPlay(ZSoundStart);
         [self render];
         return;
     }
-    if (self.engine.paused) [self.engine resume];
-    else [self.engine pause];
+    if (self.engine.paused) {
+        [self.engine resume];
+        ZPlay(ZSoundResume);
+        [_panel flash:@"ادامه"];
+    } else {
+        [self.engine pause];
+        ZPlay(ZSoundPause);
+        [_panel flash:@"مکث"];
+    }
 }
 
-// ⌥C: کپی متن تا اینجا (ماندگار)
+// کپی متن تا اینجا (ماندگار)
 - (void)copyNow {
     NSString *t = _collect ? [_panel editorText]
                            : [[_transcript componentsJoinedByString:@" "]
                               stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (t.length) [ZInjector copyFinal:t];
+    ZPlay(ZSoundCopy);
     [_panel flash:t.length
         ? [NSString stringWithFormat:@"کپی شد · %@ نویسه", ZFaDigits(@(t.length).stringValue)]
         : @"چیزی برای کپی نیست"];
@@ -968,6 +977,15 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     // پاسخ دیررسِ پاس ویرایشِ در پرواز نباید بعدا بنشیند
     if (_polishInFlight) _dropNextPolish = YES;
     [_polishPending removeAllObjects];
+    if (_collect) {
+        // سطل آشغال یعنی «هرچه گفته‌ام و درج نشده دور برود»، پس متن جمع‌شده‌ی پنل هم
+        // با آن می‌رود. قبلا فقط خاکستری پاک می‌شد و متن سفیدِ ادیتور می‌ماند، که
+        // کاربردی نبود: در حالت جمع هیچ‌چیز درج نشده، پس همه‌اش «درج‌نشده» است.
+        NSUInteger drop = _transcript.count;
+        [_panel clearEditor];
+        [_transcript removeAllObjects];
+        ZLog(@"session: trashed collected text (%lu chunks)", (unsigned long)drop);
+    }
     if (!_collect) {
         // این تکه‌ها به ترتیب در _transcript هم نشسته‌اند، پس دقیقا همان تعداد از
         // دُمش برداشته می‌شود که کپی پایانی هم متن دورریخته را نداشته باشد.
@@ -979,6 +997,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
             [_transcript removeObjectsInRange:NSMakeRange(_transcript.count - drop, drop)];
         }
     }
+    ZPlay(ZSoundTrash);
     [_panel flash:@"متن درج‌نشده دور ریخته شد"];
     [self render];
 }
@@ -986,28 +1005,31 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
 // عوض کردن حالت وسط کار، بدون گم شدن متن. دو حالت یک نوار مشترک دارند و تنها فرق
 // جمع این است که فضای ویرایش هم دارد، پس عوض کردنش فقط جای متن معلق را عوض می‌کند.
 - (void)toggleMode {
-    NSString *pending = _collect ? [_panel editorText] : nil;
-    _collect = !_collect;
-    ZSettings.shared.collectMode = _collect;
     if (_collect) {
-        // درج زنده به جمع: هرچه در صف مانده و هنوز تایپ نشده می‌رود داخل ادیتور
+        // جمع به زنده: متن جمع‌شده می‌رود همان‌جا که داشتی می‌نوشتی، و یک نسخه هم در
+        // کلیپ‌بورد می‌ماند. به هیچ حالتی دور ریخته نمی‌شود؛ دور ریختن کار سطل آشغال است.
+        NSString *t = [[_panel editorText] stringByTrimmingCharactersInSet:
+                       NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        _collect = NO;
+        ZSettings.shared.collectMode = NO;
+        [_panel clearEditor];
+        if (t.length) {
+            [_queue addObject:t];
+            [ZInjector copyFinal:t];
+            [self pump];    // مقصد جلو نبود؟ در صف می‌ماند و چیپ نشانش می‌دهد
+        }
+    } else {
+        // زنده به جمع: صفِ تایپ‌نشده می‌رود در ادیتور، دنبال هرچه از قبل آنجا بود.
+        // clearEditor اینجا نبود و نباید باشد: متن دور قبلی را می‌شست.
         NSString *q = [[_queue arrayByAddingObjectsFromArray:_pasteBuf]
                        componentsJoinedByString:@" "];
         [_queue removeAllObjects];
         [_pasteBuf removeAllObjects];
-        [_panel clearEditor];
+        _collect = YES;
+        ZSettings.shared.collectMode = YES;
         if (q.length) [_panel appendFinalToEditor:q];
-        _collectInserted = NO;
-    } else {
-        // جمع به درج زنده: متن ادیتور می‌رود سر صف درج، پس دیده و درج می‌شود، نه گم
-        [_panel clearEditor];
-        NSString *t = [pending stringByTrimmingCharactersInSet:
-                       NSCharacterSet.whitespaceAndNewlineCharacterSet];
-        if (t.length) {
-            [_queue addObject:t];
-            [self pump];
-        }
     }
+    ZPlay(ZSoundMode);
     ZLog(@"session: mode -> %@", _collect ? @"collect" : @"live");
     [_panel flash:_collect ? @"حالت: جمع در پنل" : @"حالت: درج زنده"];
     [self render];
@@ -1021,6 +1043,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     ZSettings.shared.lang = next;
     [self.engine setLang:next];
     ZLog(@"session: lang -> %@", next);
+    ZPlay(ZSoundLang);
     [_panel flash:[next hasPrefix:@"en"] ? @"زبان: انگلیسی" : @"زبان: فارسی"];
     [self render];
 }
@@ -1064,14 +1087,18 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     _target = NSWorkspace.sharedWorkspace.frontmostApplication;
     if (_collect) {
         if (![_panel editorText].length) return;
-        // پاس اول، درج بعد: در حالت جمع پاس عقب افتاده بود و همین‌جا باید اعمال شود
+        // V درج می‌کند ولی سشن را نمی‌بندد: ادیتور خالی می‌شود و می‌توانی ادامه بدهی.
+        // بستن کار Esc است. قبلا هر دو یک کار می‌کردند و V هم پنل را می‌بست.
         __weak typeof(self) ws = self;
         [self withPolishedCollected:^(NSString *text) {
             __strong typeof(ws) s = ws;
             if (!s || !text.length) return;
             [s injectText:[text stringByAppendingString:@" "]];
-            s->_collectInserted = YES;
-            [s finishNow];
+            [ZInjector copyFinal:text];    // بیمه: هرچه درج شد در کلیپ‌بورد هم می‌ماند
+            [s->_panel clearEditor];
+            ZPlay(ZSoundInsert);
+            [s->_panel flash:@"درج شد؛ می‌توانی ادامه بدهی"];
+            [s render];
         }];
         return;
     }
@@ -1130,8 +1157,9 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
 // آنجا اپ دارد بسته می‌شود و از دست دادن پاس مهم نیست، از دست دادن متن مهم است.
 - (void)finish {
     if (_finished || _finishing) return;
-    if (_collect && !_collectInserted && ZSettings.shared.polishEnabled
-        && [_panel editorText].length) {
+    // V بعد از درج ادیتور را خالی می‌کند، پس همین «خالی نبودن» گارد کافی است و
+    // _collectInserted لازم نیست: متن درج‌شده دیگر اینجا نیست.
+    if (_collect && ZSettings.shared.polishEnabled && [_panel editorText].length) {
         _finishing = YES;
         __weak typeof(self) ws = self;
         [self withPolishedCollected:^(NSString *text) {
@@ -1162,10 +1190,9 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     [self flushPasteBuf];
     // پایان: در حالت زنده باقی صف، در حالت جمع کل متن ادیتور؛ اگر مقصد جلوست درج
     // می‌شود، وگرنه کپیِ زیر همین تابع نجاتش می‌دهد. اگر ⌥V/دکمه درج قبلا درج کرده
-    // (insertHere -> _collectInserted) اینجا دوباره درج نمی‌شود.
     if (_collect) {
         NSString *t = [_panel editorText];
-        if (!_collectInserted && t.length && [self targetIsFront]) {
+        if (t.length && [self targetIsFront]) {
             [self injectText:[t stringByAppendingString:@" "]];
         }
     } else if (_queue.count && [self targetIsFront]) {
@@ -1177,6 +1204,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
                               : [[_transcript componentsJoinedByString:@" "]
                                  stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (full.length) [_injector copyFinalAfterPending:full];
+    ZPlay(ZSoundFinish);
     if (_frontObserver) [NSWorkspace.sharedWorkspace.notificationCenter removeObserver:_frontObserver];
     _frontObserver = nil;
     [_panel hide];

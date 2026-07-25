@@ -246,14 +246,9 @@ int ZSelfTest(NSString *file, NSString *lang) {
     }
     [menu addItem:NSMenuItem.separatorItem];
 
-    // حالت: دو رادیو + یک تاگل، بدون ردیف تیتر
-    [self icon:[self item:menu title:@"درج زنده" action:@selector(menuModeLive) key:@""]
-        symbol:@"cursorarrow.motionlines"].state =
-        !ZSettings.shared.collectMode ? NSControlStateValueOn : NSControlStateValueOff;
-    NSMenuItem *cm = [self icon:[self item:menu title:@"جمع در پنل" action:@selector(menuModeCollect) key:@""]
-                          symbol:@"rectangle.and.pencil.and.ellipsis"];
-    cm.state = ZSettings.shared.collectMode ? NSControlStateValueOn : NSControlStateValueOff;
-    cm.toolTip = @"متن در خود پنل جمع می‌شود و قابل ویرایش است؛ تهش با یک دکمه درج یا کپی می‌شود";
+    // دو رادیوی «درج زنده / جمع در پنل» از اینجا برداشته شد: حالا دکمه‌ی E روی پنل
+    // همان کار را وسط سشن و با حفظ متن می‌کند، و دو جای تنظیم برای یک چیز فقط گیج‌کننده
+    // بود. حالت شروع همان حالتی است که آخرین بار با E انتخاب شده.
     NSMenuItem *pol = [self icon:[self item:menu title:@"ویرایش فارسی" action:@selector(menuTogglePolish) key:@""]
                            symbol:@"wand.and.stars"];
     pol.state = ZSettings.shared.polishEnabled ? NSControlStateValueOn : NSControlStateValueOff;
@@ -264,6 +259,10 @@ int ZSelfTest(NSString *file, NSString *lang) {
     lat.state = ZSettings.shared.latinTerms ? NSControlStateValueOn : NSControlStateValueOff;
     lat.toolTip = @"وام‌واژه‌های فنی به لاتین برمی‌گردند (کامیت ← commit). فقط واژه‌های "
                    "فهرست app/py/terms.txt، بدون هیچ حدسی؛ واژه‌های دوپهلو عمدا در فهرست نیستند";
+    NSMenuItem *snd = [self icon:[self item:menu title:@"صدا" action:@selector(menuToggleSounds) key:@""]
+                           symbol:@"speaker.wave.2"];
+    snd.state = ZSettings.shared.soundsEnabled ? NSControlStateValueOn : NSControlStateValueOff;
+    snd.toolTip = @"هر کار صدای خودش را دارد: شروع، مکث، ادامه، درج، پایان، دور ریختن";
     [menu addItem:NSMenuItem.separatorItem];
 
     // زبان: زیرمنوی کوچک
@@ -387,8 +386,6 @@ int ZSelfTest(NSString *file, NSString *lang) {
 - (void)menuPauseToggle { [self sessionDo:@selector(pauseToggle)]; }
 - (void)menuCopyNow { [self sessionDo:@selector(copyNow)]; }
 - (void)menuInsertHere { [self sessionDo:@selector(insertHere)]; }
-- (void)menuModeLive { ZSettings.shared.collectMode = NO; }
-- (void)menuModeCollect { ZSettings.shared.collectMode = YES; }
 - (void)menuLangFa { [self setLang:@"fa-IR"]; }
 - (void)menuLangEn { [self setLang:@"en-US"]; }
 - (void)setLang:(NSString *)l {
@@ -407,6 +404,10 @@ int ZSelfTest(NSString *file, NSString *lang) {
     if (ZSettings.shared.polishEnabled) [ZPolish.shared prepare];
 }
 - (void)menuToggleLatinTerms { ZSettings.shared.latinTerms = !ZSettings.shared.latinTerms; }
+- (void)menuToggleSounds {
+    ZSettings.shared.soundsEnabled = !ZSettings.shared.soundsEnabled;
+    ZPlay(ZSoundStart);    // روشن که شد، خودش را می‌شنوانَد
+}
 // تپ همیشه سرپا است؛ این تنظیم فقط تفسیر دابل‌تپ به toggle را روشن/خاموش می‌کند
 - (void)menuToggleHotkey {
     ZSettings.shared.internalHotkey = !ZSettings.shared.internalHotkey;

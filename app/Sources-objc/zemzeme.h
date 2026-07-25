@@ -11,6 +11,22 @@ NSURL *ZRes(void);           // خواندنی‌های همراه اپ: serve.p
 NSURL *ZSupport(void);       // ~/Library/Application Support/Zemzeme: داده، لاگ، venv
 NSURL *ZSessionsDir(void);
 void ZLog(NSString *fmt, ...) NS_FORMAT_FUNCTION(1, 2);
+
+// ---------- صدای کارها ----------
+// هر کار صدای خودش را دارد، پس بی‌نگاه کردن به پنل می‌فهمی چه شد. صداهای سیستمی
+// مک‌اند (بی‌فایل همراه)، آرام، و با تاگل «صدا» در منو خاموش می‌شوند.
+typedef NS_ENUM(NSInteger, ZSound) {
+    ZSoundStart,      // شروع سشن
+    ZSoundPause,      // مکث
+    ZSoundResume,     // ادامه
+    ZSoundFinish,     // Esc: پایان و درج
+    ZSoundInsert,     // درج، ولی سشن باز می‌ماند
+    ZSoundTrash,      // دور ریختن
+    ZSoundCopy,       // کپی
+    ZSoundMode,       // عوض کردن حالت
+    ZSoundLang,       // عوض کردن زبان
+};
+void ZPlay(ZSound s);
 NSString *ZFaDigits(NSString *s);
 NSString *ZTimestampId(void);
 
@@ -29,6 +45,7 @@ typedef NS_ENUM(NSInteger, ZInsertMode) {
 @property (nonatomic) BOOL internalHotkey;
 @property (nonatomic) BOOL polishEnabled;           // پاس ویرایش فارسی؛ پیش‌فرض روشن
 @property (nonatomic) BOOL latinTerms;              // وام‌واژه فنی به لاتین؛ پیش‌فرض خاموش
+@property (nonatomic) BOOL soundsEnabled;           // صدای کارها؛ پیش‌فرض روشن
 @property (nonatomic) BOOL upstreamFLAC;            // فشرده‌سازی FLAC آپلود؛ پیش‌فرض روشن، اگر انکودر نساخت خودش l16 خام می‌رود
 - (ZInsertMode)insertModeForBundleId:(NSString *)bundleId;
 - (useconds_t)typeDelayMicros;
