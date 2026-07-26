@@ -96,8 +96,10 @@ static NSUInteger ZCommonPrefix(NSString *a, NSString *b) {
 
 // دُم دیگر مال ما نیست. هیچ‌چیز پاک نمی‌شود: «چیزی برای تحویل ندارم» یعنی همین، نه
 // «هرچه روی صفحه است را پاک کن».
-- (void)adoptSink:(id<ZTextSink>)sink delivered:(NSUInteger)delivered {
+- (void)adoptSink:(id<ZTextSink>)sink committed:(NSString *)committed
+        delivered:(NSUInteger)delivered {
     _sink = sink;
+    _wantC = [committed copy] ?: @"";
     if ([sink respondsToSelector:@selector(useStats:)]) [sink useStats:_stats];
     // دُمِ مقصدِ قبلی آنجا ماند و دیگر مال ما نیست؛ اینجا از صفر شروع می‌کنیم
     _owned = @"";
@@ -105,6 +107,7 @@ static NSUInteger ZCommonPrefix(NSString *a, NSString *b) {
     _pendingSuspended = NO;
     _sentCommitted = [_wantC substringToIndex:MIN(delivered, _wantC.length)];
     _dirty = YES;
+    _wantP = @"";
     _lastOpAt = 0;
     [self pump];
 }

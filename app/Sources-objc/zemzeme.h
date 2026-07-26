@@ -91,6 +91,18 @@ NSString *ZMergeInterim(NSString *best, NSString *cur);
 // (ZStitchWords)، نه از حدس. پنجره‌ی گشادتر از هم‌پوشانی یعنی متنِ واقعی بلعیده شود.
 NSString *ZStitchOverlapMax(NSString *a, NSString *b, NSUInteger maxWords);
 
+// همان جست‌وجو، ولی با اطمینانش. «کل تکه تکراری بود» تصمیم مصرف‌کننده را عوض می‌کند،
+// پس نمی‌تواند لای یک رشته پنهان بماند: اگر تطبیق تقریبا دقیق باشد تکه واقعا دوباره
+// شنیده شده و باید دور برود، و اگر لب‌مرزی باشد باید خام بماند.
+typedef struct {
+    NSUInteger dropWords;   // چند کلمه از سرِ b تکراری بود
+    double score;           // میانگین شباهت پنجره؛ صفر یعنی جوشی نخورد
+} ZSeamMatch;
+ZSeamMatch ZSeamFind(NSString *a, NSString *b, NSUInteger maxWords);
+
+// بالای این اطمینان، «کل تکه تکراری بود» یعنی واقعا تکراری بود، نه تطبیقِ الکی.
+#define kZSeamCertain 0.90
+
 // تندترین گفتارِ معقول، کلمه بر ثانیه. دست‌ودل‌بازانه گرفته شده: پنجره‌ی کمی گشادتر
 // فقط چند کلمه تکرار می‌سازد، پنجره‌ی تنگ‌تر از واقعیت تکرار را اصلا برنمی‌دارد.
 #define kZStitchWordsPerSec 4
@@ -193,7 +205,9 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 @property (nonatomic) NSUInteger weldWords;            // پنجره‌ی جوش، از ثانیه‌های هم‌پوشانی
 - (void)setInterim:(NSString *)interim;
 - (void)addFinal:(NSString *)text weld:(BOOL)weld;
-- (void)beginDrainWithCarry:(NSString *)carry;   // سر چرخش سشن
+// سر چرخش سشن. weld یعنی «این سشن با صدای هم‌پوشان باز شده بود و هنوز متنی نداده»،
+// پس اولین متنش (چه carry باشد چه متن قطعی) با دمِ رونوشت جوش می‌خورد.
+- (void)beginDrainWithCarry:(NSString *)carry weld:(BOOL)weld;
 - (void)drainFinal:(NSString *)text;             // سشن قدیمی متن قطعی داد
 - (void)endDrain;                                // تخلیه بسته شد
 - (void)dropPending;
@@ -418,7 +432,11 @@ typedef NS_ENUM(NSInteger, ZSinkResult) {
 - (void)applyCommitted:(NSString *)committed pending:(NSString *)pending;
 // عوض کردن مقصد سر چرخش حالت. delivered یعنی «این‌قدر از رونوشت قبلا تحویل شده و
 // نباید دوباره نوشته شود»؛ سشن نگهش می‌دارد چون فقط او می‌داند متن کجا رفته.
-- (void)adoptSink:(id<ZTextSink>)sink delivered:(NSUInteger)delivered;
+// committed را هم می‌گیرد، نه فقط delivered: فراخوان معمولا همین حالا رونوشت را
+// عوض کرده (پاس دستی، چرخش حالت، درج)، و اگر دفتر از نسخه‌ی کهنه‌ی خودش حساب کند
+// قدمِ بعدی «پیشوند عوض شد» می‌بیند و بی‌دلیل مالکیت دُم را رها می‌کند.
+- (void)adoptSink:(id<ZTextSink>)sink committed:(NSString *)committed
+        delivered:(NSUInteger)delivered;
 - (void)disown;         // دُم دیگر مال ما نیست؛ متنِ کاربر شد. هیچ‌چیز پاک نمی‌شود
 - (void)dropOwned;      // سطل آشغال: دُم را از روی صفحه هم بردار، اگر بشود ثابت کرد
 - (void)flushNow;       // بی‌معطلیِ throttle، هرچه در دفتر مانده برود (سر درج و پایان)

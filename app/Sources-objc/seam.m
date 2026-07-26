@@ -124,44 +124,71 @@ static const double kZSeamStrongSim = 0.85;
 // maxWords: بیشترین چند کلمه‌ای که هم‌پوشانیِ صوتی *می‌تواند* داشته باشد، از روی
 // ثانیه‌های واقعیِ هم‌پوشانی (ZStitchWords). پنجره‌ی گشادتر از هم‌پوشانی یعنی جا باز
 // کردن برای بلعیدنِ متنِ واقعی.
+ZSeamMatch ZSeamFind(NSString *a, NSString *b, NSUInteger maxWords) {
+    ZSeamMatch none = {0, 0};
+    if (!a.length || !b.length) return none;
+    NSArray *A = [a componentsSeparatedByString:@" "];
+    NSArray *B = [b componentsSeparatedByString:@" "];
+    NSUInteger W = MAX((NSUInteger)2, maxWords);
+    NSUInteger p = MIN(A.count, W), q = MIN(B.count, W);
+
+    NSMutableArray *na = [NSMutableArray arrayWithCapacity:p];
+    NSMutableArray *nb = [NSMutableArray arrayWithCapacity:q];
+    for (NSUInteger i = A.count - p; i < A.count; i++) [na addObject:ZSeamNorm(A[i])];
+    for (NSUInteger j = 0; j < q; j++) [nb addObject:ZSeamNorm(B[j])];
+
+    // هم‌ترازیِ سطحِ کلمه، نه مقایسه‌ی خانه‌به‌خانه. چرا لازم شد: دو تشخیصِ جدا از یک
+    // صدا فقط کلمه‌ها را عوضی نمی‌شنوند، گاهی یک کلمه‌ی اضافه هم می‌سازند. اندازه‌گیری
+    // روی سشن سه‌دقیقه‌ایِ 2026-07-26: سشن قدیمی «چهار انگشت جستجرهای مختلفی که»
+    // شنید و سشن تازه «چهار انگشت مختلفی که»، یعنی یک کلمه اضافه وسطِ ناحیه‌ی
+    // هم‌پوشانی. مقایسه‌ی خانه‌به‌خانه از آنجا به بعد همه‌چیز را یک خانه جابه‌جا
+    // می‌دید و امتیاز می‌افتاد زیر آستانه، پس درز تکرار می‌نوشت.
+    //
+    // C[i][j]: کمترین هزینه‌ی هم‌ترازیِ na[0..i) با nb[0..j)، با شروعِ مجانی در na.
+    // شروعِ مجانی یعنی «هر دُمی از A»؛ رسیدن به i == p یعنی هم‌پوشانی تا ته A می‌رود،
+    // که همان تعریفِ درز است. هزینه‌ی جانشینی ۱ منهای شباهتِ نویسه‌ای است، پس کلمه‌ی
+    // نیم‌شنیده تمام امتیاز را نمی‌خورد.
+    double C[64][64];
+    for (NSUInteger i = 0; i <= p; i++) C[i][0] = 0;          // شروعِ مجانی در A
+    for (NSUInteger j = 1; j <= q; j++) C[0][j] = (double)j;  // ولی همه‌ی B باید پوشش داده شود
+    double anchor = 0;
+    for (NSUInteger i = 1; i <= p; i++) {
+        for (NSUInteger j = 1; j <= q; j++) {
+            double sim = ZSeamTokenSim(na[i - 1], nb[j - 1]);
+            if (sim > anchor) anchor = sim;
+            double sub = C[i - 1][j - 1] + (1.0 - sim);
+            double del = C[i - 1][j] + 1.0;    // کلمه‌ی اضافه در A
+            double ins = C[i][j - 1] + 1.0;    // کلمه‌ی اضافه در B
+            C[i][j] = MIN(sub, MIN(del, ins));
+        }
+    }
+    // یک لنگرِ محکم لازم است. بی این، پنجره‌ای از چند کلمه‌ی نیم‌شبیه (که در فارسی
+    // فراوان است: می‌کند، می‌کنم، می‌کنی) الکی جوش می‌خورد.
+    if (anchor < kZSeamStrongSim) return none;
+
+    NSUInteger bestJ = 0;
+    double bestScore = 0;
+    for (NSUInteger j = 1; j <= q; j++) {
+        double score = 1.0 - C[p][j] / (double)j;
+        // یک کلمه لنگر کافی نیست: شباهتِ نسبی روی آن هر دو تکه‌ی بی‌ربط را به هم
+        // می‌چسباند. پس پنجره‌ی یک‌کلمه‌ای فقط با تطبیقِ دقیق قبول است.
+        if (j == 1 && score < 1.0) continue;
+        if (score < kZSeamMeanSim) continue;
+        if (score > bestScore) {    // اکید، پس سر تساوی j کوچک‌تر می‌ماند
+            bestScore = score;
+            bestJ = j;
+        }
+    }
+    return bestJ ? (ZSeamMatch){bestJ, bestScore} : none;
+}
+
 NSString *ZStitchOverlapMax(NSString *a, NSString *b, NSUInteger maxWords) {
     if (!a.length) return b;
     if (!b.length) return a;
-    NSArray *A = [a componentsSeparatedByString:@" "];
+    ZSeamMatch m = ZSeamFind(a, b, maxWords);
+    if (!m.dropWords) return [NSString stringWithFormat:@"%@ %@", a, b];
     NSArray *B = [b componentsSeparatedByString:@" "];
-    NSMutableArray *nA = [NSMutableArray arrayWithCapacity:A.count];
-    NSMutableArray *nB = [NSMutableArray arrayWithCapacity:B.count];
-    for (NSString *t in A) [nA addObject:ZSeamNorm(t)];
-    for (NSString *t in B) [nB addObject:ZSeamNorm(t)];
-
-    NSUInteger maxK = MIN(MIN(A.count, B.count), MAX((NSUInteger)2, maxWords));
-    NSUInteger bestK = 0;
-    double bestScore = 0;
-    for (NSUInteger k = 2; k <= maxK; k++) {
-        double sum = 0, strongest = 0;
-        for (NSUInteger i = 0; i < k; i++) {
-            double s = ZSeamTokenSim(nA[nA.count - k + i], nB[i]);
-            sum += s;
-            if (s > strongest) strongest = s;
-        }
-        double mean = sum / (double)k;
-        if (mean < kZSeamMeanSim || strongest < kZSeamStrongSim) continue;
-        if (mean > bestScore) {    // اکید، پس سر تساوی k کوچک‌تر می‌ماند
-            bestScore = mean;
-            bestK = k;
-        }
-    }
-    if (bestK) {
-        NSArray *rest = [B subarrayWithRange:NSMakeRange(bestK, B.count - bestK)];
-        return rest.count ? [a stringByAppendingFormat:@" %@",
-                             [rest componentsJoinedByString:@" "]] : a;
-    }
-    // پنجره‌ی یک‌کلمه‌ای فقط با تطبیق دقیق: یک کلمه لنگر کافی نیست و شباهتِ نسبی
-    // روی آن هر دو تکه‌ی بی‌ربط را به هم می‌چسباند.
-    if ([nA.lastObject length] && [nA.lastObject isEqualToString:nB.firstObject]) {
-        NSArray *rest = [B subarrayWithRange:NSMakeRange(1, B.count - 1)];
-        return rest.count ? [a stringByAppendingFormat:@" %@",
-                             [rest componentsJoinedByString:@" "]] : a;
-    }
-    return [NSString stringWithFormat:@"%@ %@", a, b];
+    if (m.dropWords >= B.count) return a;
+    NSArray *rest = [B subarrayWithRange:NSMakeRange(m.dropWords, B.count - m.dropWords)];
+    return [a stringByAppendingFormat:@" %@", [rest componentsJoinedByString:@" "]];
 }

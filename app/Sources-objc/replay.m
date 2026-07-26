@@ -126,7 +126,9 @@ int ZReplayMain(NSArray<NSString *> *args) {
             else if ([k isEqualToString:@"final"]) {
                 [tx addFinal:ZEvStr(e, @"text") weld:[e[@"weld"] boolValue]];
             }
-            else if ([k isEqualToString:@"rotate"]) [tx beginDrainWithCarry:ZEvStr(e, @"carry")];
+            else if ([k isEqualToString:@"rotate"]) {
+                [tx beginDrainWithCarry:ZEvStr(e, @"carry") weld:[e[@"weld"] boolValue]];
+            }
             else if ([k isEqualToString:@"drainfinal"]) [tx drainFinal:ZEvStr(e, @"text")];
             else if ([k isEqualToString:@"drainend"]) [tx endDrain];
             else if ([k isEqualToString:@"drop"]) [tx dropPending];

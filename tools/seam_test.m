@@ -19,14 +19,16 @@ static NSString *ZSeamRest(NSString *prev, NSString *cur, double overlapSec) {
             stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
 }
 
+static void ok(NSString *name, BOOL cond, NSString *detail) {
+    if (!cond) gFail++;
+    printf("%s %s\n", cond ? "ok  " : "FAIL", name.UTF8String);
+    if (!cond && detail.length) printf("      %s\n", detail.UTF8String);
+}
+
 static void expect(NSString *name, NSString *got, NSString *want) {
-    BOOL ok = want ? [got isEqualToString:want] : (got == nil);
-    if (!ok) gFail++;
-    printf("%s %s\n", ok ? "ok  " : "FAIL", name.UTF8String);
-    if (!ok) {
-        printf("      want: %s\n", want ? want.UTF8String : "(raw, fully redundant)");
-        printf("      got:  %s\n", got ? got.UTF8String : "(raw, fully redundant)");
-    }
+    BOOL pass = want ? [got isEqualToString:want] : (got == nil);
+    ok(name, pass, [NSString stringWithFormat:@"want: %@\n      got:  %@",
+                    want ?: @"(raw, fully redundant)", got ?: @"(raw, fully redundant)"]);
 }
 
 int main(void) {
@@ -90,6 +92,30 @@ int main(void) {
         expect(@"seam: zwnj and arabic yeh fold before comparing",
                ZSeamRest(@"دارد می‌شود همين", @"داردمی شود همین کار", 2.0),
                @"کار");
+
+        // ---------- درزهای سشن سه‌دقیقه‌ای 2026-07-26 ----------
+        // اینها را بازپخشِ یک سشن واقعی پیدا کرد، نه چشم.
+
+        // سشن قدیمی یک کلمه‌ی اضافه وسط ناحیه‌ی هم‌پوشانی ساخت («جستجرهای»). مقایسه‌ی
+        // خانه‌به‌خانه از آنجا به بعد همه‌چیز را یک خانه جابه‌جا می‌دید و درز تکرار نوشت.
+        expect(@"seam: an extra word inside the overlap still aligns",
+               ZSeamRest(@"نزدیکی به کیبورد هست که با سه انگشت چهار انگشت جستجرهای مختلفی که",
+                         @"چهار انگشت مختلفی که داره و کلاً اصلاً او اسش", 2.0),
+               @"داره و کلاً اصلاً او اسش");
+
+        // و وقتی کل تکه واقعا دوباره شنیده شده و تطبیق تقریبا دقیق است، باید دور برود.
+        // اینجا ZStitchOverlapMax همان `a` را می‌دهد (یعنی «چیزی برای اضافه کردن نیست»)
+        // و ZTranscript از روی همین امتیاز تصمیم می‌گیرد دورش بریزد.
+        ZSeamMatch m = ZSeamFind(@"تو هم لاگ رو بخونی خوبه و بعدش میرم سراغ تست با دو مدل دیگه",
+                                 @"مدل دیگه", ZStitchWords(2.0));
+        ok(@"seam: a fully re-heard chunk is recognised with certainty",
+           m.dropWords == 2 && m.score >= 0.90,
+           [NSString stringWithFormat:@"drop=%lu score=%.2f", (unsigned long)m.dropWords, m.score]);
+
+        // ولی تطبیقِ لب‌مرزی نباید «قطعی» حساب شود؛ آنجا خام می‌ماند
+        ZSeamMatch weak = ZSeamFind(@"یک دو سه چهار", @"پنج شش", ZStitchWords(2.0));
+        ok(@"seam: an unrelated chunk is not a match at all", weak.dropWords == 0,
+           [NSString stringWithFormat:@"drop=%lu score=%.2f", (unsigned long)weak.dropWords, weak.score]);
 
         printf("\n%s  (%d failed)\n", gFail ? "FAILED" : "all seam tests passed", gFail);
         return gFail ? 1 : 0;

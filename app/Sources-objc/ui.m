@@ -755,6 +755,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
 
 @implementation ZEditorSink {
     __weak ZPanel *_panel;
+    ZLedgerStats *_stats;
     // فقط برای رنگ: از خودِ دفتر می‌آید و شمارنده‌ی دومی نیست. اگر از دست برود
     // بدترین اتفاق این است که چند نویسه رنگشان دیر عوض شود، نه اینکه متنی پاک شود.
     NSUInteger _lastPendingLen;
@@ -767,6 +768,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
 
 - (BOOL)rendersPending { return YES; }
 - (BOOL)canRewrite { return YES; }
+- (void)useStats:(ZLedgerStats *)stats { _stats = stats; }
 
 - (void)appendText:(NSString *)text done:(void (^)(ZSinkResult))done {
     NSTextView *tv = [_panel liveEditor];
@@ -799,6 +801,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
         done(ZSinkDisowned);
         return;
     }
+    _stats.verifiedByRead = _stats.verifiedByRead + 1;
     [tv.textStorage replaceCharactersInRange:NSMakeRange(len - n, n) withString:text];
     if (text.length) {
         [tv.textStorage addAttributes:@{NSFontAttributeName: ZFont(15, NO),
@@ -886,6 +889,7 @@ static NSString *ZModeLabel(ZMode m) {
     NSURL *_sessionFile;
     BOOL _finished;
     BOOL _finishing;          // منتظر پاس ویرایشِ پایانی حالت جمع
+    BOOL _closing;            // موتور بسته شده و خط لوله در حال تخلیه است
     id _frontObserver;
 }
 
@@ -988,7 +992,7 @@ static NSString *ZModeLabel(ZMode m) {
     // حالت جمع: خام می‌نشیند در ادیتور. پاس ویرایش وسط کار روی متنی که داری ویرایشش
     // می‌کنی می‌افتد و ویرایش‌هایت را می‌شوید، پس تا خودت نخواهی (دکمه پاس) یا تا
     // لحظه‌ی درج و پایان، اجرا نمی‌شود. موقع بستن هم معطلی نداریم: خام و همین حالا.
-    if (_mode == ZModeCollect || _finished || !ZSettings.shared.polishEnabled) {
+    if (_mode == ZModeCollect || _closing || !ZSettings.shared.polishEnabled) {
         [_awaiting removeObjectAtIndex:0];
         [_transcript setString:ZJoinText(_transcript, raw)];
         [self sync];
@@ -1105,7 +1109,7 @@ static NSString *ZModeLabel(ZMode m) {
     if (keep < _transcript.length) {
         [_transcript deleteCharactersInRange:NSMakeRange(keep, _transcript.length - keep)];
     }
-    [_ledger adoptSink:[self sinkForMode:_mode] delivered:keep];
+    [_ledger adoptSink:[self sinkForMode:_mode] committed:_transcript delivered:keep];
     ZPlay(ZSoundTrash);
     [_panel flash:@"متن درج‌نشده دور ریخته شد"];
     [self sync];
@@ -1133,7 +1137,7 @@ static NSString *ZModeLabel(ZMode m) {
     ZSettings.shared.mode = next;
     if (next == ZModeCollect) _editorStintStart = delivered;
     [self applyModeChrome];
-    [_ledger adoptSink:[self sinkForMode:next] delivered:delivered];
+    [_ledger adoptSink:[self sinkForMode:next] committed:_transcript delivered:delivered];
     ZPlay(ZSoundMode);
     ZLog(@"session: mode -> %@", ZModeSlug(next));
     [_panel flash:[@"حالت: " stringByAppendingString:ZModeLabel(next)]];
@@ -1189,7 +1193,7 @@ static NSString *ZModeLabel(ZMode m) {
                 // ادیتور از زیر دستِ دفتر عوض شد؛ رونوشت و دفتر باید با آن هم‌تراز شوند
                 NSUInteger cut = MIN(s->_editorStintStart, s->_transcript.length);
                 [s->_transcript setString:ZJoinText([s->_transcript substringToIndex:cut], t)];
-                [s->_ledger adoptSink:[s sinkForMode:s->_mode] delivered:s->_transcript.length];
+                [s->_ledger adoptSink:[s sinkForMode:s->_mode] committed:s->_transcript delivered:s->_transcript.length];
             }
             done(t);
         });
@@ -1227,7 +1231,7 @@ static NSString *ZModeLabel(ZMode m) {
             [s->_panel clearEditor];
             // متن رفت بیرون؛ ادیتور از صفر شروع می‌کند و دفتر هم با آن
             s->_editorStintStart = s->_transcript.length;
-            [s->_ledger adoptSink:[s sinkForMode:s->_mode] delivered:s->_transcript.length];
+            [s->_ledger adoptSink:[s sinkForMode:s->_mode] committed:s->_transcript delivered:s->_transcript.length];
             ZPlay(ZSoundInsert);
             [s->_panel flash:@"درج شد؛ می‌توانی ادامه بدهی"];
             [s render];
@@ -1263,6 +1267,14 @@ static NSString *ZModeLabel(ZMode m) {
 // آنجا اپ دارد بسته می‌شود و از دست دادن پاس مهم نیست، از دست دادن متن مهم است.
 - (void)finish {
     if (_finished || _finishing) return;
+    // ترتیب مهم است و یک بار اشتباه بود: **اول موتور را ببند و خط لوله را خالی کن،
+    // بعد پاس بزن**. برعکسش یعنی پاس روی یک عکسِ ناقص از متن بیفتد و آخرین تکه‌ی
+    // موتور (که چند صد میلی‌ثانیه بعد می‌رسد) بعد از متنِ پاس‌خورده بچسبد. آن‌وقت
+    // ته متن هم تکراری می‌شود هم نقطه‌اش دو تا.
+    _closing = YES;
+    [self.engine stop];    // هرچه معلق است قطعی می‌شود و همین‌جا از دلیگیت می‌آید
+    _polishBusy = NO;      // جوابِ پاسِ در پرواز دیگر منتظر نمی‌ماند
+    [self drainPolish];    // بقیه‌ی صف خام می‌نشیند، بی‌معطلی
     if (_mode == ZModeCollect && ZSettings.shared.polishEnabled && [_panel editorText].length) {
         _finishing = YES;
         __weak typeof(self) ws = self;
@@ -1281,8 +1293,10 @@ static NSString *ZModeLabel(ZMode m) {
     if (_finished) return;
     _finished = YES;
     _finishing = NO;
-    [self.engine stop];    // موتور قبل از بستن هرچه معلق دارد را قطعی می‌کند
-    // هرچه در صف پاس مانده، بدون معطلی خام قطعی می‌شود (شرط _finished بالا)
+    // مسیر خروجِ اپ مستقیم به اینجا می‌آید و از finish رد نمی‌شود، پس بستن و تخلیه
+    // اینجا هم لازم است. stop دو بار صدا خوردن بی‌ضرر است.
+    _closing = YES;
+    [self.engine stop];
     _polishBusy = NO;
     [self drainPolish];
     // آخرین تحویل، بی‌معطلیِ سقفِ زمانی. مقصد جلو نباشد، متن در دفتر می‌ماند و

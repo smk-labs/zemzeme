@@ -548,7 +548,10 @@
     // سر جایش می‌ماند**. قبلا اینجا از نمایش غیب می‌شد و اولین interim کوتاهِ سشن تازه
     // جایش می‌نشست: در گفتار بی‌وقفه یعنی دویست نویسه می‌رفت و پنج نویسه می‌آمد، همان
     // «یک‌دفعه نصف بیشتر متن پرید». دفترِ salvage پاک می‌شود که همان حرف‌ها دو بار نروند.
-    [_tx beginDrainWithCarry:ZMergeInterim(_salvageBest, _lastInterim)];
+    // پرچمِ جوش مالِ همین استریم است. در گفتار بی‌وقفه سشن پیش از دادن متن قطعی
+    // می‌چرخد، پس اولین متنش از مسیر تخلیه می‌رسد و بی این پرچم جوش نمی‌خورد.
+    [_tx beginDrainWithCarry:ZMergeInterim(_salvageBest, _lastInterim)
+                        weld:[self takeWeldFor:old]];
     _lastInterim = @"";
     _salvageBest = @"";
     [_feedLock lock];

@@ -17,6 +17,11 @@
     NSMutableArray<NSDictionary *> *_after;    // قطعی‌های سشن تازه، منتظر پایان تخلیه
     NSString *_interim;
     BOOL _draining;
+    // آیا اولین متنِ سشنِ در حال تخلیه هنوز نیامده؟ آن یکی صدای هم‌پوشان را دوباره
+    // شنیده و باید جوش بخورد. پرچم مالِ **استریم** است نه مالِ مسیر: در گفتار
+    // بی‌وقفه، سشن پیش از آنکه متن قطعی بدهد می‌چرخد، پس اولین متنش از مسیر تخلیه
+    // می‌رسد. همین را از قلم انداخته بودم و هر درز یک تکرار می‌نوشت.
+    BOOL _carryWeld;
 }
 
 - (instancetype)init {
@@ -48,22 +53,30 @@
                    NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (!t.length) return;
     if (weld && _committed.length) {
-        NSString *joined = ZStitchOverlapMax(_committed, t, _weldWords);
-        if (joined.length <= _committed.length) {
-            // کل تکه هم‌پوشانی تشخیص داده شد. ممکن است درست باشد، ولی ممکن هم هست
-            // تطبیقِ الکیِ گفتار تکراری باشد. خام را نگه می‌داریم: قرارِ این محصول
-            // این است که یک کلمه هم جا نیفتد، و تکرار را کاربر پاک می‌کند، گم‌شده را نه.
-            ZLog(@"transcript: seam looked fully redundant, keeping raw (%lu chars)",
-                 (unsigned long)t.length);
-        } else {
-            NSString *rest = [[joined substringFromIndex:_committed.length]
-                              stringByTrimmingCharactersInSet:
-                              NSCharacterSet.whitespaceAndNewlineCharacterSet];
-            if (rest.length && rest.length != t.length) {
-                ZLog(@"transcript: seam stitched, %ld dup chars dropped",
-                     (long)t.length - (long)rest.length);
+        ZSeamMatch m = ZSeamFind(_committed, t, _weldWords);
+        NSArray *words = [t componentsSeparatedByString:@" "];
+        if (m.dropWords >= words.count) {
+            // کل تکه هم‌پوشانی است. دو حالت دارد و تا امروز هر دو یک‌کاسه بودند:
+            // اگر تطبیق تقریبا دقیق باشد، تکه واقعا همان صدای دوباره‌شنیده است و
+            // باید دور برود. پنجره از ثانیه‌های واقعیِ هم‌پوشانی می‌آید، پس تکه‌ای که
+            // کاملا داخلش جا شود از دو ثانیه بلندتر نیست: خطرِ بلعیدنِ یک جمله نیست.
+            // اندازه‌گیری روی سشن سه‌دقیقه‌ایِ 2026-07-26: «مدل دیگه» سر درز دو بار
+            // نوشته شد، چون قاعده‌ی قبلی بی‌قید و شرط خام را نگه می‌داشت.
+            if (m.score >= kZSeamCertain) {
+                ZLog(@"transcript: seam dropped a fully re-heard chunk (%lu chars, score %.2f)",
+                     (unsigned long)t.length, m.score);
+                return;
             }
-            if (rest.length) t = rest;
+            // لب‌مرزی. در تردید، تکرار: قرارِ این محصول این است که یک کلمه هم جا
+            // نیفتد، و تکرار را کاربر پاک می‌کند، گم‌شده را نه.
+            ZLog(@"transcript: seam looked redundant but only %.2f sure, keeping raw", m.score);
+        } else if (m.dropWords) {
+            NSArray *rest = [words subarrayWithRange:
+                             NSMakeRange(m.dropWords, words.count - m.dropWords)];
+            NSString *kept = [rest componentsJoinedByString:@" "];
+            ZLog(@"transcript: seam stitched, %ld dup chars dropped (score %.2f)",
+                 (long)t.length - (long)kept.length, m.score);
+            t = kept;
         }
     }
     [_committed setString:ZJoinText(_committed, t)];
@@ -91,20 +104,26 @@
 // **روی صفحه سر جایش می‌ماند**. قبلا اینجا از نمایش غیب می‌شد و اولین interim کوتاهِ
 // سشن تازه جایش می‌نشست: در گفتار بی‌وقفه یعنی دویست نویسه می‌رفت و پنج نویسه می‌آمد،
 // همان «یک‌دفعه نصف بیشتر متن پرید».
-- (void)beginDrainWithCarry:(NSString *)carry {
-    ZEventLogWrite(@{@"k": @"rotate", @"carry": carry ?: @""});
+- (void)beginDrainWithCarry:(NSString *)carry weld:(BOOL)weld {
+    ZEventLogWrite(@{@"k": @"rotate", @"carry": carry ?: @"", @"weld": @(weld)});
     if (_draining) [self endDrain];    // تخلیه‌ی قبلی هنوز باز بود؛ اول تسویه‌اش کن
     _draining = YES;
+    _carryWeld = weld;
     _carry = [ZJoinText(carry, @"") copy];
     _interim = @"";
 }
 
 // سشن قدیمی متن قطعی‌اش را داد: جای متن معلقش را می‌گیرد. جوش لازم ندارد، چون این
 // ادامه‌ی همان تشخیص است نه یک تشخیصِ دومِ همان صدا.
+// متنِ قطعیِ سشنِ در حال تخلیه: جای متن معلقش را می‌گیرد، پس پرچمِ جوش را هم از آن
+// به ارث می‌برد. هرکدام زودتر برسد پرچم را مصرف می‌کند؛ فقط اولین متنِ یک استریم
+// تکرار دارد، نه بقیه‌اش.
 - (void)drainFinal:(NSString *)text {
     ZEventLogWrite(@{@"k": @"drainfinal", @"text": text ?: @""});
     _carry = @"";
-    [self commit:text weld:NO];
+    BOOL weld = _carryWeld;
+    _carryWeld = NO;
+    [self commit:text weld:weld];
 }
 
 // تخلیه بسته شد. متن معلقی که جوابی برایش نیامد خودش قطعی می‌شود (بی این، همان چند
@@ -114,9 +133,10 @@
     ZEventLogWrite(@{@"k": @"drainend"});
     if (_carry.length) {
         ZLog(@"transcript: drain gave nothing, carrying %lu chars", (unsigned long)_carry.length);
-        [self commit:_carry weld:NO];
+        [self commit:_carry weld:_carryWeld];
     }
     _carry = @"";
+    _carryWeld = NO;
     _draining = NO;
     NSArray *held = [_after copy];
     [_after removeAllObjects];
