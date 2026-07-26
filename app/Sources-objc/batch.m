@@ -107,54 +107,6 @@ static void ZSplitTail(NSString *all, NSUInteger words, NSString **head, NSStrin
     *tail = [[w subarrayWithRange:NSMakeRange(cut, words)] componentsJoinedByString:@" "];
 }
 
-// درز دو پاره‌ی هم‌پوشان: کار ZMergeInterim، ولی بامدارا. تطبیق دقیقِ دم‌به‌سر با یک
-// توکن اختلاف در ناحیه هم‌پوشانی کور می‌شود (اندازه‌گیری روی فایل ۱۷ دقیقه‌ای: «year»
-// در یک پاره «ear» شنیده شده بود) و همان چند کلمه دو بار می‌نشست، ۵ درز از ۷۲.
-// پس تطبیق را نسبی می‌کنیم: اگر دست‌کم ۷۰٪ توکن‌ها بخوانند، هم‌پوشانی است.
-// چرا جدا از ZMergeInterim: آن یکی تطبیق دقیق می‌خواهد و قراردادش (نجات interim های
-// یک استریم) نباید عوض شود. این یکی برای درزِ دو تشخیصِ جداست، چه دو پاره‌ی فایل باشد
-// چه دو استریمِ زنده سر چرخش، و هر دو همان مدارا را لازم دارند.
-// maxWords: بیشترین چند کلمه‌ای که هم‌پوشانیِ صوتی *می‌تواند* داشته باشد. اندازه‌گیری:
-// بی این سقف (پنجره‌ی ثابت ۳۰)، روی گفتار تکراری هر درز یک جمله‌ی کامل را می‌خورد.
-// ۱۲۳ ثانیه گفتار با جمله‌های هم‌شکل: ۶ جمله از ۳۰ رفت، دقیقا یکی سر هر درز. علتش
-// جهت حلقه است (از بزرگ‌ترین k به پایین) بعلاوه‌ی مدارای ۷۰٪: روی متن تکراری یک k
-// بزرگِ الکی زودتر از k درستِ کوچک جواب می‌دهد و هرچه لای آن است دور ریخته می‌شود.
-// سقف از روی ثانیه‌های هم‌پوشانی حساب می‌شود، پس تطبیقِ الکی جا برای بلعیدن ندارد.
-NSString *ZStitchOverlapMax(NSString *a, NSString *b, NSUInteger maxWords) {
-    NSArray *A = [a componentsSeparatedByString:@" "];
-    NSArray *B = [b componentsSeparatedByString:@" "];
-    if (!a.length) return b;
-    if (!b.length) return a;
-    NSCharacterSet *punct = [NSCharacterSet characterSetWithCharactersInString:@".,!?؟،؛:\""];
-    NSMutableArray *nA = [NSMutableArray array], *nB = [NSMutableArray array];
-    for (NSArray *src in @[A, B]) {
-        NSMutableArray *dst = src == A ? nA : nB;
-        for (NSString *t in src) {
-            [dst addObject:[[t stringByTrimmingCharactersInSet:punct] lowercaseString]];
-        }
-    }
-    // پنجره‌ی جست‌وجو به اندازه‌ی هم‌پوشانی واقعی است. بیشتر از این فقط شانس تطبیق
-    // الکی را بالا می‌برد، و تطبیق الکی یعنی متنِ واقعی دور ریخته شود.
-    NSUInteger maxK = MIN(MIN(A.count, B.count), MAX((NSUInteger)2, maxWords));
-    for (NSUInteger k = maxK; k >= 2; k--) {
-        NSUInteger match = 0;
-        for (NSUInteger i = 0; i < k; i++) {
-            if ([nA[nA.count - k + i] isEqualToString:nB[i]]) match++;
-        }
-        if (match >= 2 && match * 10 >= k * 7) {
-            NSArray *rest = [B subarrayWithRange:NSMakeRange(k, B.count - k)];
-            return rest.count ? [a stringByAppendingFormat:@" %@",
-                                 [rest componentsJoinedByString:@" "]] : a;
-        }
-    }
-    if (maxK >= 1 && [nA.lastObject isEqualToString:nB.firstObject]) {
-        NSArray *rest = [B subarrayWithRange:NSMakeRange(1, B.count - 1)];
-        return rest.count ? [a stringByAppendingFormat:@" %@",
-                             [rest componentsJoinedByString:@" "]] : a;
-    }
-    return [NSString stringWithFormat:@"%@ %@", a, b];
-}
-
 // ---------- رونویس ----------
 
 @interface ZBatchTranscriber : NSObject

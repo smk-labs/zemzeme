@@ -26,6 +26,20 @@ NSColor *ZStatusColor(ZPanelModel *m) {
     return NSColor.systemOrangeColor;
 }
 
+// ویوی ادیتور برای مقصد. داخل همین فایل می‌ماند: بیرون کسی نباید به استوریج پنل
+// دست بزند، و مقصد خودش عضوِ همین‌جاست.
+@interface ZPanel (ZEditorAccess)
+- (NSTextView *)liveEditor;
+@end
+
+// مقصدِ ادیتورِ حالت جمع. اینجا استوریج مالِ خودمان است، پس تاییدْ خواندنِ مستقیم
+// همان رشته است: دقیق، مجانی، و بی هیچ رفت‌وبرگشتی با اپ دیگری.
+// ولی متنِ ادیتور با کیبوردِ خودِ کاربر هم عوض می‌شود، پس تایید واقعا لازم است:
+// اگر کاربر ته متن را دست بزند، دُمِ ما دیگر آنجا نیست و نباید پاکش کنیم.
+@interface ZEditorSink : NSObject <ZTextSink>
+- (instancetype)initWithPanel:(ZPanel *)panel;
+@end
+
 // ---------- ZPanel ----------
 // نوار باریک بدون گرفتن فوکس، روی همه Space ها و فول‌اسکرین. سه دکمه بیشتر ندارد:
 // بستن، مکث/ادامه، کپی. متن خاکستری تا سه خط می‌پیچد و پنل قدش را خودش تنظیم می‌کند.
@@ -57,7 +71,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     NSButton *_btnLang, *_btnMode, *_btnPolish, *_btnFile;
     NSArray<NSButton *> *_bar;    // ترتیب دکمه‌ها؛ یک منبع حقیقت برای چیدمان و پهنای متن
     NSMutableArray<NSTextField *> *_barCaps;   // حرف میان‌بر زیر هر دکمه، به همان ترتیب
-    NSUInteger _greyLen;          // طول دُم خاکستری در ته ادیتور (حالت جمع)
+    id<ZTextSink> _editorSink;
     ZPanelModel *_lastModel;      // برای رندر دوباره بدون سشن (فیدبک لحظه‌ای)
     NSString *_flash;             // پیام کوتاه تایید کار، چند لحظه روی خط وضعیت
     NSInteger _flashGen;
@@ -286,26 +300,15 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     [self resizeTo:on ? kBarH + kEditorH : [self conveyorHeight]];
 }
 
-- (void)appendFinalToEditor:(NSString *)chunk {
+// ویوی ادیتور، ساخته‌شده. مقصدِ متن از همین می‌خواند.
+- (NSTextView *)liveEditor {
     [self ensureEditor];
-    // متن قطعی جای همان دُم خاکستری را می‌گیرد، پس اول ناحیه‌ی خاکستری برداشته می‌شود
-    NSUInteger len = _editor.string.length;
-    if (_greyLen && len >= _greyLen) {
-        [_editor.textStorage replaceCharactersInRange:NSMakeRange(len - _greyLen, _greyLen)
-                                          withString:@""];
-    }
-    _greyLen = 0;
-    // هشدار: _editor.string یک پروکسیِ زنده است، نه عکس لحظه‌ای. پس نقطه‌ی درج باید
-    // قبل از دست‌کاری در یک عدد ذخیره شود؛ اگر بعدش از cur.length بخوانیم، رشته از
-    // قبل بلند شده و رنجِ رنگ‌آمیزی از ته متن بیرون می‌زند.
-    NSUInteger at = _editor.string.length;
-    BOOL needSpace = at > 0 && ![_editor.string hasSuffix:@" "] && ![_editor.string hasSuffix:@"\n"];
-    NSString *add = needSpace ? [@" " stringByAppendingString:chunk] : chunk;
-    [_editor.textStorage replaceCharactersInRange:NSMakeRange(at, 0) withString:add];
-    [_editor.textStorage addAttributes:@{NSFontAttributeName: ZFont(15, NO),
-                                        NSForegroundColorAttributeName: NSColor.labelColor}
-                                range:NSMakeRange(at, add.length)];
-    [_editor scrollRangeToVisible:NSMakeRange(_editor.string.length, 0)];
+    return _editor;
+}
+
+- (id<ZTextSink>)editorSink {
+    if (!_editorSink) _editorSink = [[ZEditorSink alloc] initWithPanel:self];
+    return _editorSink;
 }
 
 - (NSString *)editorText {
@@ -329,30 +332,6 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     });
 }
 
-// متن خاکستریِ در جریان، دنبالِ متن سفیدِ جمع‌شده در همان ادیتور. حالت جمع نوار پایین
-// را برای متن خاکستری استفاده نمی‌کند، چون آنجا نصفه می‌ماند؛ اینجا ادامه‌ی همان جمله
-// دیده می‌شود و وقتی قطعی شد، خاکستری‌اش سفید می‌شود.
-// دُم خاکستری یک ناحیه‌ی جدا در ته ادیتور است و طولش (_greyLen) یادمان می‌ماند، پس
-// هر بار فقط همان ناحیه عوض می‌شود. این‌طور ویرایش‌های خودِ کاربر روی متن سفیدِ قبلش
-// دست‌نخورده می‌ماند؛ اگر هر بار کل متن را بازنویسی می‌کردیم، ویرایش‌ها پاک می‌شدند.
-- (void)showInterimInEditor:(NSString *)interim {
-    [self ensureEditor];
-    NSString *tail = [interim stringByTrimmingCharactersInSet:
-                      NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    NSUInteger len = _editor.string.length;
-    NSUInteger start = len >= _greyLen ? len - _greyLen : 0;
-    NSString *add = @"";
-    if (tail.length) add = start > 0 ? [@" " stringByAppendingString:tail] : tail;
-    [_editor.textStorage replaceCharactersInRange:NSMakeRange(start, len - start) withString:add];
-    if (add.length) {
-        [_editor.textStorage addAttributes:@{NSFontAttributeName: ZFont(15, NO),
-                                            NSForegroundColorAttributeName: NSColor.secondaryLabelColor}
-                                    range:NSMakeRange(start, add.length)];
-    }
-    _greyLen = add.length;
-    [_editor scrollRangeToVisible:NSMakeRange(_editor.string.length, 0)];
-}
-
 // جای متن را یک‌جا عوض می‌کند: مسیر پاس دستی و مسیر عوض کردن حالت هر دو لازمش دارند
 - (void)setEditorText:(NSString *)text {
     [self ensureEditor];
@@ -366,7 +345,6 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
 - (void)clearEditor {
     [self ensureEditor];
     [_editor.textStorage replaceCharactersInRange:NSMakeRange(0, _editor.string.length) withString:@""];
-    _greyLen = 0;
 }
 
 // ---------- اندازه ----------
@@ -751,9 +729,12 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
         ZPanelModel *m = pair[1];
         if (m.mode == ZModeCollect) {
             [self clearEditor];
-            [self appendFinalToEditor:@"متن قطعی‌شده اینجا جمع می‌شود و با کیبورد خودت قابل ویرایش است."];
-            [self appendFinalToEditor:@"تهش با دکمه درج، یکجا سر کرسر می‌نشیند."];
-            [self showInterimInEditor:m.interim];    // دُم خاکستری، دنبال متن سفید
+            // از همان دفتر و همان مقصدی که مسیر واقعی استفاده می‌کند، نه یک راه دوم
+            ZTextLedger *shot = [[ZTextLedger alloc] initWithSink:[self editorSink]];
+            shot.pendingThrottle = 0;
+            [shot applyCommitted:@"متن قطعی‌شده اینجا جمع می‌شود و با کیبورد خودت قابل ویرایش است. "
+                                 @"تهش با دکمه درج، یکجا سر کرسر می‌نشیند."
+                         pending:m.interim];
         }
         [self render:m];
         [_effect layoutSubtreeIfNeeded];
@@ -766,6 +747,85 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     }
     [self setCollectVisible:NO];
     [_panel orderOut:nil];
+}
+
+@end
+
+// ---------- ZEditorSink ----------
+
+@implementation ZEditorSink {
+    __weak ZPanel *_panel;
+    // فقط برای رنگ: از خودِ دفتر می‌آید و شمارنده‌ی دومی نیست. اگر از دست برود
+    // بدترین اتفاق این است که چند نویسه رنگشان دیر عوض شود، نه اینکه متنی پاک شود.
+    NSUInteger _lastPendingLen;
+}
+
+- (instancetype)initWithPanel:(ZPanel *)panel {
+    if ((self = [super init])) _panel = panel;
+    return self;
+}
+
+- (BOOL)rendersPending { return YES; }
+- (BOOL)canRewrite { return YES; }
+
+- (void)appendText:(NSString *)text done:(void (^)(ZSinkResult))done {
+    NSTextView *tv = [_panel liveEditor];
+    if (!tv) {
+        done(ZSinkUnavailable);
+        return;
+    }
+    // هشدار: tv.string یک پروکسیِ زنده است، نه عکس لحظه‌ای. نقطه‌ی درج باید قبل از
+    // دست‌کاری در یک عدد ذخیره شود، وگرنه رنجِ رنگ‌آمیزی از ته متن بیرون می‌زند و
+    // addAttributes بی‌هیچ خطایی نخ اصلی را قفل می‌کند.
+    NSUInteger at = tv.string.length;
+    [tv.textStorage replaceCharactersInRange:NSMakeRange(at, 0) withString:text];
+    [tv.textStorage addAttributes:@{NSFontAttributeName: ZFont(15, NO),
+                                    NSForegroundColorAttributeName: NSColor.labelColor}
+                            range:NSMakeRange(at, text.length)];
+    [tv scrollRangeToVisible:NSMakeRange(tv.string.length, 0)];
+    done(ZSinkOK);
+}
+
+- (void)replaceLast:(NSUInteger)n expecting:(NSString *)expected with:(NSString *)text
+               done:(void (^)(ZSinkResult))done {
+    NSTextView *tv = [_panel liveEditor];
+    if (!tv) {
+        done(ZSinkUnavailable);
+        return;
+    }
+    NSUInteger len = tv.string.length;
+    if (len < n || ![[tv.string substringFromIndex:len - n] isEqualToString:expected]) {
+        // کاربر ته متن را دست زده. متنِ او مالِ اوست.
+        done(ZSinkDisowned);
+        return;
+    }
+    [tv.textStorage replaceCharactersInRange:NSMakeRange(len - n, n) withString:text];
+    if (text.length) {
+        [tv.textStorage addAttributes:@{NSFontAttributeName: ZFont(15, NO),
+                                        NSForegroundColorAttributeName: NSColor.labelColor}
+                                range:NSMakeRange(len - n, text.length)];
+    }
+    [tv scrollRangeToVisible:NSMakeRange(tv.string.length, 0)];
+    done(ZSinkOK);
+}
+
+// دُمِ ناپایدار خاکستری دیده می‌شود. فقط ناحیه‌ی تغییر رنگ می‌شود، نه کل متن: روی
+// یک سند بلند، رنگ‌آمیزیِ کامل چند بار در ثانیه نخ اصلی را می‌خورد.
+- (void)markPendingLength:(NSUInteger)n {
+    NSTextView *tv = [_panel liveEditor];
+    if (!tv) return;
+    NSUInteger len = tv.string.length;
+    NSUInteger span = MAX(n, _lastPendingLen);
+    NSUInteger start = len >= span ? len - span : 0;
+    if (len > start) {
+        [tv.textStorage addAttributes:@{NSForegroundColorAttributeName: NSColor.labelColor}
+                                range:NSMakeRange(start, len - start)];
+    }
+    if (n && len >= n) {
+        [tv.textStorage addAttributes:@{NSForegroundColorAttributeName: NSColor.secondaryLabelColor}
+                                range:NSMakeRange(len - n, n)];
+    }
+    _lastPendingLen = n;
 }
 
 @end
@@ -793,30 +853,40 @@ static NSString *ZModeLabel(ZMode m) {
     ZCaretDot *_dot;          // فقط در حالت کرسر ساخته می‌شود؛ بیشتر سشن‌ها لازمش ندارند
     ZInjector *_injector;
     NSRunningApplication *_target;
-    NSMutableArray<NSString *> *_queue;       // تکه‌های قطعیِ هنوز درج‌نشده (تسمه‌نقاله)
-    NSMutableArray<NSString *> *_transcript;  // همه قطعی‌ها برای کپی پایانی
-    NSString *_interim;
+
+    // ---------- خط لوله ----------
+    // یک دفتر، و مقصدی که با حالت عوض می‌شود. صفِ «تکه‌های درج‌نشده» به‌عنوان یک
+    // مفهوم جدا وجود ندارد: مقصد جلو نیست یعنی مقصد ننوشت، پس دفتر جلو نمی‌رود و
+    // دفعه‌ی بعد همه را یکجا می‌نویسد.
+    ZTextLedger *_ledger;
+    ZCaretSink *_caretSink;
+
+    // چقدر از رونوشتِ خامِ موتور را دیده‌ایم (برای دفترِ sessions/ و تغذیه‌ی پاس)
+    NSUInteger _rawSeen;
+    // رونوشتِ ما: خام یا پاس‌خورده. این است که «قطعی» به حساب می‌آید و به دفتر می‌رود.
+    NSMutableString *_transcript;
+    // تکه‌های خامی که هنوز پاس نخورده‌اند؛ اولی در پرواز است. اینها جزء *pending* اند.
+    // نتیجه‌اش دقیقا رفتار قبلی است، ولی حالا از شکل خط لوله درمی‌آید نه از سه شرط
+    // پراکنده: در حالت کرسر که دُم رندر می‌شود، متن خام همان لحظه سر کرسر می‌نشیند و
+    // با آمدن پاس چند نویسه‌اش عوض می‌شود؛ در حالت زنده که دُم رندر نمی‌شود، تکه
+    // خودبه‌خود منتظر پاس می‌ماند.
+    NSMutableArray<NSString *> *_awaiting;
+    BOOL _polishBusy;
+    NSInteger _polishGen;      // سطل آشغال این را می‌چرخاند، پس جوابِ دیررس دور می‌رود
+    NSString *_enginePending;
+
     NSString *_statusText;
     BOOL _errorState;
     BOOL _troubleState;       // قطعی موقت: نقطه قرمز، ولی سشن زنده است
     BOOL _listening;
     ZMode _mode;
-    NSMutableArray<NSString *> *_pasteBuf;
-    NSTimer *_pasteTimer;
+    // دفتر کجا بود وقتی وارد حالت جمع شدیم. بیرون آمدن از جمع باید متنِ ادیتور را
+    // (با ویرایش‌های خودِ کاربر) سر کرسر بنشاند، پس باید بدانیم از کجا شروع شده بود.
+    NSUInteger _editorStintStart;
     NSURL *_sessionFile;
     BOOL _finished;
     BOOL _finishing;          // منتظر پاس ویرایشِ پایانی حالت جمع
     id _frontObserver;
-    // خط لوله پاس ویرایش: ترتیب تکه‌ها حفظ می‌شود، یکی‌یکی
-    // دُم موقت حالت کرسر: آنچه از متن خاکستریِ در جریان همین حالا سر کرسر تایپ شده.
-    // مالکش ماییم تا تکه‌ی قطعی برسد و جایش را بگیرد؛ از آن به بعد متن کاربر است.
-    NSString *_tail;
-    CFAbsoluteTime _tailSyncAt;
-    BOOL _tailHoldsFinal;     // دُم دیگر خاکستری نیست: متن قطعیِ خام است، منتظر نسخه‌ی ویرایش‌شده
-    NSMutableArray<NSString *> *_polishPending;
-    BOOL _polishBusy;
-    NSString *_polishInFlight;   // خامِ تکه در پرواز؛ موقع بستن برمی‌گردد سر صف
-    BOOL _dropNextPolish;    // موقع بستن، تکه در پرواز خام درج شده؛ جواب دیرش دور ریخته شود
 }
 
 - (instancetype)initWithEngine:(id<ZEngine>)engine panel:(ZPanel *)panel {
@@ -824,15 +894,18 @@ static NSString *ZModeLabel(ZMode m) {
         _engine = engine;
         _panel = panel;
         _injector = [ZInjector new];
-        _queue = [NSMutableArray array];
-        _transcript = [NSMutableArray array];
-        _pasteBuf = [NSMutableArray array];
-        _polishPending = [NSMutableArray array];
-        _tail = @"";
-        _interim = @"";
+        _caretSink = [[ZCaretSink alloc] initWithInjector:_injector];
+        _transcript = [NSMutableString string];
+        _awaiting = [NSMutableArray array];
+        _enginePending = @"";
         _statusText = @"";
+        NSString *stamp = ZTimestampId();
         _sessionFile = [ZSessionsDir() URLByAppendingPathComponent:
-                        [NSString stringWithFormat:@"app-%@.txt", ZTimestampId()]];
+                        [NSString stringWithFormat:@"app-%@.txt", stamp]];
+        // ورودیِ خامِ رونوشت، کنار متنِ خام. سشنِ بعدی که چیزی از دستش برود، با
+        // `zemzeme --replay` دقیقا همان‌جا دوباره پخش می‌شود، بی‌میکروفن و بی‌شبکه.
+        ZEventLogStart([ZSessionsDir() URLByAppendingPathComponent:
+                        [NSString stringWithFormat:@"app-%@.events.jsonl", stamp]]);
     }
     return self;
 }
@@ -840,6 +913,8 @@ static NSString *ZModeLabel(ZMode m) {
 - (void)start {
     _mode = ZSettings.shared.mode;
     _target = NSWorkspace.sharedWorkspace.frontmostApplication;
+    _caretSink.target = _target;
+    _ledger = [[ZTextLedger alloc] initWithSink:[self sinkForMode:_mode]];
     ZLog(@"session: start target=%@ engine=%@ lang=%@ mode=%@",
          _target.bundleIdentifier ?: @"?", ZSettings.shared.engineName, ZSettings.shared.lang,
          ZModeSlug(_mode));
@@ -848,8 +923,11 @@ static NSString *ZModeLabel(ZMode m) {
     _frontObserver = [NSWorkspace.sharedWorkspace.notificationCenter
         addObserverForName:NSWorkspaceDidActivateApplicationNotification object:nil queue:NSOperationQueue.mainQueue
                 usingBlock:^(NSNotification *n) {
-        [ws pump];
-        [ws render];
+        // مقصد برگشت؟ هرچه در دفتر مانده همین حالا برود. همین جای صفِ قدیمی را گرفت.
+        __strong typeof(ws) s = ws;
+        if (!s) return;
+        [s->_ledger flushNow];
+        [s render];
     }];
     _panel.onClose = ^{ [ws finish]; };
     _panel.onPauseToggle = ^{ [ws pauseToggle]; };
@@ -870,156 +948,72 @@ static NSString *ZModeLabel(ZMode m) {
     [self render];
 }
 
+// حالت فقط مقصد را عوض می‌کند و یک بولین را، نه منطق را
+- (id<ZTextSink>)sinkForMode:(ZMode)m {
+    if (m == ZModeCollect) return [_panel editorSink];
+    _caretSink.renderPending = (m == ZModeCursor);
+    _caretSink.target = _target;
+    return _caretSink;
+}
+
 // ---------- ZEngineDelegate (روی نخ اصلی) ----------
 
-- (void)engineInterim:(NSString *)text {
-    _interim = [text copy];
-    // در حالت جمع، خاکستری همان بالا دنبال متن سفید استریم می‌شود، نه در نوار پایین
-    if (_mode == ZModeCollect) [_panel showInterimInEditor:_interim];
-    // در حالت کرسر پنلی نیست، پس خاکستری جایی برای نشستن ندارد. به جایش همین حالا
-    // سر کرسر تایپ می‌شود: کاربر حرفش را همان لحظه می‌بیند، نه چند ثانیه بعد وقتی
-    // گوگل تکه را قطعی کرد. رنگ خاکستری از دست می‌رود (تایپ مصنوعی متن ساده است و
-    // نشان‌دار کردنش کار یک input method است، نه یک اپ بیرونی)، ولی سرعت می‌ماند.
-    else if (_mode == ZModeCursor) [self syncTail:_interim];
+- (void)engineDidUpdateCommitted:(NSString *)committed pending:(NSString *)pending {
+    _enginePending = [pending copy];
+    // متنِ تازه‌قطعی‌شده‌ی موتور: اول خام روی دیسک (sessions طلای تست است و خام
+    // می‌ماند)، بعد وارد صفِ پاس ویرایش.
+    if (committed.length > _rawSeen) {
+        NSString *fresh = [[committed substringFromIndex:_rawSeen]
+                           stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        _rawSeen = committed.length;
+        if (fresh.length) {
+            [self appendToSessionFile:fresh];
+            [_awaiting addObject:fresh];
+            [self drainPolish];
+        }
+    }
+    [self sync];
+}
+
+// تنها جایی که دفتر تغذیه می‌شود. یک خط، و همان یک خط برای هر سه حالت.
+- (void)sync {
+    NSString *pending = ZJoinText([_awaiting componentsJoinedByString:@" "], _enginePending);
+    [_ledger applyCommitted:_transcript pending:pending];
     [self render];
 }
 
-// همان دُم موقت را با متن تازه یکی می‌کند: پیشوند مشترک دست نمی‌خورد و فقط تفاوت
-// پاک و دوباره تایپ می‌شود، پس هر بروزرسانی چند نویسه است نه کل جمله.
-- (void)syncTail:(NSString *)want {
-    [self syncTail:want isFinal:NO];
-}
-
-// isFinal یعنی «این متن قطعی است و حق دارد جای دُم را بگیرد». متن خاکستری این حق را
-// ندارد: از وقتی متن قطعیِ خام بلافاصله سر کرسر می‌نشیند (و تا رسیدن نسخه‌ی ویرایش‌شده
-// آنجا می‌ماند)، یک interim که همان لحظه برسد می‌توانست همان متن قطعی را پاک کند و
-// کاربر می‌دید حرفش رفت. فقط یک متن قطعیِ دیگر جایگزینش می‌شود.
-- (void)syncTail:(NSString *)want isFinal:(BOOL)isFinal {
-    if (![self canTypeTail]) return;
-    if (_tailHoldsFinal && !isFinal) return;
-    NSString *cur = _tail;
-    NSString *next = want ?: @"";
-    if ([cur isEqualToString:next]) return;
-    // گوگل چند بار در ثانیه متن خاکستری را بازنویسی می‌کند؛ بی این سقف، صفِ درج
-    // پر می‌شد از پاک‌کن و تایپِ نیم‌کاره و متن روی صفحه می‌لرزید.
-    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
-    if (next.length && now - _tailSyncAt < 0.12) return;
-    _tailSyncAt = now;
-    NSUInteger keep = 0, max = MIN(cur.length, next.length);
-    while (keep < max && [cur characterAtIndex:keep] == [next characterAtIndex:keep]) keep++;
-    [_injector replaceLast:cur.length - keep
-                      with:[next substringFromIndex:keep]
-               delayMicros:ZSettings.shared.typeDelayMicros];
-    _tail = next;
-}
-
-// تایپِ دُم موقت فقط جایی که هم بی‌خطر است هم برگشت‌پذیر: مقصد باید جلو باشد
-// (وگرنه پاک‌کن‌ها می‌روند سراغ اپ دیگری) و روش درج باید تایپ باشد نه پیست، چون
-// در ریموت دسکتاپ هر رفت‌وبرگشت کند و نامطمئن است.
-- (BOOL)canTypeTail {
-    return _mode == ZModeCursor && [self targetIsFront]
-        && [ZInjector accessibilityOK] && ![ZInjector secureInputActive]
-        && [ZSettings.shared insertModeForBundleId:_target.bundleIdentifier] == ZInsertType;
-}
-
-// دُم را پاک می‌کند (چیزی که خودمان تایپ کرده‌ایم و هنوز قطعی نشده)
-- (void)wipeTail {
-    if (_tail.length && [self canTypeTail]) {
-        [_injector replaceLast:_tail.length with:@"" delayMicros:ZSettings.shared.typeDelayMicros];
-    }
-    _tail = @"";
-    _tailHoldsFinal = NO;
-}
-
-// تکه قطعی: اول خام روی دیسک (sessions طلای تست است و خام می‌ماند)،
-// بعد از خط لوله پاس ویرایش رد می‌شود و بعد درج/جمع.
-- (void)engineFinal:(NSString *)text {
-    [self appendToSessionFile:text];
-    [_polishPending addObject:text];
-    [self drainPolish];
-}
-
 - (void)drainPolish {
-    if (_polishBusy || !_polishPending.count) return;
-    NSString *raw = _polishPending.firstObject;
-    [_polishPending removeObjectAtIndex:0];
+    if (_polishBusy || !_awaiting.count) return;
+    NSString *raw = _awaiting.firstObject;
     // حالت جمع: خام می‌نشیند در ادیتور. پاس ویرایش وسط کار روی متنی که داری ویرایشش
     // می‌کنی می‌افتد و ویرایش‌هایت را می‌شوید، پس تا خودت نخواهی (دکمه پاس) یا تا
-    // لحظه‌ی درج و پایان، اجرا نمی‌شود.
-    if (_mode == ZModeCollect && !_finished) {
-        [self acceptFinal:raw];
+    // لحظه‌ی درج و پایان، اجرا نمی‌شود. موقع بستن هم معطلی نداریم: خام و همین حالا.
+    if (_mode == ZModeCollect || _finished || !ZSettings.shared.polishEnabled) {
+        [_awaiting removeObjectAtIndex:0];
+        [_transcript setString:ZJoinText(_transcript, raw)];
+        [self sync];
         [self drainPolish];
         return;
-    }
-    if (_finished) {
-        // موقع بستن معطلی نداریم: خام و همین حالا
-        [self acceptFinal:raw];
-        [self drainPolish];
-        return;
-    }
-    // حالت کرسر: متن خام همین حالا جای دُم را می‌گیرد و منتظر پاس ویرایش نمی‌ماند.
-    // دو سود دارد. یک، جمله هیچ لحظه‌ای از صفحه غایب نمی‌شود. دو، دیفِ بعدی «خام به
-    // ویرایش‌شده» است (معمولا یک نقطه و چند ویرگول) نه «خاکستریِ نیمه‌کاره به
-    // ویرایش‌شده»، پس پاک‌کن چند نویسه کار دارد نه کل جمله.
-    if (_mode == ZModeCursor && [self canTypeTail]) {
-        [self syncTailNow:[raw stringByAppendingString:@" "]];
-        _tailHoldsFinal = YES;
     }
     _polishBusy = YES;
-    _polishInFlight = raw;
+    NSInteger gen = _polishGen;
     __weak typeof(self) ws = self;
     [ZPolish.shared polish:raw completion:^(NSString *polished) {
         __strong typeof(ws) s = ws;
         if (!s) return;
         s->_polishBusy = NO;
-        s->_polishInFlight = nil;
-        if (s->_dropNextPolish) {
-            s->_dropNextPolish = NO;    // بسته شدیم و خامش درج شده؛ این جواب دور ریخته می‌شود
-        } else {
-            [s acceptFinal:polished];
+        // سطل آشغال نسل را چرخانده: این جواب دیگر مالِ متنی است که کاربر دور ریخت
+        if (gen != s->_polishGen) {
+            [s drainPolish];
+            return;
         }
+        if (s->_awaiting.count) {
+            [s->_awaiting removeObjectAtIndex:0];
+            [s->_transcript setString:ZJoinText(s->_transcript, polished.length ? polished : raw)];
+        }
+        [s sync];
         [s drainPolish];
     }];
-}
-
-- (void)acceptFinal:(NSString *)text {
-    [_transcript addObject:text];
-    if (_mode == ZModeCollect) {
-        [_panel appendFinalToEditor:text];
-    } else if (_tail.length || [self canTypeTail]) {
-        // حالت کرسر: متنِ پاس‌خورده جای همان دُمِ خامی را می‌گیرد که لحظه‌ای پیش
-        // تایپ شده بود. دیفِ پیشوندی یعنی معمولا فقط چند نویسه‌ی آخر عوض می‌شود، نه
-        // کل جمله. اگر بین این دو، مقصد از جلو رفته باشد، دُم دیگر قابل ویرایش نیست:
-        // آن را رها می‌کنیم و متن قطعی می‌رود در صف، چون از دست دادن متن بدتر از
-        // تکرار چند کلمه است.
-        if ([self canTypeTail]) {
-            [self syncTailNow:[text stringByAppendingString:@" "]];
-            _tail = @"";
-            _tailHoldsFinal = NO;
-        } else if (_tailHoldsFinal) {
-            // خامِ همین تکه قبلا سر کرسر نشسته و مقصد از جلو رفته: دیگر قابل ویرایش
-            // نیست، ولی هست. صف کردنش یعنی همان جمله دو بار درج شود.
-            ZLog(@"session: tail holds raw final (%lu chars), polish dropped",
-                 (unsigned long)_tail.length);
-            _tail = @"";
-            _tailHoldsFinal = NO;
-        } else {
-            ZLog(@"session: tail abandoned (%lu chars), final queued", (unsigned long)_tail.length);
-            _tail = @"";
-            [_queue addObject:text];
-            [self pump];
-        }
-    } else {
-        [_queue addObject:text];
-        [self pump];
-    }
-    [self render];
-}
-
-// مثل syncTail ولی بی‌سقفِ زمانی: تکه‌ی قطعی حق ندارد پشت throttle بماند
-- (void)syncTailNow:(NSString *)want {
-    _tailSyncAt = 0;
-    [self syncTail:want isFinal:YES];
 }
 
 - (void)engineState:(ZEngineState)state message:(NSString *)msg {
@@ -1077,12 +1071,15 @@ static NSString *ZModeLabel(ZMode m) {
     }
 }
 
-// کپی متن تا اینجا (ماندگار)
+// کل متن سشن. در حالت جمع، متنِ ادیتور مرجع است چون کاربر آنجا ویرایشش کرده.
+- (NSString *)fullText {
+    if (_mode == ZModeCollect) return [_panel editorText] ?: @"";
+    return [ZJoinText(_transcript, [_awaiting componentsJoinedByString:@" "])
+            stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+}
+
 - (void)copyNow {
-    NSString *t = _mode == ZModeCollect
-        ? [_panel editorText]
-        : [[_transcript componentsJoinedByString:@" "]
-           stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSString *t = [self fullText];
     if (t.length) [ZInjector copyFinal:t];
     ZPlay(ZSoundCopy);
     [_panel flash:t.length
@@ -1091,83 +1088,56 @@ static NSString *ZModeLabel(ZMode m) {
 }
 
 // سطل آشغال: هرچه گفته شده و هنوز درج نشده دور می‌رود، شنیدن ادامه دارد.
-// موتور متن خاکستری و صدای پشتش را می‌ریزد؛ اینجا بقیه‌ی خط لوله پاک می‌شود.
-// حالت جمع فرق دارد: آنجا متن قطعی داخل ادیتور خودِ کاربر است و دست‌کارش نمی‌کنیم،
-// چون کاربر همان‌جا می‌تواند ویرایشش کند. متن درج‌شده هم برنمی‌گردد، چون از دست ما
-// خارج شده. `sessions/` هم خام و کامل می‌ماند: آن دفتر است، خروجی نیست.
+// این تنها جایی است که رونوشت حق دارد کوتاه شود، و دقیقا تا جایی که واقعا درج شده.
+// متنِ درج‌شده برنمی‌گردد، چون از دست ما خارج شده. `sessions/` هم خام و کامل می‌ماند:
+// آن دفتر است، خروجی نیست.
 - (void)dropPending {
     [self.engine dropPending];
-    _interim = @"";
-    // دُم موقتِ حالت کرسر هم «درج‌نشده» حساب می‌شود: هنوز قطعی نشده و مالکش ماییم،
-    // پس سطل آشغال باید از روی صفحه هم برش دارد، نه فقط از صف.
-    [self wipeTail];
-    // پاسخ دیررسِ پاس ویرایشِ در پرواز نباید بعدا بنشیند
-    if (_polishInFlight) _dropNextPolish = YES;
-    [_polishPending removeAllObjects];
+    _enginePending = @"";
+    [_awaiting removeAllObjects];
+    _polishGen++;              // جوابِ دیررسِ پاسِ در پرواز نباید بعدا بنشیند
+    [_ledger dropOwned];       // دُم را از روی صفحه هم بردار، اگر بشود ثابت کرد
+    NSUInteger keep = _mode == ZModeCollect ? _editorStintStart : _ledger.deliveredLength;
     if (_mode == ZModeCollect) {
-        // سطل آشغال یعنی «هرچه گفته‌ام و درج نشده دور برود»، پس متن جمع‌شده‌ی پنل هم
-        // با آن می‌رود. قبلا فقط خاکستری پاک می‌شد و متن سفیدِ ادیتور می‌ماند، که
-        // کاربردی نبود: در حالت جمع هیچ‌چیز درج نشده، پس همه‌اش «درج‌نشده» است.
-        NSUInteger drop = _transcript.count;
+        // در حالت جمع هیچ‌چیز درج نشده، پس همه‌اش «درج‌نشده» است و ادیتور خالی می‌شود
         [_panel clearEditor];
-        [_transcript removeAllObjects];
-        ZLog(@"session: trashed collected text (%lu chunks)", (unsigned long)drop);
-    } else {
-        // این تکه‌ها به ترتیب در _transcript هم نشسته‌اند، پس دقیقا همان تعداد از
-        // دُمش برداشته می‌شود که کپی پایانی هم متن دورریخته را نداشته باشد.
-        NSUInteger drop = _queue.count + _pasteBuf.count;
-        [_queue removeAllObjects];
-        [_pasteBuf removeAllObjects];
-        if (drop > _transcript.count) drop = _transcript.count;
-        if (drop) {
-            [_transcript removeObjectsInRange:NSMakeRange(_transcript.count - drop, drop)];
-        }
     }
+    if (keep < _transcript.length) {
+        [_transcript deleteCharactersInRange:NSMakeRange(keep, _transcript.length - keep)];
+    }
+    [_ledger adoptSink:[self sinkForMode:_mode] delivered:keep];
     ZPlay(ZSoundTrash);
     [_panel flash:@"متن درج‌نشده دور ریخته شد"];
-    [self render];
+    [self sync];
 }
 
 // چرخش حالت وسط کار، بدون گم شدن متن: زنده ← جمع ← کرسر ← زنده.
-// تنها حالتی که متن را پیش خودش نگه می‌دارد جمع است؛ زنده و کرسر هر دو از همان صف
-// و همان مسیر درج می‌خورند، پس بینشان چیزی جابه‌جا نمی‌شود و فقط نمای روی صفحه عوض
-// می‌شود. قرارداد قدیمی سر جایش است و برای حالت تازه هم برقرار: بیرون آمدن از جمع
-// متن را درج می‌کند یا با خودش می‌برد، هیچ‌وقت دور نمی‌ریزد. دور ریختن کار سطل آشغال است.
+// قرارداد قدیمی سر جایش است: بیرون آمدن از جمع متن را درج می‌کند یا با خودش می‌برد،
+// هیچ‌وقت دور نمی‌ریزد. دور ریختن کار سطل آشغال است.
 - (void)toggleMode {
     ZMode next = (ZMode)((_mode + 1) % (ZModeCursor + 1));
-    // از کرسر که بیرون می‌رویم، دُم موقت باید برداشته شود: تکه‌ی قطعیِ همان حرف بعدا
-    // از راه صف می‌آید و اگر دُم بماند، دو بار نوشته می‌شود. مقصد همین حالا جلوست
-    // (کاربر تازه میان‌بر را زده)، پس پاک کردنش امن است.
-    [self wipeTail];
+    NSUInteger delivered = _ledger.deliveredLength;
     if (_mode == ZModeCollect) {
-        // متن جمع‌شده می‌رود همان‌جا که داشتی می‌نوشتی، و یک نسخه هم در کلیپ‌بورد می‌ماند
+        // متنِ جمع‌شده، با ویرایش‌های خودِ کاربر، می‌رود همان‌جا که داشتی می‌نوشتی و
+        // یک نسخه هم در کلیپ‌بورد می‌ماند. رونوشت از همان نقطه‌ای که ادیتور شروع شده
+        // بود با متنِ ویرایش‌شده جایگزین می‌شود، پس دفتر دقیقا همان را تحویل می‌دهد.
         NSString *t = [[_panel editorText] stringByTrimmingCharactersInSet:
                        NSCharacterSet.whitespaceAndNewlineCharacterSet];
         [_panel clearEditor];
-        if (t.length) {
-            [_queue addObject:t];
-            [ZInjector copyFinal:t];
-        }
+        NSUInteger cut = MIN(_editorStintStart, _transcript.length);
+        [_transcript setString:ZJoinText([_transcript substringToIndex:cut], t)];
+        delivered = cut;
+        if (t.length) [ZInjector copyFinal:t];
     }
     _mode = next;
     ZSettings.shared.mode = next;
-    if (next == ZModeCollect) {
-        // صفِ تایپ‌نشده می‌رود در ادیتور، دنبال هرچه از قبل آنجا بود.
-        // clearEditor اینجا نبود و نباید باشد: متن دور قبلی را می‌شست.
-        NSString *q = [[_queue arrayByAddingObjectsFromArray:_pasteBuf]
-                       componentsJoinedByString:@" "];
-        [_queue removeAllObjects];
-        [_pasteBuf removeAllObjects];
-        if (q.length) [_panel appendFinalToEditor:q];
-    }
+    if (next == ZModeCollect) _editorStintStart = delivered;
     [self applyModeChrome];
-    // بعد از عوض شدن حالت، نه قبلش: pump خودش حالت جمع را رد می‌کند و متن جمع‌شده‌ی
-    // بالا باید با حالت تازه سنجیده شود. مقصد جلو نبود؟ در صف می‌ماند.
-    [self pump];
+    [_ledger adoptSink:[self sinkForMode:next] delivered:delivered];
     ZPlay(ZSoundMode);
     ZLog(@"session: mode -> %@", ZModeSlug(next));
     [_panel flash:[@"حالت: " stringByAppendingString:ZModeLabel(next)]];
-    [self render];
+    [self sync];
 }
 
 // پنل و نشانگر دقیقا یکی‌شان دیده می‌شود، هیچ‌وقت هر دو: قرار حالت کرسر این است که
@@ -1184,9 +1154,9 @@ static NSString *ZModeLabel(ZMode m) {
     }
 }
 
-// چرخش زبان. موتور خودش استریم را با زبان تازه ری‌استارت می‌کند و متن خاکستری را
-// قبلش نجات می‌دهد، پس چیزی از دست نمی‌رود. پاس فارسی روی انگلیسی خودبه‌خود کنار
-// می‌ایستد (هم روی زبان سشن، هم روی نبودن حرف فارسی در تکه).
+// چرخش زبان. موتور خودش استریم را با زبان تازه ری‌استارت می‌کند و متن معلق را قبلش
+// قطعی می‌کند، پس چیزی از دست نمی‌رود. پاس فارسی روی انگلیسی خودبه‌خود کنار می‌ایستد
+// (هم روی زبان سشن، هم روی نبودن حرف فارسی در تکه).
 - (void)switchLang {
     NSString *next = [ZSettings.shared.lang hasPrefix:@"en"] ? @"fa-IR" : @"en-US";
     ZSettings.shared.lang = next;
@@ -1214,7 +1184,13 @@ static NSString *ZModeLabel(ZMode m) {
             __strong typeof(ws) s = ws;
             if (!s) return;
             NSString *t = out.length ? out : raw;
-            if (![t isEqualToString:raw]) [s->_panel setEditorText:t];
+            if (![t isEqualToString:raw]) {
+                [s->_panel setEditorText:t];
+                // ادیتور از زیر دستِ دفتر عوض شد؛ رونوشت و دفتر باید با آن هم‌تراز شوند
+                NSUInteger cut = MIN(s->_editorStintStart, s->_transcript.length);
+                [s->_transcript setString:ZJoinText([s->_transcript substringToIndex:cut], t)];
+                [s->_ledger adoptSink:[s sinkForMode:s->_mode] delivered:s->_transcript.length];
+            }
             done(t);
         });
     });
@@ -1237,10 +1213,11 @@ static NSString *ZModeLabel(ZMode m) {
 // Command راست + I یا دکمه «درج در همین اپ»: هرچه هست، سر کرسر همین اپ جلویی
 - (void)insertHere {
     _target = NSWorkspace.sharedWorkspace.frontmostApplication;
+    _caretSink.target = _target;
     if (_mode == ZModeCollect) {
         if (![_panel editorText].length) return;
-        // V درج می‌کند ولی سشن را نمی‌بندد: ادیتور خالی می‌شود و می‌توانی ادامه بدهی.
-        // بستن کار Esc است. قبلا هر دو یک کار می‌کردند و V هم پنل را می‌بست.
+        // I درج می‌کند ولی سشن را نمی‌بندد: ادیتور خالی می‌شود و می‌توانی ادامه بدهی.
+        // بستن کار Esc است.
         __weak typeof(self) ws = self;
         [self withPolishedCollected:^(NSString *text) {
             __strong typeof(ws) s = ws;
@@ -1248,18 +1225,21 @@ static NSString *ZModeLabel(ZMode m) {
             [s injectText:[text stringByAppendingString:@" "]];
             [ZInjector copyFinal:text];    // بیمه: هرچه درج شد در کلیپ‌بورد هم می‌ماند
             [s->_panel clearEditor];
+            // متن رفت بیرون؛ ادیتور از صفر شروع می‌کند و دفتر هم با آن
+            s->_editorStintStart = s->_transcript.length;
+            [s->_ledger adoptSink:[s sinkForMode:s->_mode] delivered:s->_transcript.length];
             ZPlay(ZSoundInsert);
             [s->_panel flash:@"درج شد؛ می‌توانی ادامه بدهی"];
             [s render];
         }];
         return;
     }
-    // زنده و کرسر: صف همین‌جا خالی می‌شود. صدا فقط وقتی واقعا چیزی رفت، وگرنه زدن V
-    // روی صف خالی (یا وقتی مقصد جلو نیست و صف سر جایش می‌ماند) دروغ می‌گفت. در حالت
-    // کرسر پنلی نیست که چیپ صف را نشان بدهد، پس همین صدا تنها خبر است.
-    BOOL had = _queue.count > 0;
-    [self pump];
-    if (had && !_queue.count) {
+    // زنده و کرسر: هرچه در دفتر مانده همین‌جا می‌رود. صدا فقط وقتی واقعا چیزی رفت،
+    // وگرنه زدنش روی دفتر خالی دروغ می‌گفت. در حالت کرسر پنلی نیست که چیپ صف را
+    // نشان بدهد، پس همین صدا تنها خبر است.
+    BOOL had = _ledger.undelivered > 0;
+    [_ledger flushNow];
+    if (had && _ledger.undelivered == 0) {
         ZPlay(ZSoundInsert);
         [_panel flash:@"درج شد"];
     }
@@ -1275,40 +1255,6 @@ static NSString *ZModeLabel(ZMode m) {
     }
 }
 
-// ---------- تسمه‌نقاله ----------
-
-- (BOOL)targetIsFront {
-    NSRunningApplication *f = NSWorkspace.sharedWorkspace.frontmostApplication;
-    return _target && f && _target.processIdentifier == f.processIdentifier;
-}
-
-- (void)pump {
-    if (_mode == ZModeCollect || !_queue.count) return;
-    if (![ZInjector accessibilityOK] || ![self targetIsFront] || [ZInjector secureInputActive]) return;
-    NSString *chunk = [[_queue componentsJoinedByString:@" "] stringByAppendingString:@" "];
-    [_queue removeAllObjects];
-    if ([ZSettings.shared insertModeForBundleId:_target.bundleIdentifier] == ZInsertType) {
-        [_injector type:chunk delayMicros:ZSettings.shared.typeDelayMicros];
-    } else {
-        // ادغام تکه‌ها با تایمر کوتاه: پیست‌های کمتر، برای RDP امن‌تر
-        [_pasteBuf addObject:chunk];
-        [_pasteTimer invalidate];
-        __weak typeof(self) ws = self;
-        _pasteTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:NO block:^(NSTimer *t) {
-            [ws flushPasteBuf];
-        }];
-    }
-}
-
-- (void)flushPasteBuf {
-    [_pasteTimer invalidate];
-    _pasteTimer = nil;
-    if (!_pasteBuf.count) return;
-    NSString *text = [_pasteBuf componentsJoinedByString:@""];
-    [_pasteBuf removeAllObjects];
-    [_injector paste:text delayMicros:ZSettings.shared.pasteDelayMicros];
-}
-
 // ---------- پایان (Esc یا دابل‌تپ دوباره) ----------
 
 // حالت جمع پاس ویرایش را به تعویق انداخته بود؛ سر پایان یک بار اجرا می‌شود و بعد
@@ -1317,8 +1263,6 @@ static NSString *ZModeLabel(ZMode m) {
 // آنجا اپ دارد بسته می‌شود و از دست دادن پاس مهم نیست، از دست دادن متن مهم است.
 - (void)finish {
     if (_finished || _finishing) return;
-    // V بعد از درج ادیتور را خالی می‌کند، پس همین «خالی نبودن» گارد کافی است و
-    // _collectInserted لازم نیست: متن درج‌شده دیگر اینجا نیست.
     if (_mode == ZModeCollect && ZSettings.shared.polishEnabled && [_panel editorText].length) {
         _finishing = YES;
         __weak typeof(self) ws = self;
@@ -1337,51 +1281,41 @@ static NSString *ZModeLabel(ZMode m) {
     if (_finished) return;
     _finished = YES;
     _finishing = NO;
-    if (_polishBusy) {
-        // تکه در پرواز: خامش برمی‌گردد سر صف که همین حالا درج شود؛ جواب دیرِ پاس دور ریخته می‌شود
-        _dropNextPolish = YES;
-        if (_polishInFlight) [_polishPending insertObject:_polishInFlight atIndex:0];
-        _polishInFlight = nil;
-        _polishBusy = NO;
-    }
-    [self.engine stop];    // موتور قبل از بستن salvage می‌کند و finalها همین‌جا می‌رسند
-    // هرچه در خط لوله پاس مانده، بدون معطلی خام پذیرفته می‌شود
+    [self.engine stop];    // موتور قبل از بستن هرچه معلق دارد را قطعی می‌کند
+    // هرچه در صف پاس مانده، بدون معطلی خام قطعی می‌شود (شرط _finished بالا)
+    _polishBusy = NO;
     [self drainPolish];
-    // اگر دُمی از salvage جان سالم برد (یعنی موتور دست‌خالی بست)، همان‌جا سر کرسر
-    // می‌ماند و دیگر مال کاربر است؛ فقط مالکیتش را رها می‌کنیم
-    if (_tail.length) {
-        [_transcript addObject:_tail];
-        _tail = @"";
-    }
-    [self flushPasteBuf];
-    // پایان: در حالت زنده باقی صف، در حالت جمع کل متن ادیتور؛ اگر مقصد جلوست درج
-    // می‌شود، وگرنه کپیِ زیر همین تابع نجاتش می‌دهد. اگر Command راست + I یا دکمه درج قبلا درج کرده
-    if (_mode == ZModeCollect) {
-        NSString *t = [_panel editorText];
-        if (t.length && [self targetIsFront]) {
-            [self injectText:[t stringByAppendingString:@" "]];
+    // آخرین تحویل، بی‌معطلیِ سقفِ زمانی. مقصد جلو نباشد، متن در دفتر می‌ماند و
+    // کپیِ پایانی نجاتش می‌دهد.
+    if (_mode != ZModeCollect) {
+        [_ledger flushNow];
+        if (_ledger.undelivered) {
+            ZLog(@"session: %lu chars never reached the target, clipboard holds them",
+                 (unsigned long)_ledger.undelivered);
         }
-    } else if (_queue.count && [self targetIsFront]) {
-        [self injectText:[[_queue componentsJoinedByString:@" "] stringByAppendingString:@" "]];
-        [_queue removeAllObjects];
+    } else if ([_panel editorText].length && [self targetIsFront]) {
+        [self injectText:[[_panel editorText] stringByAppendingString:@" "]];
     }
     // بیمه: کل متن سشن، یک بار، ماندگار در کلیپ‌بورد؛ پشتِ صف درج که با پیست مسابقه نگیرد
-    NSString *full = _mode == ZModeCollect
-        ? [_panel editorText]
-        : [[_transcript componentsJoinedByString:@" "]
-           stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSString *full = [self fullText];
     if (full.length) [_injector copyFinalAfterPending:full];
     ZPlay(ZSoundFinish);
     if (_frontObserver) [NSWorkspace.sharedWorkspace.notificationCenter removeObserver:_frontObserver];
     _frontObserver = nil;
     [_panel hide];
     [_dot hide];    // تایمر دنبال‌کردن کرسر همین‌جا می‌ایستد، نه یک تیک بعد
-    ZLog(@"session: finished, %lu chunks, %lu chars copied",
-         (unsigned long)_transcript.count, (unsigned long)full.length);
+    ZLog(@"session: finished, %lu chars, ledger %@",
+         (unsigned long)full.length, _ledger.stats.summary);
+    ZEventLogStop();
     if (self.onFinish) self.onFinish();
 }
 
 // ---------- کمکی ----------
+
+- (BOOL)targetIsFront {
+    NSRunningApplication *f = NSWorkspace.sharedWorkspace.frontmostApplication;
+    return _target && f && _target.processIdentifier == f.processIdentifier;
+}
 
 - (void)appendToSessionFile:(NSString *)chunk {
     NSData *d = [[chunk stringByAppendingString:@"\n"] dataUsingEncoding:NSUTF8StringEncoding];
@@ -1399,16 +1333,21 @@ static NSString *ZModeLabel(ZMode m) {
 
 - (void)render {
     ZPanelModel *m = [ZPanelModel new];
-    m.interim = _interim;
+    // در حالت جمع، دُم خاکستری داخل ادیتور نشسته، پس نوار پایین آن را دوباره نشان
+    // نمی‌دهد. در دو حالت دیگر نوار تنها جای دیدنش است.
+    m.interim = _mode == ZModeCollect ? @"" : ZJoinText([_awaiting componentsJoinedByString:@" "],
+                                                        _enginePending);
     m.status = _statusText;
-    m.queued = (NSInteger)(_queue.count + _pasteBuf.count);
+    // چیپ صف از خودِ دفتر عدد می‌گیرد: «درج‌نشده» یعنی همان چیزی که دفتر نتوانسته
+    // تحویل بدهد، نه یک شمارنده‌ی جدا که می‌تواند واگرا شود.
+    m.queued = (NSInteger)_ledger.undelivered;
     m.listening = _listening;
     m.paused = self.engine.paused;
     m.error = _errorState;
     m.trouble = _troubleState;
     m.lang = ZSettings.shared.lang;
     m.mode = _mode;
-    m.waitingForTarget = _mode != ZModeCollect && _queue.count > 0 && ![self targetIsFront];
+    m.waitingForTarget = _mode != ZModeCollect && _ledger.undelivered > 0 && ![self targetIsFront];
     m.targetName = _target.localizedName ?: @"";
     // در حالت کرسر پنل پنهان است؛ رندر کردنش یعنی قد کشیدن و چیدن یک پنجره‌ی نادیده
     if (_mode == ZModeCursor) [_dot render:m];

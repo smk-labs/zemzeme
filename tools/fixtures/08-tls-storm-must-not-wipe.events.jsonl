@@ -1,0 +1,14 @@
+{"k": "note", "text": "row 8: a TLS storm (12 closes in 4s). Salvage with nothing to deliver must not wipe the screen"}
+{"k": "final", "text": "این جمله باید سر جایش بماند", "weld": false}
+{"k": "interim", "text": "و این دم", "weld": false}
+{"k": "rotate", "carry": "و این دم"}
+{"k": "drainend"}
+{"k": "rotate", "carry": ""}
+{"k": "drainend"}
+{"k": "rotate", "carry": ""}
+{"k": "drainend"}
+{"k": "rotate", "carry": ""}
+{"k": "drainend"}
+{"k": "rotate", "carry": ""}
+{"k": "drainend"}
+{"k": "expect", "text": "این جمله باید سر جایش بماند و این دم"}

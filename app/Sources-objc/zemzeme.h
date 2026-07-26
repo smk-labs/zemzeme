@@ -107,9 +107,17 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
     ZEnginePaused,
 };
 
+// موتور یک رونوشتِ یکنواخت می‌دهد، نه تکه‌های مستقل. قرارداد قبلی دو کانال بود
+// (engineInterim: و engineFinal:) و مصرف‌کننده باید خودش می‌چسباندشان؛ هر جا حاصلِ
+// چسباندن با واقعیتِ روی صفحه فرق می‌کرد یک باگ تازه بیرون می‌زد. حالا یک کانال است:
+//
+//   committed  متنی که دیگر هیچ‌وقت عوض نمی‌شود. فقط رشد می‌کند و پیشوندش قفل است.
+//   pending    دُمِ ناپایدار. هر لحظه می‌تواند بازنویسی یا کوتاه شود.
+//
+// چرخش سشن، گیر کردن، نجات و بازپخش همه پشت همین قرارداد حل می‌شوند: بیرون هیچ‌کس
+// از وجودشان خبر ندارد و هیچ‌کدام نمی‌توانند متنِ قطعی‌شده را پس بگیرند.
 @protocol ZEngineDelegate <NSObject>
-- (void)engineInterim:(NSString *)text;                          // کل متن خاکستری فعلی
-- (void)engineFinal:(NSString *)text;                            // یک تکه قطعی
+- (void)engineDidUpdateCommitted:(NSString *)committed pending:(NSString *)pending;
 - (void)engineState:(ZEngineState)state message:(NSString *)msg; // پیام فقط برای GaveUp
 - (void)engineLevel:(float)rms;                                  // ۰ تا ۱ برای ضربان
 @end
@@ -171,6 +179,26 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 // بودجه‌ی سرور همان است: استریمی که با ۸ ثانیه بازپخش شروع شود فقط ~۱۶ ثانیه حرفِ
 // تازه جا دارد. همین یکی را کد رعایت نمی‌کرد و همان استریم ۳۰٫۱ ثانیه صدا خورد.
 #define kZRotateHardSec 24.0
+
+// ---------- رونوشت ----------
+// قلبِ لایه‌ی یک، جدا از شبکه و صدا. موتور فقط «چه شنیدم» را می‌گوید؛ این تصمیم
+// می‌گیرد رونوشت چه شکلی درمی‌آید. جدا بودنش شرطِ تست است: تا وقتی این منطق لای
+// موتور بود، هیچ تستی مسیر زنده را نمی‌دوید و پنج دور وصله از همان‌جا شکست خورد.
+// حالا بازپخش (`zemzeme --replay`) دقیقا همین را بی‌میکروفن و بی‌شبکه می‌دواند.
+// تعریفش پایین‌تر از ثابت‌های چرخش می‌آید، چون پنجره‌ی پیش‌فرضِ جوش از همان‌ها می‌آید.
+@interface ZTranscript : NSObject
+@property (nonatomic, readonly) NSString *committed;   // فقط رشد می‌کند، پیشوند قفل
+@property (nonatomic, readonly) NSString *pending;     // دُمِ ناپایدار
+@property (nonatomic, readonly) BOOL draining;
+@property (nonatomic) NSUInteger weldWords;            // پنجره‌ی جوش، از ثانیه‌های هم‌پوشانی
+- (void)setInterim:(NSString *)interim;
+- (void)addFinal:(NSString *)text weld:(BOOL)weld;
+- (void)beginDrainWithCarry:(NSString *)carry;   // سر چرخش سشن
+- (void)drainFinal:(NSString *)text;             // سشن قدیمی متن قطعی داد
+- (void)endDrain;                                // تخلیه بسته شد
+- (void)dropPending;
+@end
+
 
 // حرف می‌زند و این‌قدر ثانیه هیچ نتیجه‌ای نمی‌آید: استریم مرده، ولی فریم می‌فرستد.
 // واچ‌داگ قدیمی «سکوت رویداد» این حالت را نمی‌دید، چون فریم endpointer/status می‌آمد.
@@ -237,6 +265,14 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 @end
 
 // ---------- درج ----------
+// چطور ثابت شد که پاک کردن امن است. شمارنده‌ها همین را می‌شمارند و معیار پذیرش از
+// همین‌جا ثابت می‌شود: تعداد جایگزینی‌ها باید دقیقا برابر مجموع دو مدرک باشد.
+typedef NS_ENUM(NSInteger, ZWriteProof) {
+    ZProofNone = 0,     // ثابت نشد. هیچ‌چیز پاک نشد
+    ZProofRead,         // متن واقعی خوانده و با انتظار تطبیق داده شد
+    ZProofUntouched,    // اپ خواندن نمی‌دهد، ولی از آخرین نوشتنِ ما کسی دست نزده
+};
+
 @interface ZInjector : NSObject
 + (BOOL)accessibilityOK;
 + (void)promptAccessibility;
@@ -249,6 +285,15 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 // n فقط نویسه‌های تایپ‌شده‌ی خودمان است؛ متن کاربر از این راه پاک نمی‌شود.
 - (void)replaceLast:(NSUInteger)n with:(NSString *)text delayMicros:(useconds_t)d;
 - (void)copyFinalAfterPending:(NSString *)text;         // پشت صف درج، که مسابقه با پیست نگیرد
+// همان type: ولی با خبرِ «نشست»، چون دفتر تا نشستنِ یک عملیات، عملیات بعدی را نمی‌فرستد
+- (void)type:(NSString *)text delayMicros:(useconds_t)d done:(void (^)(void))done;
+// جایگزینیِ تاییدشده. `expected` باید همین حالا واقعا دمِ متن باشد؛ اگر نبود هیچ‌چیز
+// پاک نمی‌شود و ZProofNone برمی‌گردد. مسیر ترجیحی یک عملِ اکسسبیلیتی است (رنجِ انتخاب
+// را می‌گذارد و متن را می‌نویسد): بی Backspace، بی رویداد مصنوعی، بی خطر مودیفایر.
+// اپی که نوشتنِ AX را نپذیرد به همان مسیر کلیدی می‌افتد، ولی فقط روی ناحیه‌ی تاییدشده.
+- (void)replaceLast:(NSUInteger)n expecting:(NSString *)expected with:(NSString *)text
+        delayMicros:(useconds_t)d pid:(pid_t)pid
+               done:(void (^)(ZWriteProof proof, BOOL viaAX))done;
 @end
 
 // ---------- تپ کیبورد سراسری: Esc و همه‌ی کارهای Command راست ----------
@@ -300,6 +345,106 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 + (void)shot:(NSString *)dir;    // cheatsheet.png برای بازبینی طراحی (--uishot)
 @end
 
+// ---------- دفتر متن و مقصدها ----------
+// جای هر دوی `_tail` (حالت کرسر) و `_greyLen` (حالت جمع) و صفِ تکه‌های درج‌نشده.
+// آن سه، سه دفترِ جدا بودند که هر سه ادعا می‌کردند می‌دانند روی صفحه چه نوشته شده و
+// هیچ‌کدام هیچ‌وقت نگاه نمی‌کرد. این یکی نگاه می‌کند.
+
+// چطور دو تکه متن به هم می‌چسبند. یک منبع، چون اگر موتور و دفتر جداگانه بچسبانند،
+// همان یک فاصله‌ی اختلاف کل دیفِ پیشوندی را می‌شکند و یک عملیات مخربِ الکی می‌سازد.
+NSString *ZJoinText(NSString *a, NSString *b);
+
+@class ZLedgerStats;
+
+typedef NS_ENUM(NSInteger, ZSinkResult) {
+    ZSinkOK = 0,        // نشست
+    ZSinkUnavailable,   // مقصد الان نمی‌تواند بنویسد (جلو نیست، اجازه نیست). دوباره تلاش می‌شود
+    ZSinkDisowned,      // نشد ثابت کنیم دُم هنوز مال ماست. رهایش کن و فقط اضافه کن
+};
+
+// مقصد متن. سه پیاده‌سازی دارد و حالت‌های دیکته فقط در همین انتخاب فرق می‌کنند:
+// ZCaretSink (زنده و کرسر)، ZEditorSink (جمع)، ZMemorySink (تست و بازپخش).
+//
+// کال‌بک‌ها آسنکرون‌اند چون مسیر واقعیِ درج آسنکرون است (صف سریالِ ZInjector) و
+// خواندنِ تاییدی باید *بعد* از خالی شدن آن صف انجام شود، نه قبلش. نسخه‌ی همگام
+// می‌توانست done را همان‌جا صدا بزند؛ دفتر هر دو را تحمل می‌کند.
+@protocol ZTextSink <NSObject>
+// دُمِ ناپایدار هم نوشته شود یا نه. حالت زنده «نه» می‌گوید و همین یک بولین است که
+// آنجا را ذاتا بدون هیچ عملیات مخربی نگه می‌دارد.
+- (BOOL)rendersPending;
+// اصلا می‌شود چیزی را که نوشته‌ایم بازنویسی کرد؟ مسیر پیست «نه» می‌گوید.
+- (BOOL)canRewrite;
+- (void)appendText:(NSString *)text done:(void (^)(ZSinkResult r))done;
+// n همیشه بزرگ‌تر از صفر است. `expected` دقیقا همان رشته‌ای است که دفتر باور دارد
+// آنجاست؛ مقصد **موظف است** پیش از پاک کردن ثابتش کند و اگر نتوانست ZSinkDisowned
+// برگرداند. قاعده در امضا نوشته شده، نه در نیت: هیچ‌وقت روی حدس پاک نکن.
+- (void)replaceLast:(NSUInteger)n expecting:(NSString *)expected with:(NSString *)text
+               done:(void (^)(ZSinkResult r))done;
+@optional
+// طول دُمِ ناپایدار، فقط برای رنگ. از خودِ دفتر می‌آید، پس شمارنده‌ی دومی نیست.
+- (void)markPendingLength:(NSUInteger)n;
+// دفتر شمارنده‌هایش را به مقصد قرض می‌دهد، چون «چطور تایید شد» را فقط مقصد می‌داند.
+- (void)useStats:(ZLedgerStats *)stats;
+@end
+
+// شمارنده‌ها. معیار پذیرش با همین‌ها ثابت می‌شود، نه با ادعا:
+// replaces == verifiedByRead + verifiedByEpoch یعنی هیچ Backspace بی‌پشتوانه نرفته.
+@interface ZLedgerStats : NSObject
+@property (nonatomic) NSUInteger appends;
+@property (nonatomic) NSUInteger replaces;
+@property (nonatomic) NSUInteger verifiedByRead;    // متن واقعی خوانده و تطبیق داده شد
+@property (nonatomic) NSUInteger verifiedByEpoch;   // از آخرین نوشتنِ ما هیچ‌کس دست نزده
+@property (nonatomic) NSUInteger disowns;           // مالکیت رها شد، متن دست‌نخورده ماند
+@property (nonatomic) NSUInteger unavailable;       // مقصد جلو نبود؛ متن در دفتر ماند
+@property (nonatomic) NSUInteger axReads;
+- (NSString *)summary;
+@end
+
+@interface ZTextLedger : NSObject
+- (instancetype)initWithSink:(id<ZTextSink>)sink;
+@property (nonatomic, strong, readonly) id<ZTextSink> sink;
+@property (nonatomic, strong, readonly) ZLedgerStats *stats;
+// نویسه‌هایی از committed که هنوز به مقصد نرسیده‌اند (چیپ صف از همین می‌خواند)
+@property (nonatomic, readonly) NSUInteger undelivered;
+@property (nonatomic, readonly) NSUInteger ownedLength;
+// چند نویسه از committed واقعا به مقصد رسیده. سطل آشغال از این می‌خواند: «درج‌نشده»
+// یعنی هرچه بعد از این عدد است، و تنها جایی است که کوتاه کردنِ رونوشت مجاز است.
+@property (nonatomic, readonly) NSUInteger deliveredLength;
+// سقف زمانی بین بروزرسانی‌های دُم؛ صفر یعنی بی‌سقف. تست و بازپخش صفرش می‌کنند تا هم
+// قطعی باشند هم بدترین حالت را بسنجند: بی این سقف، تعداد عملیات بیشترین مقدار ممکن است.
+@property (nonatomic) NSTimeInterval pendingThrottle;
+// سقفِ زمانیِ بروزرسانی دُم. تغییرِ committed از آن رد می‌شود (تکه‌ی قطعی حق ندارد
+// پشت throttle بماند)، تغییرِ pending نه.
+- (void)applyCommitted:(NSString *)committed pending:(NSString *)pending;
+// عوض کردن مقصد سر چرخش حالت. delivered یعنی «این‌قدر از رونوشت قبلا تحویل شده و
+// نباید دوباره نوشته شود»؛ سشن نگهش می‌دارد چون فقط او می‌داند متن کجا رفته.
+- (void)adoptSink:(id<ZTextSink>)sink delivered:(NSUInteger)delivered;
+- (void)disown;         // دُم دیگر مال ما نیست؛ متنِ کاربر شد. هیچ‌چیز پاک نمی‌شود
+- (void)dropOwned;      // سطل آشغال: دُم را از روی صفحه هم بردار، اگر بشود ثابت کرد
+- (void)flushNow;       // بی‌معطلیِ throttle، هرچه در دفتر مانده برود (سر درج و پایان)
+@end
+
+// مقصدِ در حافظه: رشته‌ای ساده. بازپخش و تست‌ها از این می‌خوانند، پس مسیر واقعی
+// بی‌میکروفن و بی‌شبکه قابل سنجش است. `hostile` یعنی مقصدی که رویداد می‌اندازد و
+// متن را زیر پای ما عوض می‌کند، برای اثبات اینکه هیچ‌وقت متنِ غیرِ خودمان پاک نشود.
+@interface ZMemorySink : NSObject <ZTextSink>
+@property (nonatomic, readonly) NSMutableString *text;
+@property (nonatomic) BOOL rendersPendingFlag;
+@property (nonatomic) BOOL rewritable;
+@property (nonatomic) BOOL readable;      // نه: تاییدِ خواندنی ندارد (مثل ریموت دسکتاپ)
+@property (nonatomic) BOOL available;     // نه: مقصد جلو نیست (اپ عوض شده)
+@property (nonatomic, readonly) NSArray<NSString *> *ops;   // تاریخچه، برای ادعاهای تست
+- (void)userTyped:(NSString *)s;          // دخالتِ بیرونی، برای تست
+@end
+
+// مقصدِ سر کرسر. حالت زنده و حالت کنار کرسر هر دو از این می‌خورند و تنها فرقشان
+// renderPending است؛ همان یک بولین است که حالت زنده را ذاتا بدون عملیات مخرب نگه می‌دارد.
+@interface ZCaretSink : NSObject <ZTextSink>
+- (instancetype)initWithInjector:(ZInjector *)injector;
+@property (nonatomic) BOOL renderPending;
+@property (nonatomic, strong) NSRunningApplication *target;
+@end
+
 // ---------- پنل ----------
 @interface ZPanelModel : NSObject
 @property (nonatomic, copy) NSString *interim;
@@ -349,6 +494,18 @@ void ZMarkShot(NSString *dir);                  // mark.png برای --uishot
 - (void)pulseLevel:(float)level;
 @end
 
+// عنصر فوکس‌دارِ اپِ جلویی، کش‌شده و با تعویض اپ باطل. دو مصرف دارد و عمدا یک
+// پیاده‌سازی: نشانگر کنار کرسر، و تاییدِ درج پیش از هر پاک کردن. فراخوان CFRelease
+// می‌کند. نال یعنی اپ چیزی نداد و تاییدِ خواندنی ممکن نیست.
+AXUIElementRef ZCopyFocusedElement(pid_t frontPid) CF_RETURNS_RETAINED;
+void ZInvalidateFocusCache(void);
+
+// ورودیِ غیرِ خودمان (کلید کاربر، کلیک). تنها راهِ ثابت کردنِ «کسی دست نزده» در اپی
+// که خواندنِ AX ندارد، مثل ریموت دسکتاپ. رویدادهای خودمان با kCGEventSourceUserData
+// علامت می‌خورند و اینجا حساب نمی‌شوند، وگرنه هر تایپِ خودمان مدرک را باطل می‌کرد.
+void ZNoteForeignInput(void);
+CFAbsoluteTime ZLastForeignInputAt(void);
+
 // ابزار اندازه‌گیری همان نردبان، بی هیچ سشن دیکته‌ای: نردبان یک بار روی اپِ فوکس‌دار
 // اجرا می‌شود و چاپ می‌کند چه صفت‌هایی موجود بود، هر پله چه قابی داد و کدام زد.
 // zemzeme --caretprobe [ثانیه‌ی صبر] [--watch]
@@ -368,14 +525,13 @@ int ZCaretProbeMain(NSArray<NSString *> *args);
 - (void)hide;
 - (void)render:(ZPanelModel *)m;
 - (void)pulseLevel:(float)level;
-// ادیتور حالت جمع: متن قطعی قابل ویرایش داخل خود پنل
-- (void)appendFinalToEditor:(NSString *)chunk;
+// ادیتور حالت جمع: متن قطعی قابل ویرایش داخل خود پنل. مقصدِ متن هم از همین‌جا
+// می‌آید، پس «چطور در ادیتور می‌نویسیم» یک پیاده‌سازی دارد نه دو تا.
+- (id<ZTextSink>)editorSink;
 - (NSString *)editorText;
 - (void)setEditorText:(NSString *)text;
 - (void)clearEditor;
 - (void)flash:(NSString *)msg;    // فیدبک کوتاه کار روی خط وضعیت
-// متن خاکستری دنبال متن سفید در همان ادیتور (حالت جمع)
-- (void)showInterimInEditor:(NSString *)interim;
 - (void)makeShots:(NSString *)dir;
 @end
 
@@ -472,6 +628,19 @@ extern NSNotificationName const ZBatchActivity;
 // می‌خواهد، و سشن‌هایش (pair های تصادفی خودشان) با دیکته‌ی زنده‌ی در جریان قاطی
 // نمی‌شوند. jobs محافظه‌کارانه است که کلید مشترک زیر پای مسیر زنده در نرود.
 int ZBatchMain(NSArray<NSString *> *args);
+
+// ---------- ثبت رویداد و بازپخش ----------
+// ورودیِ خامِ رونوشت روی دیسک، و همان ورودی از همان خط لوله، بی‌میکروفن و بی‌شبکه.
+// ثبت عمدا داخل ZTranscript صدا زده می‌شود، نه لای موتور: چیزی که ضبط می‌شود دقیقا
+// ورودیِ همان کلاسی است که بازپخش می‌دواندش، پس سشنِ ضبط‌شده مو‌به‌مو تکرار می‌شود.
+void ZEventLogStart(NSURL *path);
+void ZEventLogStop(void);
+void ZEventLogWrite(NSDictionary *ev);
+
+// zemzeme --replay <events.jsonl> [--live]
+// مثل --transcribe پیش از ساختن NSApplication برمی‌گردد، پس اپ منوباری در حال اجرا
+// دست‌نخورده می‌ماند و هیچ سشن دیکته‌ای باز نمی‌شود.
+int ZReplayMain(NSArray<NSString *> *args);
 
 // ---------- فونت و سلف‌تست ----------
 void ZRegisterFonts(void);

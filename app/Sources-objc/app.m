@@ -517,6 +517,10 @@ int main(int argc, const char *argv[]) {
         // اندازه‌گیری نردبان کرسر: مثل دو حالت بالا پیش از NSApplication برمی‌گردد، پس
         // اپ منوبارِ در حال اجرا دست نمی‌خورد و هیچ سشن دیکته‌ای باز نمی‌شود.
         if ([args containsObject:@"--caretprobe"]) return ZCaretProbeMain(args);
+        // بازپخشِ یک سشنِ ضبط‌شده از همان خط لوله، با مقصدِ در حافظه. مثل دو حالت
+        // بالا پیش از NSApplication برمی‌گردد: نه اپ در حال اجرا دست می‌خورد، نه
+        // میکروفنی باز می‌شود، نه بایتی روی شبکه می‌رود.
+        if ([args containsObject:@"--replay"]) return ZReplayMain(args);
         NSApplication *app = NSApplication.sharedApplication;
         static ZAppDelegate *delegate;
         delegate = [ZAppDelegate new];

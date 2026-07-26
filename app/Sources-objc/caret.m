@@ -443,9 +443,27 @@ static void ZCaretNote(AXUIElementRef el, pid_t pid, ZCaretHit hit) {
          hit.x, hit.rtl);
 }
 
-// pid از نخ اصلی می‌آید (NSWorkspace را از نخ پس‌زمینه نمی‌خوانیم)
-static ZCaretHit ZFindCaret(pid_t frontPid) {
-    ZCaretHit hit = {ZCaretNone, CGRectZero, NAN, -1, "none"};
+// عنصر فوکس‌دارِ اپِ جلویی. دو مصرف دارد و عمدا یک پیاده‌سازی: نشانگر کنار کرسر
+// (۶ بار در ثانیه) و تاییدِ درج پیش از هر پاک کردن. نردبانِ دومی یعنی دو رفتار واگرا.
+//
+// کش، چون مسیر تایید روی صف درج می‌دود و نباید هر بار کل درخت را بالا بیاورد.
+// باطل می‌شود با: عوض شدن اپ جلویی، خبرِ NSWorkspace، و یک انقضای کوتاه (فوکس داخل
+// همان اپ هم عوض می‌شود و خبری نمی‌دهد). عنصرِ کهنه خطرناک نیست: متنِ خوانده‌شده با
+// آنچه انتظار داریم نمی‌خواند و تایید رد می‌شود، یعنی خطا به سمتِ امن می‌افتد.
+static const NSTimeInterval kZFocusCacheSec = 0.5;
+static AXUIElementRef gFocusCache;
+static pid_t gFocusPid;
+static CFAbsoluteTime gFocusAt;
+
+void ZInvalidateFocusCache(void) {
+    if (gFocusCache) {
+        CFRelease(gFocusCache);
+        gFocusCache = NULL;
+    }
+    gFocusPid = 0;
+}
+
+static AXUIElementRef ZResolveFocused(pid_t frontPid) {
     AXUIElementRef focused = ZCopyElement(ZSystemElement(), kAXFocusedUIElementAttribute);
     if (!focused && frontPid > 0) {
         // عنصر فوکس‌دار را از خودِ اپ هم می‌پرسیم. system-wide گاهی خالی برمی‌گردد
@@ -459,6 +477,36 @@ static ZCaretHit ZFindCaret(pid_t frontPid) {
             CFRelease(app);
         }
     }
+    if (focused) AXUIElementSetMessagingTimeout(focused, kAXTimeout);
+    return focused;
+}
+
+AXUIElementRef ZCopyFocusedElement(pid_t frontPid) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        [NSWorkspace.sharedWorkspace.notificationCenter
+            addObserverForName:NSWorkspaceDidActivateApplicationNotification
+                        object:nil queue:NSOperationQueue.mainQueue
+                    usingBlock:^(NSNotification *n) { ZInvalidateFocusCache(); }];
+    });
+    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+    if (gFocusCache && gFocusPid == frontPid && now - gFocusAt < kZFocusCacheSec) {
+        return (AXUIElementRef)CFRetain(gFocusCache);
+    }
+    ZInvalidateFocusCache();
+    AXUIElementRef el = ZResolveFocused(frontPid);
+    if (el) {
+        gFocusCache = (AXUIElementRef)CFRetain(el);
+        gFocusPid = frontPid;
+        gFocusAt = now;
+    }
+    return el;
+}
+
+// pid از نخ اصلی می‌آید (NSWorkspace را از نخ پس‌زمینه نمی‌خوانیم)
+static ZCaretHit ZFindCaret(pid_t frontPid) {
+    ZCaretHit hit = {ZCaretNone, CGRectZero, NAN, -1, "none"};
+    AXUIElementRef focused = ZResolveFocused(frontPid);
     if (!focused) {
         // پله ۳: پنجره‌ی فوکس‌دارِ خودِ اپ. اپی که عنصر فوکس‌دار نمی‌دهد معمولا این را
         // می‌دهد. سر راه، اگر Chromium خوابیده باشد بیدارش می‌کنیم: تیک بعدی ممکن است
@@ -482,7 +530,6 @@ static ZCaretHit ZFindCaret(pid_t frontPid) {
         ZCaretNote(NULL, frontPid, hit);
         return hit;
     }
-    AXUIElementSetMessagingTimeout(focused, kAXTimeout);
     CGRect elFrame = CGRectZero;
     BOOL haveFrame = ZElementFrame(focused, &elFrame);
 

@@ -1,0 +1,7 @@
+{"k": "note", "text": "row 2: a 0.1s overlap ate the first letter («برای» became «رای»)"}
+{"k": "overlap", "sec": 2.0}
+{"k": "final", "text": "حالا می‌خوام", "weld": false}
+{"k": "rotate", "carry": ""}
+{"k": "drainend"}
+{"k": "final", "text": "برای همه پروژه‌های دیگه این پاس", "weld": true}
+{"k": "expect", "text": "حالا می‌خوام برای همه پروژه‌های دیگه این پاس"}

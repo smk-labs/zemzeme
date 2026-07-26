@@ -1,11 +1,23 @@
 // درج متن (تایپ یونیکد / پیست تکه‌ای) و تپ‌های کیبورد (Esc و دابل‌تپ Command راست).
 #import "zemzeme.h"
 #import <Carbon/Carbon.h>
+#import <ApplicationServices/ApplicationServices.h>
+
+// ---------- ورودیِ غیرِ خودمان ----------
+// رویدادهای ساختگیِ ما این برچسب را می‌گیرند. بی آن، تپِ سراسری تایپِ خودمان را هم
+// «کاربر دست زد» می‌دید و مدرکِ سطح دو هیچ‌وقت معتبر نمی‌ماند.
+static const int64_t kZOurEventTag = 0x7A656D32;    // "zem2"
+
+static CFAbsoluteTime gLastForeignInputAt;
+
+void ZNoteForeignInput(void) { gLastForeignInputAt = CFAbsoluteTimeGetCurrent(); }
+CFAbsoluteTime ZLastForeignInputAt(void) { return gLastForeignInputAt; }
 
 // ---------- ZInjector ----------
 
 @implementation ZInjector {
     dispatch_queue_t _q;
+    CFAbsoluteTime _lastWriteAt;   // مرجعِ مدرکِ سطح دو: از این لحظه به بعد کسی دست زد؟
 }
 
 - (instancetype)init {
@@ -56,6 +68,7 @@ static const useconds_t kZTypeMinDelay = 6000;
 static void zPostPlain(CGEventRef e) {
     if (!e) return;
     CGEventSetFlags(e, 0);
+    CGEventSetIntegerValueField(e, kCGEventSourceUserData, kZOurEventTag);
     CGEventPost(kCGSessionEventTap, e);
     CFRelease(e);
 }
@@ -72,6 +85,10 @@ static void zPostUnicode(const UniChar *units, NSUInteger n) {
 // تایپ مستقیم: تکه‌های حداکثر ۱۸ واحد UTF-16 در هر رویداد؛
 // چون پنل فوکس نمی‌گیرد، متن دقیقا سر کرسرِ اپ مقصد می‌نشیند.
 - (void)type:(NSString *)text delayMicros:(useconds_t)d {
+    [self type:text delayMicros:d done:nil];
+}
+
+- (void)type:(NSString *)text delayMicros:(useconds_t)d done:(void (^)(void))done {
     NSData *utf16 = [text dataUsingEncoding:NSUTF16LittleEndianStringEncoding];
     useconds_t td = MAX(d, kZTypeMinDelay);
     dispatch_async(_q, ^{
@@ -85,7 +102,122 @@ static void zPostUnicode(const UniChar *units, NSUInteger n) {
             usleep(td);
             i += n;
         }
+        self->_lastWriteAt = CFAbsoluteTimeGetCurrent();
+        if (done) dispatch_async(dispatch_get_main_queue(), done);
     });
+}
+
+// ---------- جایگزینیِ تاییدشده ----------
+// قاعده‌ی سفت: هیچ Backspace ای بی مدرک نمی‌رود. مدرک یا خواندنِ متن واقعی است، یا
+// (در اپی که خواندن نمی‌دهد) این‌که از آخرین نوشتنِ ما هیچ ورودیِ غیرِ خودمان نیامده.
+
+static CFRange zSelectedRange(AXUIElementRef el, BOOL *ok) {
+    *ok = NO;
+    CFRange r = {0, 0};
+    CFTypeRef v = NULL;
+    if (AXUIElementCopyAttributeValue(el, kAXSelectedTextRangeAttribute, &v) != kAXErrorSuccess
+        || !v) return r;
+    if (CFGetTypeID(v) == AXValueGetTypeID()
+        && AXValueGetValue((AXValueRef)v, kAXValueCFRangeType, &r)) *ok = YES;
+    CFRelease(v);
+    return r;
+}
+
+static NSString *zStringForRange(AXUIElementRef el, CFRange range) {
+    AXValueRef rv = AXValueCreate(kAXValueCFRangeType, &range);
+    if (!rv) return nil;
+    CFTypeRef out = NULL;
+    AXError e = AXUIElementCopyParameterizedAttributeValue(
+        el, kAXStringForRangeParameterizedAttribute, rv, &out);
+    CFRelease(rv);
+    if (e != kAXErrorSuccess || !out) return nil;
+    NSString *s = CFGetTypeID(out) == CFStringGetTypeID() ? [(__bridge NSString *)out copy] : nil;
+    CFRelease(out);
+    return s;
+}
+
+static BOOL zSetSelectedRange(AXUIElementRef el, CFRange range) {
+    AXValueRef rv = AXValueCreate(kAXValueCFRangeType, &range);
+    if (!rv) return NO;
+    AXError e = AXUIElementSetAttributeValue(el, kAXSelectedTextRangeAttribute, rv);
+    CFRelease(rv);
+    return e == kAXErrorSuccess;
+}
+
+- (void)replaceLast:(NSUInteger)n expecting:(NSString *)expected with:(NSString *)text
+        delayMicros:(useconds_t)d pid:(pid_t)pid
+               done:(void (^)(ZWriteProof proof, BOOL viaAX))done {
+    // روی همان صف سریالِ درج، پس هرچه قبلا فرستاده‌ایم نشسته و خواندن با واقعیت
+    // می‌خواند. خواندنِ AX پیش از خالی شدن این صف، متنِ یک لحظه قبل را می‌داد.
+    dispatch_async(_q, ^{
+        BOOL viaAX = NO;
+        ZWriteProof proof = ZProofNone;
+        AXUIElementRef el = ZCopyFocusedElement(pid);
+        if (el) {
+            BOOL haveSel = NO;
+            CFRange sel = zSelectedRange(el, &haveSel);
+            // انتخابِ باز یعنی کاربر چیزی را نشان کرده؛ دست زدن به آن کارِ ما نیست
+            if (haveSel && sel.length == 0 && sel.location >= (CFIndex)n) {
+                CFRange tail = {sel.location - (CFIndex)n, (CFIndex)n};
+                NSString *actual = zStringForRange(el, tail);
+                if (actual && [actual isEqualToString:expected]) {
+                    proof = ZProofRead;
+                    // یک عمل: رنجِ انتخاب را روی همان دم بگذار و متن تازه را بنویس.
+                    // بی Backspace یعنی نه رویدادی می‌افتد، نه مودیفایرِ همان لحظه
+                    // معنی‌اش را عوض می‌کند، نه شمارشِ دم از واقعیت جدا می‌شود.
+                    if (zSetSelectedRange(el, tail)) {
+                        AXError w = AXUIElementSetAttributeValue(
+                            el, kAXSelectedTextAttribute, (__bridge CFStringRef)text);
+                        if (w == kAXErrorSuccess) {
+                            viaAX = YES;
+                        } else {
+                            // نوشتن نپذیرفت. کرسر را سر جایش برگردان، وگرنه انتخابِ
+                            // باز می‌ماند و اولین Backspace فال‌بک کلِ آن را می‌خورد.
+                            zSetSelectedRange(el, (CFRange){sel.location, 0});
+                        }
+                    }
+                }
+            }
+            CFRelease(el);
+        }
+        if (proof == ZProofNone) {
+            // مدرکِ سطح دو: از آخرین نوشتنِ ما هیچ کلید و کلیکی از کاربر نیامده.
+            // ضعیف‌تر از خواندن است، ولی مدرک است نه حدس، و تنها چیزی است که در
+            // ریموت دسکتاپ در دسترس است (آنجا اپ اصلا نمی‌داند چه متنی آن‌طرف است).
+            if (self->_lastWriteAt > 0 && ZLastForeignInputAt() < self->_lastWriteAt) {
+                proof = ZProofUntouched;
+            }
+        }
+        if (proof == ZProofNone) {
+            if (done) dispatch_async(dispatch_get_main_queue(), ^{ done(ZProofNone, NO); });
+            return;
+        }
+        if (!viaAX) [self eraseAndType:n text:text delayMicros:d];
+        self->_lastWriteAt = CFAbsoluteTimeGetCurrent();
+        ZWriteProof p = proof;
+        if (done) dispatch_async(dispatch_get_main_queue(), ^{ done(p, viaAX); });
+    });
+}
+
+// فال‌بکِ کلیدی، فقط روی ناحیه‌ای که همین حالا تاییدش کرده‌ایم
+- (void)eraseAndType:(NSUInteger)n text:(NSString *)text delayMicros:(useconds_t)d {
+    NSData *utf16 = [text dataUsingEncoding:NSUTF16LittleEndianStringEncoding];
+    useconds_t ed = MAX(d, kZEraseMinDelay);
+    for (NSUInteger i = 0; i < n; i++) {
+        for (int down = 1; down >= 0; down--) {
+            zPostPlain(CGEventCreateKeyboardEvent(NULL, (CGKeyCode)kVK_Delete, down != 0));
+        }
+        usleep(ed);
+    }
+    const UniChar *units = utf16.bytes;
+    NSUInteger count = utf16.length / 2, i = 0;
+    // اینجا lead-in لازم نیست: پاک‌کن همین حالا رویداد فرستاده، پس اپ گرم است
+    while (i < count) {
+        NSUInteger k = MIN((NSUInteger)18, count - i);
+        zPostUnicode(units + i, k);
+        usleep(MAX(d, kZTypeMinDelay));
+        i += k;
+    }
 }
 
 // جای دُم موقت را عوض می‌کند: n نویسه‌ی آخر پاک و متن تازه تایپ می‌شود، هر دو در یک
@@ -165,6 +297,7 @@ static void zPostModifier(CGKeyCode key, CGEventFlags flags) {
     if (!e) return;
     CGEventSetType(e, kCGEventFlagsChanged);
     CGEventSetFlags(e, flags);
+    CGEventSetIntegerValueField(e, kCGEventSourceUserData, kZOurEventTag);
     CGEventPost(kCGSessionEventTap, e);
     CFRelease(e);
     usleep(kZChordGap);
@@ -189,6 +322,7 @@ static void zPostModifier(CGKeyCode key, CGEventFlags flags) {
         CGEventRef e = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)kVK_ANSI_V, down != 0);
         if (!e) continue;
         CGEventSetFlags(e, held);
+        CGEventSetIntegerValueField(e, kCGEventSourceUserData, kZOurEventTag);
         CGEventPost(kCGSessionEventTap, e);
         CFRelease(e);
         usleep(kZChordGap);
@@ -201,6 +335,75 @@ static void zPostModifier(CGKeyCode key, CGEventFlags flags) {
     NSPasteboard *pb = NSPasteboard.generalPasteboard;
     [pb declareTypes:@[NSPasteboardTypeString] owner:nil];
     [pb setString:text forType:NSPasteboardTypeString];
+}
+
+@end
+
+// ---------- ZCaretSink ----------
+// مقصدِ سر کرسر. حالت «درج زنده» و حالت «کنار کرسر» هر دو از این می‌خورند و تنها
+// فرقشان renderPending است. همان یک بولین است که حالت زنده را ذاتا بدون هیچ عملیات
+// مخربی نگه می‌دارد: دُمِ ناپایدار آنجا اصلا نوشته نمی‌شود، پس چیزی برای پاک کردن نیست.
+
+@implementation ZCaretSink {
+    ZInjector *_injector;
+    ZLedgerStats *_stats;
+}
+
+- (instancetype)initWithInjector:(ZInjector *)injector {
+    if ((self = [super init])) _injector = injector;
+    return self;
+}
+
+- (void)useStats:(ZLedgerStats *)stats { _stats = stats; }
+
+- (BOOL)targetIsFront {
+    NSRunningApplication *f = NSWorkspace.sharedWorkspace.frontmostApplication;
+    return _target && f && _target.processIdentifier == f.processIdentifier;
+}
+
+// می‌شود همین حالا نوشت؟ اپ باید جلو باشد و اجازه‌ها سر جایشان.
+- (BOOL)writable {
+    return [self targetIsFront] && [ZInjector accessibilityOK] && ![ZInjector secureInputActive];
+}
+
+- (BOOL)typing {
+    return [ZSettings.shared insertModeForBundleId:_target.bundleIdentifier] == ZInsertType;
+}
+
+// دُم فقط جایی نوشته می‌شود که هم بی‌خطر باشد هم برگشت‌پذیر: مسیر پیست هیچ‌کدام نیست
+// (هر رفت‌وبرگشتش کند و نامطمئن است و بازنویسی‌اش راهی ندارد).
+- (BOOL)rendersPending { return _renderPending && [self typing]; }
+- (BOOL)canRewrite { return [self typing] && [self writable]; }
+
+- (void)appendText:(NSString *)text done:(void (^)(ZSinkResult))done {
+    if (![self writable]) {
+        done(ZSinkUnavailable);
+        return;
+    }
+    if (![self typing]) {
+        [_injector paste:text delayMicros:ZSettings.shared.pasteDelayMicros];
+        done(ZSinkOK);    // پیست خبرِ نشستن ندارد؛ آنجا بازنویسی هم در کار نیست
+        return;
+    }
+    [_injector type:text delayMicros:ZSettings.shared.typeDelayMicros done:^{ done(ZSinkOK); }];
+}
+
+- (void)replaceLast:(NSUInteger)n expecting:(NSString *)expected with:(NSString *)text
+               done:(void (^)(ZSinkResult))done {
+    if (![self canRewrite]) {
+        done(ZSinkUnavailable);
+        return;
+    }
+    ZLedgerStats *stats = _stats;
+    [_injector replaceLast:n expecting:expected with:text
+               delayMicros:ZSettings.shared.typeDelayMicros
+                       pid:_target.processIdentifier
+                      done:^(ZWriteProof proof, BOOL viaAX) {
+        stats.axReads = stats.axReads + 1;
+        if (proof == ZProofRead) stats.verifiedByRead = stats.verifiedByRead + 1;
+        if (proof == ZProofUntouched) stats.verifiedByEpoch = stats.verifiedByEpoch + 1;
+        done(proof == ZProofNone ? ZSinkDisowned : ZSinkOK);
+    }];
 }
 
 @end
@@ -242,7 +445,11 @@ static CGEventRef zHotkeyCallback(CGEventTapProxy proxy, CGEventType type, CGEve
 
 - (void)enable {
     if (_tap) return;
-    CGEventMask mask = CGEventMaskBit(kCGEventFlagsChanged) | CGEventMaskBit(kCGEventKeyDown);
+    // کلیکِ ماوس هم پاییده می‌شود، فقط برای مدرکِ «کسی دست نزده». کلیک کرسر را
+    // جابه‌جا می‌کند و بی این، اپی که خواندنِ AX ندارد بعد از یک کلیک هنوز خودش را
+    // مالکِ دُم می‌دانست.
+    CGEventMask mask = CGEventMaskBit(kCGEventFlagsChanged) | CGEventMaskBit(kCGEventKeyDown)
+                     | CGEventMaskBit(kCGEventLeftMouseDown) | CGEventMaskBit(kCGEventRightMouseDown);
     _tap = CGEventTapCreate(kCGSessionEventTap, kCGHeadInsertEventTap, kCGEventTapOptionDefault,
                             mask, zHotkeyCallback, (__bridge void *)self);
     if (!_tap) {
@@ -391,6 +598,12 @@ static CGEventRef zHotkeyCallback(CGEventTapProxy proxy, CGEventType type, CGEve
         if (_tap) CGEventTapEnable(_tap, true);
         return event;
     }
+    // هر ورودی‌ای که برچسبِ ما را ندارد یعنی کاربر (یا اپ دیگری) دست زده. تنها
+    // مدرکی است که در اپِ بی‌خواندن (ریموت دسکتاپ) در دسترس است، پس اول از همه.
+    if (CGEventGetIntegerValueField(event, kCGEventSourceUserData) != kZOurEventTag) {
+        ZNoteForeignInput();
+    }
+    if (type == kCGEventLeftMouseDown || type == kCGEventRightMouseDown) return event;
     if (type == kCGEventFlagsChanged
         && CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode) == 54) {
         return [self handleFlagsChanged:event];
