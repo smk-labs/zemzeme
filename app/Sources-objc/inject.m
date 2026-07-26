@@ -89,22 +89,94 @@ static void zPostUnicode(const UniChar *units, NSUInteger n) {
 }
 
 - (void)type:(NSString *)text delayMicros:(useconds_t)d done:(void (^)(void))done {
-    NSData *utf16 = [text dataUsingEncoding:NSUTF16LittleEndianStringEncoding];
-    useconds_t td = MAX(d, kZTypeMinDelay);
     dispatch_async(_q, ^{
-        const UniChar *units = utf16.bytes;
-        NSUInteger count = utf16.length / 2;
-        NSUInteger i = 0;
-        usleep(kZTypeLeadIn);    // اپ مقصد سرد است؛ اولین رویداد نباید قربانی شود
-        while (i < count) {
-            NSUInteger n = MIN((NSUInteger)18, count - i);
-            zPostUnicode(units + i, n);
-            usleep(td);
-            i += n;
-        }
+        [self typeNow:text delayMicros:d leadIn:YES];
         self->_lastWriteAt = CFAbsoluteTimeGetCurrent();
         if (done) dispatch_async(dispatch_get_main_queue(), done);
     });
+}
+
+// روی صف درج. lead-in فقط وقتی لازم است که اپ سرد باشد؛ بعد از پاک‌کن گرم است.
+- (void)typeNow:(NSString *)text delayMicros:(useconds_t)d leadIn:(BOOL)leadIn {
+    NSData *utf16 = [text dataUsingEncoding:NSUTF16LittleEndianStringEncoding];
+    const UniChar *units = utf16.bytes;
+    NSUInteger count = utf16.length / 2, i = 0;
+    useconds_t td = MAX(d, kZTypeMinDelay);
+    if (leadIn) usleep(kZTypeLeadIn);    // اپ مقصد سرد است؛ اولین رویداد نباید قربانی شود
+    while (i < count) {
+        NSUInteger n = MIN((NSUInteger)18, count - i);
+        zPostUnicode(units + i, n);
+        usleep(td);
+        i += n;
+    }
+}
+
+// ---------- درجِ اتمیک ----------
+// یک رویدادِ کیبورد ۱۸ واحد UTF-16 می‌برد و اپ مقصد می‌تواند کلِ یک رویداد را
+// بیندازد. اندازه‌گیری، دو بار، روی دو سشن جدا: «انگار قاطی می‌کنه » و
+// « نظرم کافیه خدانگه»، هر دو سر سوزن ۱۸ واحد، هر دو در فایل خام sessions/ سالم و
+// روی صفحه غایب. مهلتِ شروع و کفِ فاصله فقط احتمالش را کم می‌کنند، صفرش نمی‌کنند.
+// یک نوشتنِ اکسسبیلیتی اما تجزیه‌ناپذیر است: یا همه‌اش می‌نشیند یا خطا برمی‌گرداند.
+//
+// فقط برای متنِ بلندتر از یک رویداد. متنِ کوتاه‌تر ذاتا نمی‌تواند نصفه بیفتد، و آنجا
+// مسیر تایپِ اندازه‌گیری‌شده دست‌نخورده می‌ماند (دُمِ زنده‌ی حالت کرسر از همان می‌رود).
+static const NSUInteger kZAtomicMinUnits = 18;
+
+// اپ‌هایی که نوشتنِ AX را قبول نکردند. یک بار امتحان، بعد دیگر هزینه‌اش را نمی‌دهیم.
+static NSMutableSet<NSNumber *> *ZNoAXWritePids(void) {
+    static NSMutableSet *s;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ s = [NSMutableSet set]; });
+    return s;    // فقط روی صف درج دست می‌خورد، پس قفل لازم ندارد
+}
+
+- (void)insert:(NSString *)text pid:(pid_t)pid delayMicros:(useconds_t)d
+          done:(void (^)(BOOL viaAX))done {
+    dispatch_async(_q, ^{
+        BOOL viaAX = NO;
+        if (text.length >= kZAtomicMinUnits && ![ZNoAXWritePids() containsObject:@(pid)]) {
+            viaAX = [self axInsert:text pid:pid];
+            if (!viaAX) {
+                ZLog(@"inject: ax write refused by pid=%d, falling back to typing", pid);
+                [ZNoAXWritePids() addObject:@(pid)];
+            }
+        }
+        if (!viaAX) [self typeNow:text delayMicros:d leadIn:YES];
+        self->_lastWriteAt = CFAbsoluteTimeGetCurrent();
+        if (done) dispatch_async(dispatch_get_main_queue(), ^{ done(viaAX); });
+    });
+}
+
+// روی صف درج صدا زده می‌شود. NO یعنی هیچ‌چیز ننشست و فراخوان باید تایپ کند.
+- (BOOL)axInsert:(NSString *)text pid:(pid_t)pid {
+    AXUIElementRef el = ZCopyFocusedElement(pid);
+    if (!el) return NO;
+    BOOL haveSel = NO;
+    CFRange before = zSelectedRange(el, &haveSel);
+    if (!haveSel) {
+        CFRelease(el);
+        return NO;
+    }
+    AXError w = AXUIElementSetAttributeValue(el, kAXSelectedTextAttribute,
+                                             (__bridge CFStringRef)text);
+    if (w != kAXErrorSuccess) {
+        CFRelease(el);
+        return NO;
+    }
+    // «موفق» گفتن و کاری نکردن هم پیش می‌آید. کرسر باید دقیقا به اندازه‌ی متن جلو
+    // رفته باشد؛ اگر تکان نخورده، چیزی ننشسته و تایپ می‌کنیم.
+    BOOL haveAfter = NO;
+    CFRange after = zSelectedRange(el, &haveAfter);
+    CFRelease(el);
+    if (!haveAfter) return YES;    // نتوانستیم بخوانیم؛ نوشتن خطا نداد، پس نشسته
+    if (after.location == before.location) return NO;
+    if (after.location != before.location + (CFIndex)text.length) {
+        // نه سر جایش، نه آنجا که انتظار داشتیم. متن تقریبا حتما نشسته (نوشتنِ AX
+        // تجزیه‌ناپذیر است)، پس دوباره نمی‌نویسیم؛ ولی این اپ دیگر قابل اعتماد نیست.
+        ZLog(@"inject: ax write landed at an unexpected caret on pid=%d, distrusting it", pid);
+        [ZNoAXWritePids() addObject:@(pid)];
+    }
+    return YES;
 }
 
 // ---------- جایگزینیِ تاییدشده ----------
@@ -201,7 +273,6 @@ static BOOL zSetSelectedRange(AXUIElementRef el, CFRange range) {
 
 // فال‌بکِ کلیدی، فقط روی ناحیه‌ای که همین حالا تاییدش کرده‌ایم
 - (void)eraseAndType:(NSUInteger)n text:(NSString *)text delayMicros:(useconds_t)d {
-    NSData *utf16 = [text dataUsingEncoding:NSUTF16LittleEndianStringEncoding];
     useconds_t ed = MAX(d, kZEraseMinDelay);
     for (NSUInteger i = 0; i < n; i++) {
         for (int down = 1; down >= 0; down--) {
@@ -209,15 +280,8 @@ static BOOL zSetSelectedRange(AXUIElementRef el, CFRange range) {
         }
         usleep(ed);
     }
-    const UniChar *units = utf16.bytes;
-    NSUInteger count = utf16.length / 2, i = 0;
-    // اینجا lead-in لازم نیست: پاک‌کن همین حالا رویداد فرستاده، پس اپ گرم است
-    while (i < count) {
-        NSUInteger k = MIN((NSUInteger)18, count - i);
-        zPostUnicode(units + i, k);
-        usleep(MAX(d, kZTypeMinDelay));
-        i += k;
-    }
+    // lead-in لازم نیست: پاک‌کن همین حالا رویداد فرستاده، پس اپ گرم است
+    [self typeNow:text delayMicros:d leadIn:NO];
 }
 
 // جای دُم موقت را عوض می‌کند: n نویسه‌ی آخر پاک و متن تازه تایپ می‌شود، هر دو در یک
@@ -385,7 +449,9 @@ static void zPostModifier(CGKeyCode key, CGEventFlags flags) {
         done(ZSinkOK);    // پیست خبرِ نشستن ندارد؛ آنجا بازنویسی هم در کار نیست
         return;
     }
-    [_injector type:text delayMicros:ZSettings.shared.typeDelayMicros done:^{ done(ZSinkOK); }];
+    [_injector insert:text pid:_target.processIdentifier
+          delayMicros:ZSettings.shared.typeDelayMicros
+                 done:^(BOOL viaAX) { done(ZSinkOK); }];
 }
 
 - (void)replaceLast:(NSUInteger)n expecting:(NSString *)expected with:(NSString *)text

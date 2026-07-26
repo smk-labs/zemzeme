@@ -1255,7 +1255,10 @@ static NSString *ZModeLabel(ZMode m) {
     if ([ZSettings.shared insertModeForBundleId:_target.bundleIdentifier] == ZInsertPaste) {
         [_injector paste:text delayMicros:ZSettings.shared.pasteDelayMicros];
     } else {
-        [_injector type:text delayMicros:ZSettings.shared.typeDelayMicros];
+        // مسیر اتمیک: متنِ یکجای حالت جمع بلند است و دقیقا همان‌جا بود که یک رویدادِ
+        // کامل (۱۸ واحد) افتاد و هجده نویسه از وسط متن غیب شد.
+        [_injector insert:text pid:_target.processIdentifier
+              delayMicros:ZSettings.shared.typeDelayMicros done:nil];
     }
 }
 
