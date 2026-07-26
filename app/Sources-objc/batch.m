@@ -236,6 +236,8 @@ static NSString *ZBatchStitch(NSString *a, NSString *b) {
         [self coolDownIfDeaf];
         NSString *t = [self attemptPiece:p];
         if (t.length > best.length) best = t;
+        // پاره‌ی لغوشده نه لال است نه کم‌حرف؛ شمردنش در آمار لالی و تلاش دوباره دروغ بود
+        if (self.cancelled) return best;
         NSUInteger words = best.length ? [best componentsSeparatedByString:@" "].count : 0;
         // گفتار عادی ~۲٫۵ کلمه در ثانیه است؛ زیر ۰٫۴ یعنی سشن لال بوده، نه کم‌حرف
         BOOL thin = words < (NSUInteger)(0.4 * sec);
@@ -617,9 +619,9 @@ static NSString *ZBatchSRT(NSArray<ZBatchPiece *> *pieces) {
     if (self.polishFiles && [_lang hasPrefix:@"fa"] && ZSettings.shared.polishEnabled) {
         [ZPolish.shared prepare];
     }
-    for (NSURL *url in _files) {
+    for (NSUInteger i = 0; i < _files.count; i++) {
         if ([self isCancelled]) break;
-        [self runFile:url];
+        [self runFile:_files[i] lang:i < self.langs.count ? self.langs[i] : _lang];
     }
     [_lock lock];
     _tr = nil;
@@ -628,7 +630,7 @@ static NSString *ZBatchSRT(NSArray<ZBatchPiece *> *pieces) {
     [self hop:^{ if (self.onAllDone) self.onAllDone(); }];
 }
 
-- (void)runFile:(NSURL *)url {
+- (void)runFile:(NSURL *)url lang:(NSString *)lang {
     NSError *err = nil;
     ZFileDecoder *dec = [[ZFileDecoder alloc] initWithURL:url error:&err];
     if (!dec) {
@@ -638,7 +640,7 @@ static NSString *ZBatchSRT(NSArray<ZBatchPiece *> *pieces) {
     double total = dec.duration;
     NSDate *t0 = NSDate.date;
     ZBatchTranscriber *tr = [ZBatchTranscriber new];
-    tr.lang = _lang;
+    tr.lang = lang;
     tr.jobs = MAX(1, MIN(8, self.jobs));
     tr.speed = self.speed;
     tr.rawUp = self.rawUpload;
@@ -660,7 +662,7 @@ static NSString *ZBatchSRT(NSArray<ZBatchPiece *> *pieces) {
     [_lock unlock];
 
     ZLog(@"batch: start %@ dur=%.0fs lang=%@ jobs=%ld speed=%.0f",
-         url.lastPathComponent, total, _lang, (long)tr.jobs, self.speed);
+         url.lastPathComponent, total, lang, (long)tr.jobs, self.speed);
     // صفرِ اول: ردیف همان لحظه «در حال کار» می‌شود و طولش را می‌فهمد، بی‌آنکه منتظر
     // اولین پاره (~۲۰ ثانیه صدا) بماند.
     [self hop:^{ if (self.onFileProgress) self.onFileProgress(url, 0, total); }];
@@ -677,7 +679,7 @@ static NSString *ZBatchSRT(NSArray<ZBatchPiece *> *pieces) {
         return;
     }
     NSString *text = ZBatchJoin(pieces);
-    if (self.polishFiles) text = ZBatchPolishText(text, _lang);
+    if (self.polishFiles) text = ZBatchPolishText(text, lang);
     double el = [NSDate.date timeIntervalSinceDate:t0];
     ZLog(@"batch: done %@ pieces=%ld chars=%lu wall=%.0fs ratio=%.1fx up=%.1fMB (%@)",
          url.lastPathComponent, (long)pieces.count, (unsigned long)text.length, el,

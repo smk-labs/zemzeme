@@ -21,6 +21,8 @@ static const CGFloat kEdge = 14;
 // یک جدول ثبت می‌شود و از هم قابل تفکیک‌اند.
 static NSString *const kZRowType = @"io.seyed.zemzeme.batchrow";
 
+NSNotificationName const ZBatchActivity = @"ZBatchActivity";
+
 typedef NS_ENUM(NSInteger, ZRowState) {
     ZRowQueued,
     ZRowRunning,
@@ -38,6 +40,7 @@ typedef NS_ENUM(NSInteger, ZRowState) {
 @property (nonatomic) ZRowState state;
 @property (nonatomic, copy) NSString *text;
 @property (nonatomic, copy) NSString *note;    // دلیل خطا، همان‌جا روی ردیف
+@property (nonatomic, copy) NSString *lang;    // زبان همین فایل؛ سر افزودن از پیش‌فرض پر می‌شود
 @end
 
 @implementation ZBatchRow
@@ -149,6 +152,10 @@ static NSString *ZClock(double sec) {
     NSScrollView *_editorScroll;
     NSTextField *_status;
     NSPopUpButton *_jobsPop;
+    NSPopUpButton *_langPop;
+    NSButton *_btnHistory;
+    NSView *_editorBox;       // قاب دورِ ادیتور، که متن «همین‌طور آن زیر» نیفتد
+    NSTextField *_editorCap;
     NSButton *_btnAdd, *_btnStart, *_btnStop, *_btnRemove;
     NSButton *_btnJoin, *_btnPolish, *_btnCopy, *_btnSave;
     NSArray<NSButton *> *_bar;
@@ -225,7 +232,11 @@ static NSString *ZClock(double sec) {
     _btnCopy = [self button:@"doc.on.doc" tip:@"کپی متن یکجا" action:@selector(tapCopy)];
     _btnSave = [self button:@"square.and.arrow.down" tip:@"ذخیره‌ی متن یکجا در یک فایل"
                     action:@selector(tapSave)];
-    _bar = @[_btnAdd, _btnStart, _btnStop, _btnRemove, _btnJoin, _btnPolish, _btnCopy, _btnSave];
+    _btnHistory = [self button:@"clock.arrow.circlepath"
+                           tip:@"تاریخچه: متن اجراهای قبلی را دوباره باز کن"
+                        action:@selector(tapHistory)];
+    _bar = @[_btnAdd, _btnStart, _btnStop, _btnRemove,
+             _btnJoin, _btnPolish, _btnCopy, _btnSave, _btnHistory];
 
     // هم‌زمانی: پیش‌فرض ۲ می‌ماند. تولتیپ هشدار را می‌گوید، چون این عدد فقط سرعت نیست،
     // سهمِ کلید مشترک است.
@@ -246,6 +257,22 @@ static NSString *ZClock(double sec) {
                         "دیکته‌ی زنده مشترک است و اجرای سنگین برای مدتی «لالش» می‌کند، پس "
                         "دیکته‌ی زنده هم سهمش را می‌بیند. بالا بردنش سرعت می‌دهد و ریسک.";
     [_back addSubview:_jobsPop];
+
+    // زبان پیش‌فرض صف؛ جدا از زبان دیکته‌ی زنده. عوض کردنش همه‌ی ردیف‌های در انتظار
+    // را هم می‌چرخاند (خواسته‌ی صریح: «پیش‌فرض را کردم فارسی، صف هم فارسی شود»)؛
+    // ردیف در حال کار و تمام‌شده دست نمی‌خورند و زبان تک‌ردیف از ستون خودش عوض می‌شود.
+    _langPop = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(0, 0, 84, 22) pullsDown:NO];
+    _langPop.font = ZFont(11, NO);
+    _langPop.bezelStyle = NSBezelStyleInline;
+    [_langPop addItemWithTitle:@"فارسی"];
+    [_langPop addItemWithTitle:@"English"];
+    [_langPop selectItemAtIndex:[ZSettings.shared.batchLang hasPrefix:@"en"] ? 1 : 0];
+    _langPop.target = self;
+    _langPop.action = @selector(tapLangDefault);
+    _langPop.toolTip = @"زبان پیش‌فرض رونویسی فایل، جدا از زبان دیکته‌ی زنده. "
+                        "عوض کردنش ردیف‌های در انتظار را هم به همین زبان می‌برد؛ "
+                        "زبان تک‌ردیف را از ستون «زبان» عوض کن.";
+    [_back addSubview:_langPop];
 
     _status = [NSTextField labelWithString:@"فایل صوتی را بکش و اینجا بینداز، یا دکمه‌ی + را بزن"];
     _status.font = ZFont(11.5, NO);
@@ -300,7 +327,8 @@ static NSString *ZClock(double sec) {
     // ستون‌ها از پهنای جدول بیشتر می‌شد و ستون «نام» ــ که در چیدمان راست‌به‌چپ اولی
     // است ــ از لبه‌ی راست پنجره بیرون می‌زد، پس نام‌های کوتاه اصلا دیده نمی‌شدند.
     _table.columnAutoresizingStyle = NSTableViewFirstColumnOnlyAutoresizingStyle;
-    NSArray *cols = @[@[@"name", @"نام فایل", @260], @[@"dur", @"طول", @58],
+    NSArray *cols = @[@[@"name", @"نام فایل", @260], @[@"lang", @"زبان", @48],
+                      @[@"dur", @"طول", @58],
                       @[@"state", @"وضعیت", @150], @[@"prog", @"پیشرفت", @96]];
     for (NSArray *c in cols) {
         NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:c[0]];
@@ -318,8 +346,22 @@ static NSString *ZClock(double sec) {
 }
 
 - (void)buildEditor {
+    // قاب مجزا با پس‌زمینه و لبه: متن یکجا قبلا لخت روی شیشه می‌نشست و مرزش با جدول
+    // پیدا نبود. اسکرول‌بار هم همیشه پیداست که «متن ادامه دارد» بی‌اشاره معلوم باشد.
+    _editorBox = [NSView new];
+    _editorBox.wantsLayer = YES;
+    _editorBox.layer.cornerRadius = 8;
+    [_back addSubview:_editorBox];
+    _editorCap = [NSTextField labelWithString:@"متن یکجا، به ترتیب صف (قابل ویرایش)"];
+    _editorCap.font = ZFont(10.5, NO);
+    _editorCap.textColor = NSColor.tertiaryLabelColor;
+    _editorCap.alignment = NSTextAlignmentRight;
+    [_back addSubview:_editorCap];
+
     _editorScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, 100, 100)];
     _editorScroll.hasVerticalScroller = YES;
+    _editorScroll.autohidesScrollers = NO;
+    _editorScroll.scrollerStyle = NSScrollerStyleLegacy;
     _editorScroll.drawsBackground = NO;
     _editorScroll.borderType = NSNoBorder;
     _editor = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0, 100, 100)];
@@ -338,7 +380,14 @@ static NSString *ZClock(double sec) {
     _editor.autoresizingMask = NSViewWidthSizable;
     _editor.textContainer.widthTracksTextView = YES;
     _editorScroll.documentView = _editor;
-    [_back addSubview:_editorScroll];
+    [_editorBox addSubview:_editorScroll];
+    [self applyEditorColors];
+}
+
+- (void)applyEditorColors {
+    _editorBox.layer.backgroundColor = [NSColor.labelColor colorWithAlphaComponent:0.06].CGColor;
+    _editorBox.layer.borderWidth = 1;
+    _editorBox.layer.borderColor = [NSColor.labelColor colorWithAlphaComponent:0.12].CGColor;
 }
 
 // چیدمان دستی، مثل نوار شناور: عرضِ ثابت نداریم و پنجره قابل تغییر اندازه است، پس
@@ -356,13 +405,16 @@ static NSString *ZClock(double sec) {
         x -= kRowStep;
     }
     _jobsPop.frame = NSMakeRect(kEdge, top - 24, 86, 22);
-    _status.frame = NSMakeRect(kEdge + 94, top - 24, MAX(40, x + kRowStep - kEdge - 98), 20);
+    _langPop.frame = NSMakeRect(kEdge + 90, top - 24, 84, 22);
+    _status.frame = NSMakeRect(kEdge + 182, top - 24, MAX(40, x + kRowStep - kEdge - 186), 20);
 
     CGFloat editorH = MAX(120, floor((sz.height - 70) * 0.36));
     CGFloat listTop = top - 34;
-    _editorScroll.frame = NSMakeRect(kEdge, kEdge, sz.width - 2 * kEdge, editorH);
-    _tableScroll.frame = NSMakeRect(kEdge, kEdge + editorH + 10,
-                                    sz.width - 2 * kEdge, MAX(60, listTop - kEdge - editorH - 10));
+    _editorBox.frame = NSMakeRect(kEdge, kEdge, sz.width - 2 * kEdge, editorH);
+    _editorScroll.frame = NSMakeRect(1, 1, _editorBox.frame.size.width - 2, editorH - 2);
+    _editorCap.frame = NSMakeRect(kEdge + 8, kEdge + editorH + 4, sz.width - 2 * kEdge - 16, 14);
+    _tableScroll.frame = NSMakeRect(kEdge, kEdge + editorH + 22,
+                                    sz.width - 2 * kEdge, MAX(60, listTop - kEdge - editorH - 22));
     // ستون نام کشسان است و بقیه ثابت؛ توزیع پهنا را sizeToFit می‌کند
     [_table sizeToFit];
 }
@@ -388,6 +440,18 @@ static NSString *ZClock(double sec) {
     [NSUserDefaults.standardUserDefaults setObject:
         [NSString stringWithFormat:@"%.0f,%.0f,%.0f,%.0f", f.origin.x, f.origin.y,
          f.size.width, f.size.height] forKey:@"batchPanelFrame"];
+}
+
+// میان‌بر F از این می‌آید: پنجره پیدا و کلید؟ پنهانش کن (کار پس‌زمینه ادامه دارد و
+// از رنگ آیتم منوبار پیداست). وگرنه بیار جلو. یعنی یک کلید، هم رفتن هم برگشتن.
+- (void)toggle {
+    if (_panel.isVisible) {
+        [_panel orderOut:nil];
+        [self saveOrigin];
+        if (_job) ZLog(@"batchui: panel hidden by toggle while a job is running");
+        return;
+    }
+    [self show];
 }
 
 - (void)show {
@@ -429,6 +493,7 @@ static NSString *ZClock(double sec) {
         ZBatchRow *r = [ZBatchRow new];
         r.url = u;
         r.state = ZRowQueued;
+        r.lang = ZSettings.shared.batchLang;
         // قالب ردشده همان لحظه دلیلش را می‌گوید، نه چند دقیقه بعد وسط اجرا
         NSString *why = [ZFileDecoder unsupportedReason:u];
         if (why) {
@@ -475,6 +540,7 @@ static NSString *ZClock(double sec) {
             if (!dec) {
                 row.state = ZRowError;
                 row.note = err.localizedDescription ?: @"فایل باز نشد";
+                ZLog(@"batchui: probe failed %@: %@", u.lastPathComponent, row.note);
             } else {
                 row.duration = dur;
             }
@@ -512,19 +578,23 @@ static NSString *ZClock(double sec) {
 - (void)tapStart {
     if (_job) return;
     NSMutableArray<NSURL *> *urls = [NSMutableArray array];
+    NSMutableArray<NSString *> *langs = [NSMutableArray array];
     for (ZBatchRow *r in _rows) {
         if (r.state == ZRowQueued || r.state == ZRowStopped) {
             r.state = ZRowQueued;
             r.doneSec = 0;
             [urls addObject:r.url];
+            [langs addObject:r.lang ?: ZSettings.shared.batchLang];
         }
     }
     if (!urls.count) {
+        ZLog(@"batchui: start tapped with nothing runnable (%lu rows)", (unsigned long)_rows.count);
         [self flash:@"چیزی در صف نیست"];
         return;
     }
     _stopping = NO;
-    ZBatchJob *job = [[ZBatchJob alloc] initWithFiles:urls lang:ZSettings.shared.lang];
+    ZBatchJob *job = [[ZBatchJob alloc] initWithFiles:urls lang:ZSettings.shared.batchLang];
+    job.langs = langs;
     job.jobs = _jobsPop.indexOfSelectedItem + 1;
     // پاس ویرایش اینجا اجرا نمی‌شود: متن هر فایل خام روی دیسک می‌رود و پاس نهایی روی
     // متن یکجا می‌نشیند. ترتیبش در batch.m نوشته شده: اول جوش خام، بعد ویرایش.
@@ -539,6 +609,8 @@ static NSString *ZClock(double sec) {
     job.onAllDone = ^{ [ws allDone]; };
     _job = job;
     [job start];
+    [NSNotificationCenter.defaultCenter postNotificationName:ZBatchActivity object:self
+                                                    userInfo:@{@"running": @YES}];
     [self syncButtons];
     [self flash:[NSString stringWithFormat:@"شروع شد · %@ فایل · %@ سشن هم‌زمان",
                  ZFaDigits(@(urls.count).stringValue),
@@ -580,6 +652,39 @@ static NSString *ZClock(double sec) {
     if (skipped) [self flash:@"ردیف در حال کار حذف نمی‌شود؛ اول توقف را بزن"];
     else if (gone) [self flash:[NSString stringWithFormat:@"%@ ردیف حذف شد",
                                 ZFaDigits(@(gone).stringValue)]];
+}
+
+- (void)tapLangDefault {
+    NSString *lang = _langPop.indexOfSelectedItem == 1 ? @"en-US" : @"fa-IR";
+    ZSettings.shared.batchLang = lang;
+    // ردیف‌های در انتظار هم به زبان تازه می‌روند؛ در حال کار و تمام‌شده نه، چون
+    // زبانشان یا قفل کار است یا دیگر اثری ندارد.
+    NSInteger flipped = 0;
+    for (ZBatchRow *r in _rows) {
+        if (r.state == ZRowQueued || r.state == ZRowStopped || r.state == ZRowError) {
+            r.lang = lang;
+            flipped++;
+        }
+    }
+    [_table reloadData];
+    [self flash:flipped
+        ? [NSString stringWithFormat:@"زبان پیش‌فرض و %@ ردیفِ در انتظار: %@",
+           ZFaDigits(@(flipped).stringValue), [lang hasPrefix:@"en"] ? @"انگلیسی" : @"فارسی"]
+        : [NSString stringWithFormat:@"زبان پیش‌فرض: %@",
+           [lang hasPrefix:@"en"] ? @"انگلیسی" : @"فارسی"]];
+}
+
+// چرخش زبان یک ردیف از ستون خودش؛ فقط ردیفی که هنوز کارش شروع نشده
+- (void)rowLangTap:(NSButton *)sender {
+    NSInteger i = sender.tag;
+    if (i < 0 || i >= (NSInteger)_rows.count) return;
+    ZBatchRow *r = _rows[i];
+    if (r.state == ZRowRunning || r.state == ZRowDone) {
+        [self flash:@"زبان این ردیف دیگر عوض نمی‌شود"];
+        return;
+    }
+    r.lang = [r.lang hasPrefix:@"en"] ? @"fa-IR" : @"en-US";
+    [self refreshRow:r];
 }
 
 - (void)tapJobs {
@@ -632,7 +737,7 @@ static NSString *ZClock(double sec) {
     _polishing = YES;
     [self syncButtons];
     _status.stringValue = @"پاس نهایی…";
-    NSString *lang = ZSettings.shared.lang;
+    NSString *lang = ZSettings.shared.batchLang;
     if (ZSettings.shared.polishEnabled) [ZPolish.shared prepare];
     __weak typeof(self) ws = self;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
@@ -732,15 +837,22 @@ static NSString *ZClock(double sec) {
     [self syncButtons];
 }
 
+- (BOOL)running { return _job != nil; }
+
 - (void)allDone {
     _job = nil;
     BOOL stopped = _stopping;
     _stopping = NO;
+    [NSNotificationCenter.defaultCenter postNotificationName:ZBatchActivity object:self
+                                                    userInfo:@{@"running": @NO}];
     // متن یکجا خودش پر می‌شود، ولی فقط اگر ویرایش دستی‌ای رویش نرفته باشد: نوشته‌ی
     // خودِ کاربر را با جوش تازه نمی‌شوییم. آن‌وقت دکمه‌ی چسباندن کارِ خودش را می‌کند.
     NSString *joined = [self joinedText];
     BOOL untouched = !_editor.string.length || [_editor.string isEqualToString:_autoText ?: @""];
     if (joined.length && untouched) [self setEditorText:joined];
+    // تاریخچه: هر اجرا که متنی داشت، یک فایل تاریخ‌دار در Application Support.
+    // txt کنار فایل مال «الان» است و ممکن است پاک یا جابه‌جا شود؛ این یکی دفتر است.
+    if (joined.length) [self saveHistory:joined stopped:stopped];
     NSInteger ok = 0, bad = 0;
     for (ZBatchRow *r in _rows) {
         if (r.state == ZRowDone) ok++;
@@ -774,6 +886,7 @@ static NSString *ZClock(double sec) {
     _btnPolish.enabled = _editor.string.length > 0 && !_polishing;
     _btnCopy.enabled = _editor.string.length > 0;
     _btnSave.enabled = _editor.string.length > 0;
+    _btnHistory.enabled = YES;
     _jobsPop.enabled = !running;
     for (NSButton *b in _bar) {
         b.contentTintColor = b.enabled ? NSColor.secondaryLabelColor : NSColor.quaternaryLabelColor;
@@ -797,6 +910,116 @@ static NSString *ZClock(double sec) {
     });
 }
 
+// ---------- تاریخچه ----------
+
+static NSURL *ZBatchHistoryDir(void) {
+    NSURL *d = [ZSupport() URLByAppendingPathComponent:@"transcripts"];
+    [NSFileManager.defaultManager createDirectoryAtURL:d withIntermediateDirectories:YES
+                                            attributes:nil error:nil];
+    return d;
+}
+
+- (void)saveHistory:(NSString *)text stopped:(BOOL)stopped {
+    NSString *name = [NSString stringWithFormat:@"batch-%@%@.txt", ZTimestampId(),
+                      stopped ? @"-half" : @""];
+    NSURL *u = [ZBatchHistoryDir() URLByAppendingPathComponent:name];
+    [text writeToURL:u atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    // نام ورودی‌ها در یک ایندکس جدا، نه در خود فایل: متنِ ذخیره‌شده باید خالص بماند
+    // که لود دوباره‌اش چیزی اضافه نیاورد، ولی فهرست تاریخچه بی‌نام گنگ است.
+    NSMutableArray *names = [NSMutableArray array];
+    for (ZBatchRow *r in _rows) {
+        if (r.text.length) [names addObject:r.url.lastPathComponent];
+    }
+    NSString *line = [NSString stringWithFormat:@"%@\t%@\n", name,
+                      [names componentsJoinedByString:@"، "]];
+    NSURL *idx = [ZBatchHistoryDir() URLByAppendingPathComponent:@"index.tsv"];
+    NSFileHandle *h = [NSFileHandle fileHandleForWritingAtPath:idx.path];
+    if (!h) {
+        [[line dataUsingEncoding:NSUTF8StringEncoding] writeToURL:idx atomically:YES];
+    } else {
+        @try {
+            [h seekToEndOfFile];
+            [h writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
+        } @catch (NSException *e) {}
+        [h closeFile];
+    }
+    ZLog(@"batchui: history saved %@ (%lu chars, %lu files)", name,
+         (unsigned long)text.length, (unsigned long)names.count);
+}
+
+// ایندکس تاریخچه: نام فایل ذخیره → نام ورودی‌هایش. نبودن ایندکس عیب نیست، فقط
+// عنوان به تاریخ خالی برمی‌گردد (تاریخچه‌های قبل از این قابلیت).
+static NSDictionary<NSString *, NSString *> *ZBatchHistoryIndex(void) {
+    NSURL *idx = [ZBatchHistoryDir() URLByAppendingPathComponent:@"index.tsv"];
+    NSString *all = [NSString stringWithContentsOfURL:idx encoding:NSUTF8StringEncoding error:nil];
+    NSMutableDictionary *map = [NSMutableDictionary dictionary];
+    for (NSString *line in [all componentsSeparatedByString:@"\n"]) {
+        NSRange tab = [line rangeOfString:@"\t"];
+        if (tab.location == NSNotFound) continue;
+        map[[line substringToIndex:tab.location]] = [line substringFromIndex:NSMaxRange(tab)];
+    }
+    return map;
+}
+
+// فهرست اجراهای قبلی زیر دکمه؛ انتخاب، متن را در ادیتور می‌گذارد (جای متن فعلی،
+// پس اگر متن فعلی ویرایش دستی دارد اول هشدار همان فلش کافی است: کپی ماندگار همیشه
+// با دکمه‌ی کپی در دسترس بود و تاریخچه هم خودش سر جایش می‌ماند).
+- (void)tapHistory {
+    NSArray *items = [NSFileManager.defaultManager contentsOfDirectoryAtURL:ZBatchHistoryDir()
+                                                includingPropertiesForKeys:nil options:0 error:nil];
+    NSArray *sorted = [items sortedArrayUsingComparator:^NSComparisonResult(NSURL *a, NSURL *b) {
+        return [b.lastPathComponent compare:a.lastPathComponent];   // نام تاریخ‌دار: نو اول
+    }];
+    NSDictionary *names = ZBatchHistoryIndex();
+    NSMenu *menu = [NSMenu new];
+    NSInteger n = 0;
+    for (NSURL *u in sorted) {
+        if (![u.pathExtension isEqualToString:@"txt"]) continue;
+        if (++n > 15) break;
+        // نام فایل: batch-yyyy-MM-dd-HH-mm-ss[-half].txt → همان وسطش خواناست
+        NSString *base = u.lastPathComponent.stringByDeletingPathExtension;
+        NSString *when = [base stringByReplacingOccurrencesOfString:@"batch-" withString:@""];
+        BOOL half = [when hasSuffix:@"-half"];
+        if (half) when = [when substringToIndex:when.length - 5];
+        // نام ورودی‌ها جلوی تاریخ؛ بلندش بریده می‌شود که منو از پهنای پنجره نگذرد
+        NSString *who = names[u.lastPathComponent] ?: @"";
+        if (who.length > 44) who = [[who substringToIndex:43] stringByAppendingString:@"…"];
+        NSString *title = who.length
+            ? [NSString stringWithFormat:@"%@  ·  %@%@", who, ZFaDigits(when),
+               half ? @" · نیمه" : @""]
+            : [NSString stringWithFormat:@"%@%@", ZFaDigits(when), half ? @" · نیمه" : @""];
+        NSMenuItem *mi = [[NSMenuItem alloc] initWithTitle:title
+                                                    action:@selector(historyPick:)
+                                             keyEquivalent:@""];
+        mi.target = self;
+        mi.representedObject = u;
+        mi.toolTip = names[u.lastPathComponent];
+        [menu addItem:mi];
+    }
+    if (!menu.numberOfItems) {
+        NSMenuItem *mi = [[NSMenuItem alloc] initWithTitle:@"هنوز اجرایی تمام نشده"
+                                                    action:nil keyEquivalent:@""];
+        mi.enabled = NO;
+        [menu addItem:mi];
+    }
+    [menu popUpMenuPositioningItem:nil
+                        atLocation:NSMakePoint(NSMinX(_btnHistory.frame),
+                                               NSMinY(_btnHistory.frame) - 4)
+                            inView:_back];
+}
+
+- (void)historyPick:(NSMenuItem *)sender {
+    NSURL *u = sender.representedObject;
+    NSString *t = [NSString stringWithContentsOfURL:u encoding:NSUTF8StringEncoding error:nil];
+    if (!t.length) {
+        [self flash:@"این فایل تاریخچه خالی یا ناخوانا بود"];
+        return;
+    }
+    [self setEditorText:t];
+    [self flash:[NSString stringWithFormat:@"از تاریخچه آمد · %@ نویسه",
+                 ZFaDigits(@(t.length).stringValue)]];
+}
+
 // ---------- جدول ----------
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tv { return (NSInteger)_rows.count; }
@@ -812,6 +1035,19 @@ static NSString *ZClock(double sec) {
     }
     // فریم به اندازه‌ی کل ستون، نه به اندازه‌ی متن: labelWithString فریمش را از متن
     // می‌گیرد و متنِ راست‌چین در فریم باریک، جایی بیرون از دید ستون می‌نشست.
+    if ([col.identifier isEqualToString:@"lang"]) {
+        // دکمه، نه لیبل: یک کلیک زبان همین ردیف را می‌چرخاند
+        BOOL en = [r.lang hasPrefix:@"en"];
+        NSButton *b = [NSButton buttonWithTitle:en ? @"EN" : @"فا" target:self
+                                         action:@selector(rowLangTap:)];
+        b.bordered = NO;
+        b.font = ZFont(10.5, YES);
+        b.contentTintColor = NSColor.secondaryLabelColor;
+        b.tag = i;
+        b.toolTip = en ? @"انگلیسی؛ کلیک کن تا فارسی شود" : @"فارسی؛ کلیک کن تا انگلیسی شود";
+        b.frame = NSMakeRect(0, 0, col.width, _table.rowHeight);
+        return b;
+    }
     NSTextField *f = [[NSTextField alloc] initWithFrame:
                       NSMakeRect(0, 0, col.width, _table.rowHeight)];
     f.bezeled = NO;
@@ -990,6 +1226,12 @@ static NSString *ZClock(double sec) {
 
 - (void)watchShots:(NSString *)dir tick:(NSInteger)tick {
     [self shotTo:dir name:[NSString stringWithFormat:@"live-%02ld", (long)tick]];
+    // سناریوی آزمون توقف و بستن، فقط با متغیر محیطی تست: وسط کار پنجره بسته می‌شود
+    // (کار باید ادامه بدهد) و یک تیک بعد توقف زده می‌شود (کار باید تمیز بایستد).
+    if (getenv("ZEMZEME_SHOT_STOP") && _job && tick == 1) {
+        [self tapStop];
+        ZLog(@"batchui-test: stop tapped mid-run");
+    }
     if (!_job || tick > 60) {
         [self shotTo:dir name:@"final"];
         ZLog(@"batchui: shot run done after %ld ticks", (long)tick);

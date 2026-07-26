@@ -105,6 +105,7 @@
             [pb setString:text forType:NSPasteboardTypeString];
             [pb setString:@"" forType:transient];
         });
+        [ZInjector wakeRemoteClipboard];    // اول بیدارش کن، بعد مهلت بده
         usleep(d);    // مهلت سینک کلیپ‌بورد ریموت دسکتاپ
         [ZInjector sendCmdV];
         usleep(150000);
@@ -120,19 +121,52 @@
     });
 }
 
+// یک Cmd+V دقیقا به شکل فیزیکی‌اش، نه یک V با پرچم Command.
+// چرا: اپ مک از modifierFlags همان keyDown می‌خواند، پس پرچم تنها هم کافی بود. ولی
+// ریموت دسکتاپ باید کلید را اسکن‌کد به اسکن‌کد به ویندوز بفرستد؛ مودیفایر برایش یک
+// رویداد جداست (flagsChanged) و چپ و راست را از بیت دستگاه می‌شناسد. Windows App
+// دو طرف را دو کار می‌کند: Command چپ یعنی میان‌بر مک (پیست، که خودش Ctrl+V ویندوز
+// می‌شود) و Command راست یعنی کلید ویندوز. رویداد قبلی نه flagsChanged داشت نه بیت
+// چپ/راست، پس در هیچ‌کدام از دو سطل ننشست و پیست خودکار در ریموت هیچ‌وقت نیفتاد.
+static const CGEventFlags kZLeftCmdBit = 0x8;    // NX_DEVICELCMDKEYMASK
+static const useconds_t kZChordGap = 25000;      // مهلت رسیدن مودیفایر، قبل از حرف
+
+static const CGEventFlags kZLeftShiftBit = 0x2;  // NX_DEVICELSHIFTKEYMASK
+
+static void zPostModifier(CGKeyCode key, CGEventFlags flags) {
+    CGEventRef e = CGEventCreateKeyboardEvent(NULL, key, true);
+    if (!e) return;
+    CGEventSetType(e, kCGEventFlagsChanged);
+    CGEventSetFlags(e, flags);
+    CGEventPost(kCGSessionEventTap, e);
+    CFRelease(e);
+    usleep(kZChordGap);
+}
+
+// بیدارباش قبل از مهلت سینک: یک ضربه‌ی خالی روی Shift چپ.
+// اندازه‌گیری: Windows App کلیپ‌بورد مک را مدام نمی‌پاید. سرویس pasteboard.xpc اش
+// ساعت‌ها بالا بود و ۰٫۰۳ ثانیه CPU خورده بود، و با عوض شدن کلیپ‌بورد در پس‌زمینه
+// یک ذره هم تکان نخورد. تا چیزی بیدارش نکند، به ویندوز خبر نمی‌دهد که کلیپ‌بورد عوض
+// شده، و ویندوز همان متن قبلی خودش را پیست می‌کند. Shift تنها بی‌خطرترین چیزی است
+// که می‌شود فرستاد: در ویندوز هیچ کاری نمی‌کند، روی صفحه دیده نمی‌شود، و متن را
+// دست نمی‌زند. کیکد ۵۶ است، پس تپ خودمان (که فقط ۵۴ را می‌پاید) هم نمی‌بیندش.
++ (void)wakeRemoteClipboard {
+    zPostModifier((CGKeyCode)kVK_Shift, kCGEventFlagMaskShift | kZLeftShiftBit);
+    zPostModifier((CGKeyCode)kVK_Shift, 0);
+}
+
 + (void)sendCmdV {
-    CGEventRef down = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)kVK_ANSI_V, true);
-    if (down) {
-        CGEventSetFlags(down, kCGEventFlagMaskCommand);
-        CGEventPost(kCGSessionEventTap, down);
-        CFRelease(down);
+    CGEventFlags held = kCGEventFlagMaskCommand | kZLeftCmdBit;
+    zPostModifier((CGKeyCode)kVK_Command, held);
+    for (int down = 1; down >= 0; down--) {
+        CGEventRef e = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)kVK_ANSI_V, down != 0);
+        if (!e) continue;
+        CGEventSetFlags(e, held);
+        CGEventPost(kCGSessionEventTap, e);
+        CFRelease(e);
+        usleep(kZChordGap);
     }
-    CGEventRef up = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)kVK_ANSI_V, false);
-    if (up) {
-        CGEventSetFlags(up, kCGEventFlagMaskCommand);
-        CGEventPost(kCGSessionEventTap, up);
-        CFRelease(up);
-    }
+    zPostModifier((CGKeyCode)kVK_Command, 0);
 }
 
 // بیمه پایانی: کپی معمولی و ماندگار کل متن سشن

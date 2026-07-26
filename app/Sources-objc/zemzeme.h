@@ -32,6 +32,8 @@ NSString *ZFaDigits(NSString *s);
 NSString *ZTimestampId(void);
 
 // ---------- تنظیمات ----------
+#define kZRDPBundleId @"com.microsoft.rdc.macos"    // Windows App، تنها اپی که استثنای درج دارد
+
 typedef NS_ENUM(NSInteger, ZInsertMode) {
     ZInsertType = 0,     // تایپ مستقیم با رویداد یونیکد
     ZInsertPaste = 1,    // پیست تکه‌ای (برای ریموت دسکتاپ امن‌تر)
@@ -57,8 +59,10 @@ typedef NS_ENUM(NSInteger, ZMode) {
 @property (nonatomic) BOOL polishEnabled;           // پاس ویرایش فارسی؛ پیش‌فرض روشن
 @property (nonatomic) BOOL latinTerms;              // وام‌واژه فنی به لاتین؛ پیش‌فرض خاموش
 @property (nonatomic) BOOL soundsEnabled;           // صدای کارها؛ پیش‌فرض روشن
-@property (nonatomic) BOOL upstreamFLAC;            // فشرده‌سازی FLAC آپلود؛ پیش‌فرض روشن، اگر انکودر نساخت خودش l16 خام می‌رود
+@property (nonatomic) BOOL upstreamFLAC;            // فشرده‌سازی FLAC آپلود؛ پیش‌فرض روشن
+@property (nonatomic, copy) NSString *batchLang;    // زبان پیش‌فرض رونویسی فایل؛ جدا از lang زنده
 - (ZInsertMode)insertModeForBundleId:(NSString *)bundleId;
+- (void)setInsertMode:(ZInsertMode)m forBundleId:(NSString *)bundleId;   // استثنای یک اپ خاص
 - (useconds_t)typeDelayMicros;
 - (useconds_t)pasteDelayMicros;
 @end
@@ -206,6 +210,7 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 + (void)promptAccessibility;
 + (BOOL)secureInputActive;
 + (void)copyFinal:(NSString *)text;                     // کپی ماندگار پایانی
++ (void)wakeRemoteClipboard;                            // ضربه‌ی خالی Shift: کلاینت ریموت کلیپ‌بورد تازه را ببیند
 - (void)type:(NSString *)text delayMicros:(useconds_t)d;
 - (void)paste:(NSString *)text delayMicros:(useconds_t)d;
 // دُم موقت حالت کرسر: n نویسه‌ی آخر پاک، متن تازه تایپ، هر دو پشت سر هم و تجزیه‌ناپذیر.
@@ -382,6 +387,9 @@ int ZCaretProbeMain(NSArray<NSString *> *args);
 // می‌آید، پس فراخوان می‌تواند یکجا هم سرهمش کند.
 @interface ZBatchJob : NSObject
 - (instancetype)initWithFiles:(NSArray<NSURL *> *)files lang:(NSString *)lang;
+// زبان هر فایل، هم‌ترتیب files؛ نال یا کوتاه‌تر یعنی همان lang کار. صف مخلوط
+// (وویس فارسی کنار پادکست انگلیسی) بدون دو بار اجرا همین‌طور ممکن می‌شود.
+@property (nonatomic, copy) NSArray<NSString *> *langs;
 @property (nonatomic) NSInteger jobs;           // سشن هم‌زمان؛ پیش‌فرض ۲
 @property (nonatomic) double speed;             // ضریب تغذیه؛ ۰ یعنی بی‌مکث (پیش‌فرض)
 @property (nonatomic) BOOL rawUpload;           // l16 خام به جای FLAC؛ فقط عیب‌یابی
@@ -408,13 +416,19 @@ int ZCaretProbeMain(NSArray<NSString *> *args);
 // خود تابع نوشته شده: اول جوش خام، بعد ویرایش. بلوکه است، پس نخ پس‌زمینه.
 NSString *ZBatchPolishText(NSString *raw, NSString *lang);
 
+// خبر «کار دسته‌ای در جریان است/تمام شد» برای آیتم منوبار؛ userInfo[@"running"].
+// نوتیفیکیشن و نه دلیگیت، چون پنل نباید چیزی از AppDelegate بداند.
+extern NSNotificationName const ZBatchActivity;
+
 // ---------- پنل رونویسی فایل ----------
 // پنجره‌ی واقعی (نه نوار شناور): صف فایل با ترتیبِ قابل‌کشیدن، پیشرفت زنده‌ی هر ردیف،
 // و متن یکجای قابل ویرایش. یکی بیشتر نیست، چون سه راه دسترسی (منوبار، میان‌بر،
 // دکمه‌ی پنل) باید به همان صف و همان کار برسند. بستن پنجره کار در جریان را نمی‌کشد.
 @interface ZBatchPanel : NSObject
 + (instancetype)shared;
+@property (nonatomic, readonly) BOOL running;   // کاری در جریان است (برای رنگ منوبار)
 - (void)show;
+- (void)toggle;    // میان‌بر F: باز اگر بسته، پنهان اگر باز. کارِ در جریان نمی‌ایستد
 - (void)addFiles:(NSArray<NSURL *> *)urls;
 - (void)makeShots:(NSString *)dir;                                 // حالت‌های نمونه (--uishot)
 - (void)makeShots:(NSString *)dir then:(void (^)(void))done;       // پله‌پله، با فرصت رندر

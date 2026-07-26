@@ -83,6 +83,36 @@ int ZSelfTest(NSString *file, NSString *lang) {
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)n {
+    // حالت اسکرین‌شات طراحی: zemzeme --uishot <dir> [file]. قبل از گارد تک‌نمونه، چون
+    // اپ دوم نیست که با منوبار رقابت کند: نه آیتم وضعیت می‌سازد نه تپ کیبورد، کارش را
+    // می‌کند و می‌رود. قبلا پایین‌تر بود و تا اپ اصلی باز بود هیچ تستی اجرا نمی‌شد.
+    NSArray *shotArgs = NSProcessInfo.processInfo.arguments;
+    NSUInteger shotAt = [shotArgs indexOfObject:@"--uishot"];
+    if (shotAt != NSNotFound && shotAt + 1 < shotArgs.count) {
+        ZRegisterFonts();
+        _panel = [ZPanel new];
+        NSString *dir = shotArgs[shotAt + 1];
+        // با یک مسیر فایل در ادامه، جای حالت‌های نمونه یک اجرای واقعی عکس گرفته می‌شود:
+        // پنجره را بی‌اجازه‌ی ضبط صفحه فقط از داخل خود پروسه می‌توان دید.
+        NSMutableArray<NSURL *> *shotFiles = [NSMutableArray array];
+        for (NSUInteger k = shotAt + 2; k < shotArgs.count; k++) {
+            NSString *path = shotArgs[k];
+            if ([path hasPrefix:@"-"]) break;
+            [shotFiles addObject:[NSURL fileURLWithPath:path.stringByExpandingTildeInPath]];
+        }
+        if (shotFiles.count) {
+            [ZBatchPanel.shared runShots:dir files:shotFiles];
+            return;
+        }
+        [_panel makeShots:dir];
+        [ZCheatSheet shot:dir];
+        ZMarkShot(dir);
+        // پنل رونویسی آخر می‌آید و خودش خروج را صدا می‌زند: عکس‌هایش پله‌پله و با
+        // فرصت رندر گرفته می‌شوند (جدول ویو-محور بی‌چرخیدن ران‌لوپ خالی درمی‌آید)
+        [ZBatchPanel.shared makeShots:dir then:^{ [NSApp terminate:nil]; }];
+        return;
+    }
+
     // فقط یک نمونه
     NSString *bid = NSBundle.mainBundle.bundleIdentifier;
     if (bid) {
@@ -123,32 +153,26 @@ int ZSelfTest(NSString *file, NSString *lang) {
     _hotkeys.onLangSwitch = ^{ [ws sessionDo:@selector(switchLang)]; };
     _hotkeys.onModeToggle = ^{ [ws sessionDo:@selector(toggleMode)]; };
     _hotkeys.onPolishNow = ^{ [ws sessionDo:@selector(polishCollected)]; };
-    // بی‌سشن هم کار می‌کند، پس مثل بقیه از sessionDo رد نمی‌شود
-    _hotkeys.onFilePanel = ^{ [ws openBatchPanel]; };
+    // بی‌سشن هم کار می‌کند، پس مثل بقیه از sessionDo رد نمی‌شود. تاگل است نه فقط باز
+    // کردن: پنل رونویسی با همان F می‌رود پس‌زمینه و با همان F برمی‌گردد، و کار در
+    // جریان با پنهان شدنش نمی‌ایستد.
+    _hotkeys.onFilePanel = ^{ [ZBatchPanel.shared toggle]; };
     // دکمه‌ی «رونویسی فایل» روی نوار پنل شناور: سومین راه دسترسی. اینجا ست می‌شود نه
     // در ZSession، چون به سشن ربطی ندارد و باید حتی بین دو سشن هم زنده باشد.
     _panel.onFilePanel = ^{ [ws openBatchPanel]; };
 
-    // حالت اسکرین‌شات طراحی: zemzeme --uishot <dir>
-    NSArray *args = NSProcessInfo.processInfo.arguments;
-    NSUInteger i = [args indexOfObject:@"--uishot"];
-    if (i != NSNotFound && i + 1 < args.count) {
-        // با یک مسیر فایل در ادامه، جای حالت‌های نمونه یک اجرای واقعی عکس گرفته می‌شود:
-        // پنجره را بی‌اجازه‌ی ضبط صفحه فقط از داخل خود پروسه می‌توان دید.
-        if (i + 2 < args.count && ![args[i + 2] hasPrefix:@"-"]) {
-            NSString *path = args[i + 2];
-            NSURL *f = [NSURL fileURLWithPath:path.stringByExpandingTildeInPath];
-            [ZBatchPanel.shared runShots:args[i + 1] files:@[f]];
-            return;
-        }
-        [_panel makeShots:args[i + 1]];
-        [ZCheatSheet shot:args[i + 1]];
-        ZMarkShot(args[i + 1]);
-        // پنل رونویسی آخر می‌آید و خودش خروج را صدا می‌زند: عکس‌هایش پله‌پله و با
-        // فرصت رندر گرفته می‌شوند (جدول ویو-محور بی‌چرخیدن ران‌لوپ خالی درمی‌آید).
-        [ZBatchPanel.shared makeShots:args[i + 1] then:^{ [NSApp terminate:nil]; }];
-        return;
-    }
+
+    // رنگ آیتم منوبار در طول کار دسته‌ای: آبی، فقط تا وقتی کار در جریان است، و فقط
+    // اگر سشن زنده‌ای رنگ را در دست نداشته باشد (رنگ سشن یعنی وضعیت میکروفن و مقدم است).
+    [NSNotificationCenter.defaultCenter addObserverForName:ZBatchActivity object:nil
+                                                     queue:NSOperationQueue.mainQueue
+                                                usingBlock:^(NSNotification *note) {
+        __strong typeof(ws) me = ws;
+        if (!me || me->_session) return;
+        BOOL running = [note.userInfo[@"running"] boolValue];
+        me->_menubarTint = running ? NSColor.systemBlueColor : nil;
+        me->_statusItem.button.image = ZMarkImage(18, me->_menubarTint);
+    }];
 
     [self watchAccessibility];
     // دیمن پاس از همین حالا گرم شود که تکه اول اولین سشن سرد نخورد
@@ -232,9 +256,10 @@ int ZSelfTest(NSString *file, NSString *lang) {
         if (!me) return;
         me->_session = nil;
         me->_hotkeys.sessionActive = NO;
-        // آیتم منوبار به template برمی‌گردد که باز با نوار روشن و تیره و هایلایت وفق بیاید
-        me->_menubarTint = nil;
-        me->_statusItem.button.image = ZMarkImage(18, nil);
+        // آیتم منوبار به template برمی‌گردد که باز با نوار روشن و تیره و هایلایت وفق
+        // بیاید؛ مگر کار دسته‌ای هنوز بدود، که رنگ خودش را پس می‌گیرد.
+        me->_menubarTint = ZBatchPanel.shared.running ? NSColor.systemBlueColor : nil;
+        me->_statusItem.button.image = ZMarkImage(18, me->_menubarTint);
     };
     // در طول سشن آیتم منوبار همان رنگ وضعیت پنل را دارد. تصویر template رنگ را
     // نادیده می‌گیرد، پس نسخه‌ی رنگی template نیست و با خود رنگ کشیده می‌شود؛ و چون
@@ -365,8 +390,16 @@ int ZSelfTest(NSString *file, NSString *lang) {
         mi.representedObject = m[1];
         mi.state = ZSettings.shared.insertMode == [m[1] integerValue]
             ? NSControlStateValueOn : NSControlStateValueOff;
-        mi.toolTip = @"برای Windows App همیشه پیست انتخاب می‌شود، حتی اگر اینجا تایپ باشد";
+        mi.toolTip = @"روش پیش‌فرض همه‌ی اپ‌ها؛ Windows App استثنای خودش را دارد (ردیف بعد)";
     }
+    // استثنای Windows App جدا و دیدنی، نه پنهان در کد: پیست آنجا به کلیپ‌بورد ریموت
+    // وابسته است و کلیپ‌بورد ریموت گیر می‌کند، ولی تایپ مستقیم فقط وقتی جواب می‌دهد
+    // که خود Windows App روی Keyboard Mode = Unicode باشد. پس تصمیمش مال کاربر است.
+    NSMenuItem *rdp = [self icon:[self item:adv title:@"Windows App: تایپ مستقیم" action:@selector(menuToggleRDPType) key:@""]
+                           symbol:@"display"];
+    rdp.state = [ZSettings.shared insertModeForBundleId:kZRDPBundleId] == ZInsertType
+        ? NSControlStateValueOn : NSControlStateValueOff;
+    rdp.toolTip = @"اول در نوار منوی Windows App: Keyboard Mode ← Unicode. بی آن، فارسی در ریموت درست تایپ نمی‌شود";
     [adv addItem:NSMenuItem.separatorItem];
 
     NSMenuItem *hk = [self icon:[self item:adv title:@"هاتکی داخلی (آزمایشی)" action:@selector(menuToggleHotkey) key:@""]
@@ -434,6 +467,10 @@ int ZSelfTest(NSString *file, NSString *lang) {
 - (void)menuToggleFLAC { ZSettings.shared.upstreamFLAC = !ZSettings.shared.upstreamFLAC; }
 - (void)menuInsertMode:(NSMenuItem *)sender {
     ZSettings.shared.insertMode = [sender.representedObject integerValue];
+}
+- (void)menuToggleRDPType {
+    ZInsertMode now = [ZSettings.shared insertModeForBundleId:kZRDPBundleId];
+    [ZSettings.shared setInsertMode:(now == ZInsertType ? ZInsertPaste : ZInsertType) forBundleId:kZRDPBundleId];
 }
 - (void)menuTogglePolish {
     ZSettings.shared.polishEnabled = !ZSettings.shared.polishEnabled;
