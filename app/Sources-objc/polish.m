@@ -53,6 +53,21 @@ static const NSTimeInterval kPolishFailsafe = 0.40;
     [[s dataTaskWithURL:[NSURL URLWithString:[kPolishBase stringByAppendingString:@"/alive"]]
       completionHandler:^(NSData *d, NSURLResponse *resp, NSError *e) {
         ok = [resp isKindOfClass:NSHTTPURLResponse.class] && ((NSHTTPURLResponse *)resp).statusCode == 200;
+        // هویت، نه فقط زنده‌بودن. باگ واقعی: یک دیمنِ کهنه از مسیر قدیمیِ پروژه (که
+        // دیگر روی دیسک هم نبود) پورت را نگه داشته بود. «کسی جواب می‌دهد؟» بله بود،
+        // پس هیچ‌وقت عوضش نکردیم، و آن نسخه terms.txt نداشت: تاگل واژه‌های لاتین روشن
+        // بود و بی‌صدا هیچ کاری نمی‌کرد، چون نقشه‌ی خالی هیچ چیز را عوض نمی‌کند.
+        // همان قرارداد serve.py روی پورت ۱۷۶۳۵. جواب با root ناهمخوان یعنی غریبه.
+        if (ok && d.length) {
+            NSDictionary *o = [NSJSONSerialization JSONObjectWithData:d options:0 error:nil];
+            NSString *root = [o isKindOfClass:NSDictionary.class] ? o[@"root"] : nil;
+            NSString *mine = ZRes().path;
+            if (![root isKindOfClass:NSString.class] || ![root isEqualToString:mine]) {
+                ZLog(@"polish: پورت ۱۷۶۳۶ دست دیمن دیگری است (root=%@، مال ما %@)؛ "
+                     @"آن را ببند تا نسخه‌ی همراه اپ بالا بیاید", root ?: @"?", mine);
+                ok = NO;
+            }
+        }
         dispatch_semaphore_signal(sem);
     }] resume];
     dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)));

@@ -298,7 +298,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.startswith("/alive"):
-            self._send(200, {"ready": READY.is_set(), "err": BOOT_ERR[0]})
+            # هویت، نه فقط زنده‌بودن؛ همان قراردادی که serve.py دارد. باگ واقعی: یک
+            # دیمنِ کهنه از مسیر قدیمیِ پروژه (که دیگر روی دیسک هم نبود) پورت را نگه
+            # داشته بود. اپ فقط «کسی جواب می‌دهد؟» را می‌پرسید، پس هیچ‌وقت عوضش نکرد،
+            # و آن نسخه terms.txt نداشت؛ نتیجه‌اش این بود که تاگل واژه‌های لاتین روشن
+            # بود و بی‌صدا هیچ کاری نمی‌کرد. root می‌گوید «کدام» دیمن جواب می‌دهد.
+            self._send(200, {"ready": READY.is_set(), "err": BOOT_ERR[0],
+                             "root": ROOT, "pid": os.getpid(),
+                             "terms": len(PIPE.terms) if PIPE else 0})
         else:
             self._send(404, {"err": "not found"})
 
@@ -349,7 +356,18 @@ def main():
     try:
         srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     except OSError:
-        sys.stderr.write("polish: port busy, another daemon is up\n")
+        # صاحب پورت را نام ببر، مثل serve.py. سکوت اینجا بود که یک دیمنِ کهنه از
+        # مسیرِ پاک‌شده‌ی پروژه ماه‌ها پورت را نگه داشت و کسی نفهمید.
+        who = ""
+        try:
+            import http.client
+            c = http.client.HTTPConnection("127.0.0.1", PORT, timeout=1)
+            c.request("GET", "/alive")
+            info = json.loads(c.getresponse().read())
+            who = f" (root={info.get('root', '?')} pid={info.get('pid', '?')})"
+        except Exception:
+            pass
+        sys.stderr.write(f"polish: port {PORT} busy, another daemon is up{who}\n")
         return 0
     srv.serve_forever()
     return 0
