@@ -887,7 +887,16 @@ static NSString *ZModeLabel(ZMode m) {
 // همان دُم موقت را با متن تازه یکی می‌کند: پیشوند مشترک دست نمی‌خورد و فقط تفاوت
 // پاک و دوباره تایپ می‌شود، پس هر بروزرسانی چند نویسه است نه کل جمله.
 - (void)syncTail:(NSString *)want {
+    [self syncTail:want isFinal:NO];
+}
+
+// isFinal یعنی «این متن قطعی است و حق دارد جای دُم را بگیرد». متن خاکستری این حق را
+// ندارد: از وقتی متن قطعیِ خام بلافاصله سر کرسر می‌نشیند (و تا رسیدن نسخه‌ی ویرایش‌شده
+// آنجا می‌ماند)، یک interim که همان لحظه برسد می‌توانست همان متن قطعی را پاک کند و
+// کاربر می‌دید حرفش رفت. فقط یک متن قطعیِ دیگر جایگزینش می‌شود.
+- (void)syncTail:(NSString *)want isFinal:(BOOL)isFinal {
     if (![self canTypeTail]) return;
+    if (_tailHoldsFinal && !isFinal) return;
     NSString *cur = _tail;
     NSString *next = want ?: @"";
     if ([cur isEqualToString:next]) return;
@@ -1010,7 +1019,7 @@ static NSString *ZModeLabel(ZMode m) {
 // مثل syncTail ولی بی‌سقفِ زمانی: تکه‌ی قطعی حق ندارد پشت throttle بماند
 - (void)syncTailNow:(NSString *)want {
     _tailSyncAt = 0;
-    [self syncTail:want];
+    [self syncTail:want isFinal:YES];
 }
 
 - (void)engineState:(ZEngineState)state message:(NSString *)msg {
