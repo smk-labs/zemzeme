@@ -161,6 +161,18 @@ NSString *ZMergeInterim(NSString *best, NSString *cur) {
     BOOL was = _running;
     _running = NO;
     _paused = NO;
+    // بستن وسط تخلیه: سشن قدیمی هنوز متن قطعی‌اش را نداده و چند خط پایین‌تر cancel
+    // می‌شود؛ بعدش مسیر close آن را «غریبه» می‌بیند (چون _draining نال شده) و متنش
+    // بی‌صدا دور ریخته می‌شود. همان بیمه‌ای که handleClose دارد، اینجا هم لازم است.
+    // چرا حالا بیشتر پیش می‌آید: چرخش منتظر سکوت می‌ماند، و سکوت یعنی حرفت تمام شده،
+    // یعنی دقیقا همان لحظه‌ای که دستت می‌رود سراغ Esc. آخرین چند کلمه قربانی می‌شد.
+    // ترتیب مهم است: carry مال لحظه‌ی چرخش است، پس از salvage (که متن تازه‌تر
+    // استریم فعلی است) قدیمی‌تر است و باید اول برود.
+    if (was && _draining && !_drainGotFinal && _drainCarry.length) {
+        ZLog(@"engine: stopped mid-drain, carrying %lu chars", (unsigned long)_drainCarry.length);
+        [self deliverFinal:_drainCarry];
+    }
+    _drainCarry = nil;
     if (was) [self salvageFrom:_stream];
     [_stream cancel];
     [_draining cancel];
