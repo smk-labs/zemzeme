@@ -18,6 +18,13 @@
     NSLock *_feedLock;
     ZGoogleStream *_feedTarget;
     NSMutableData *_replay;      // صدای بعد از آخرین نتیجه؛ سر هر ری‌استارت دوباره پخش می‌شود
+    // حلقه‌ی دم: همیشه آخرین kZRotateOverlapSec ثانیه صدا، مستقل از اینکه نتیجه آمده یا نه.
+    // چرا جدا از _replay: آن یکی سر *هر* فریمِ نتیجه خالی می‌شود و فریم interim چند بار
+    // در ثانیه می‌آید، پس در گفتار عادی همیشه حدود ۰٫۱ تا ۰٫۵ ثانیه است، نه ۱۲ ثانیه.
+    // سقف ۱۲ ثانیه‌اش فقط وقتی پر می‌شود که گوگل لال شده باشد. اندازه‌گیری روی لاگ
+    // واقعی: از ۵ چرخش، هم‌پوشانی ۰٫۰۰ و ۰٫۱۰ و ۰٫۳۱ و ۰٫۵۰ و ۲٫۰۰ ثانیه شد، و همان
+    // چرخش‌های کوتاه دوباره حرف اول کلمه را خوردند («برای» شد «رای»، «که» شد «ه»).
+    NSMutableData *_tailAudio;
     BOOL _voiceInCycle;
 
     NSDate *_lastEventAt;
@@ -80,6 +87,7 @@ NSString *ZMergeInterim(NSString *best, NSString *cur) {
         _mic = [ZMic new];
         _feedLock = [NSLock new];
         _replay = [NSMutableData data];
+        _tailAudio = [NSMutableData data];
         _lastInterim = @"";
         _salvageBest = @"";
         _lang = @"fa-IR";
@@ -135,6 +143,11 @@ NSString *ZMergeInterim(NSString *best, NSString *cur) {
     _paused = NO;
     _endsSinceResult = 0;
     _lastChunkAt = NSDate.date;
+    // صدای پیش از مکث دیگر همسایه‌ی صدای تازه نیست؛ هم‌پوشانی از آن یعنی چسباندن دو
+    // تکه‌ی بی‌ربط به هم
+    [_feedLock lock];
+    _tailAudio.length = 0;
+    [_feedLock unlock];
     [self state:ZEngineConnecting msg:@""];
     [self openStream];
     ZLog(@"engine: resumed");
@@ -152,6 +165,7 @@ NSString *ZMergeInterim(NSString *best, NSString *cur) {
     [_feedLock lock];
     _feedTarget = nil;
     _replay.length = 0;
+    _tailAudio.length = 0;
     [_feedLock unlock];
     _stitchArmed = NO;
     _lastDeliveredFinal = nil;
@@ -173,6 +187,7 @@ NSString *ZMergeInterim(NSString *best, NSString *cur) {
     [_feedLock lock];
     _feedTarget = nil;
     _replay.length = 0;
+    _tailAudio.length = 0;     // «دور بریز» یعنی صدای هم‌پوشان هم نباید برگردد
     _voiceSinceResult = 0;
     [_feedLock unlock];
     _stitchArmed = NO;         // صدای هم‌پوشان هم رفت، جوشی در کار نیست
@@ -204,6 +219,11 @@ NSString *ZMergeInterim(NSString *best, NSString *cur) {
         if (s->_replay.length > kZReplayCapBytes) {
             [s->_replay replaceBytesInRange:NSMakeRange(0, s->_replay.length - kZReplayCapBytes)
                                   withBytes:NULL length:0];
+        }
+        [s->_tailAudio appendData:pcm];
+        if (s->_tailAudio.length > kZOverlapCapBytes) {
+            [s->_tailAudio replaceBytesInRange:NSMakeRange(0, s->_tailAudio.length - kZOverlapCapBytes)
+                                     withBytes:NULL length:0];
         }
         ZGoogleStream *t = s->_feedTarget;
         [s->_feedLock unlock];
@@ -323,7 +343,14 @@ NSString *ZMergeInterim(NSString *best, NSString *cur) {
     if (ev.hasResults && (ev.finals.count || ![ev.interim isEqualToString:_lastInterim])) {
         _lastInterim = [ev.interim copy];
         if (_lastInterim.length > _salvageBest.length) _salvageBest = [_lastInterim copy];
-        [self.delegate engineInterim:_lastInterim];
+        // تا وقتی سشن قدیمی در حال تخلیه است، متن معلقش هنوز مسئولِ کسی است و هیچ‌جا
+        // نوشته نشده. اگر همین‌جا فقط interim سشن تازه را نشان بدهیم، آن از صفر شروع
+        // می‌کند و جمله‌ی خاکستریِ روی صفحه یک‌دفعه آب می‌شود؛ کاربر می‌بیند حرفش پاک
+        // شد و نمی‌داند برمی‌گردد یا نه. پس در همان یک ثانیه، نمایش = معلقِ قدیمی به
+        // اضافه‌ی تازه. فقط نمایش است، نه تحویل، پس چیزی دو بار در متن نمی‌نشیند.
+        NSString *shown = (_draining && _drainCarry.length)
+            ? ZMergeInterim(_drainCarry, _lastInterim) : _lastInterim;
+        [self.delegate engineInterim:shown];
     }
     // مرز یک متن قطعی بهترین جای چرخش است: هیچ متن معلقی در کار نیست. ولی «متن قطعی»
     // یعنی گوگل یک پاره را بست، نه اینکه کاربر ساکت شد؛ وسط جمله هم می‌آید. پس شرط
@@ -530,14 +557,15 @@ NSString *ZMergeInterim(NSString *best, NSString *cur) {
     _lastInterim = @"";
     _salvageBest = @"";
     [_feedLock lock];
-    NSUInteger keep = MIN(_replay.length, (NSUInteger)(kZRotateOverlapSec * 32000));
-    keep -= keep % 2;    // مرز نمونه‌ی ۱۶ بیتی، وگرنه بایت‌ها یک‌درمیان جابه‌جا می‌شوند
-    if (_replay.length > keep) {
-        [_replay replaceBytesInRange:NSMakeRange(0, _replay.length - keep) withBytes:NULL length:0];
-    }
-    _stitchArmed = keep > 0;
+    // هم‌پوشانی از حلقه‌ی دم می‌آید، نه از _replay: آن یکی سر هر فریمِ نتیجه خالی شده و
+    // معمولا چند صدم ثانیه بیشتر ندارد. هرکدام بلندتر بود همان می‌ماند، پس صدای
+    // بی‌جوابِ یک گیرِ طولانی هم قربانیِ سقفِ دو ثانیه‌ای نمی‌شود.
+    if (_tailAudio.length > _replay.length) [_replay setData:_tailAudio];
+    _stitchArmed = _replay.length > 0;
+    NSUInteger overlapBytes = _replay.length;
     _voiceSinceResult = 0;
     [_feedLock unlock];
+    ZLog(@"engine: rotate overlap %.2fs", overlapBytes / 32000.0);
     [old finishUpload];
     __weak typeof(self) ws = self;
     __weak ZGoogleStream *wold = old;
