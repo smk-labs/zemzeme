@@ -476,6 +476,9 @@ int main(int argc, const char *argv[]) {
         // آیکون بسته برای build.sh؛ مثل حالت دسته‌ای قبل از NSApplication برمی‌گردد
         NSUInteger ic = [args indexOfObject:@"--appicon"];
         if (ic != NSNotFound && ic + 1 < args.count) return ZMarkIconMain(args[ic + 1]);
+        // اندازه‌گیری نردبان کرسر: مثل دو حالت بالا پیش از NSApplication برمی‌گردد، پس
+        // اپ منوبارِ در حال اجرا دست نمی‌خورد و هیچ سشن دیکته‌ای باز نمی‌شود.
+        if ([args containsObject:@"--caretprobe"]) return ZCaretProbeMain(args);
         NSApplication *app = NSApplication.sharedApplication;
         static ZAppDelegate *delegate;
         delegate = [ZAppDelegate new];
