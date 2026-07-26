@@ -35,7 +35,11 @@
     NSString *_drainCarry;       // متن معلقِ سر چرخش، اگر سشن قدیمی final نداد
     BOOL _drainGotFinal;
     NSDate *_lastVoiceAt;        // آخرین لحظه‌ای که واقعا صدا بود؛ برای بریدن در سکوت
-    BOOL _stitchArmed;           // استریم تازه با هم‌پوشانی شروع شد: اولین متن قطعی‌اش جوش می‌خورد
+    // جوش به خودِ استریم بسته است، نه به «استریمِ فعلی». باگ واقعی: استریمی که با
+    // هم‌پوشانی شروع شده بود، تا متن قطعی‌اش برسد معمولا خودش چرخیده و در حال تخلیه
+    // بود، و مسیر تخلیه جوش نمی‌زد؛ پس همان چند کلمه دو بار می‌نشستند.
+    __weak ZGoogleStream *_overlapStream;   // با هم‌پوشانی باز شد و هنوز متن قطعی نداده
+    NSUInteger _overlapWords;               // پنجره‌ی جوش، از روی ثانیه‌های همان هم‌پوشانی
     NSString *_lastDeliveredFinal;   // طرفِ چپِ همان جوش
     NSInteger _endsSinceResult;
     BOOL _gotResultThisCycle;
@@ -123,7 +127,7 @@ NSString *ZMergeInterim(NSString *best, NSString *cur) {
     if ([l isEqualToString:_lang]) return;
     _lang = [l copy];
     if (!_running) return;
-    [self salvage];
+    [self salvageFrom:_stream];
     _endsSinceResult = 0;
     [_stream cancel];    // مسیر close با زبان جدید ری‌استارت می‌کند
 }
@@ -132,7 +136,7 @@ NSString *ZMergeInterim(NSString *best, NSString *cur) {
 - (void)pause {
     if (!_running || _paused) return;
     _paused = YES;
-    [self salvage];
+    [self salvageFrom:_stream];
     [_stream cancel];    // مسیر close با گارد paused ری‌استارت نمی‌کند
     [self state:ZEnginePaused msg:@""];
     ZLog(@"engine: paused");
@@ -157,7 +161,7 @@ NSString *ZMergeInterim(NSString *best, NSString *cur) {
     BOOL was = _running;
     _running = NO;
     _paused = NO;
-    if (was) [self salvage];
+    if (was) [self salvageFrom:_stream];
     [_stream cancel];
     [_draining cancel];
     _stream = nil;
@@ -167,7 +171,7 @@ NSString *ZMergeInterim(NSString *best, NSString *cur) {
     _replay.length = 0;
     _tailAudio.length = 0;
     [_feedLock unlock];
-    _stitchArmed = NO;
+    _overlapStream = nil;
     _lastDeliveredFinal = nil;
     [self stopMicAndTimers];
     [self state:ZEngineIdle msg:@""];
@@ -190,7 +194,7 @@ NSString *ZMergeInterim(NSString *best, NSString *cur) {
     _tailAudio.length = 0;     // «دور بریز» یعنی صدای هم‌پوشان هم نباید برگردد
     _voiceSinceResult = 0;
     [_feedLock unlock];
-    _stitchArmed = NO;         // صدای هم‌پوشان هم رفت، جوشی در کار نیست
+    _overlapStream = nil;      // صدای هم‌پوشان هم رفت، جوشی در کار نیست
     _lastDeliveredFinal = nil;
     // نال کردن قبل از cancel: مسیر close این‌ها را «غریبه» می‌بیند، پس نه salvage
     // می‌کند نه ری‌استارت، و متن قطعیِ دیررسشان هم دور ریخته می‌شود.
@@ -297,6 +301,12 @@ NSString *ZMergeInterim(NSString *best, NSString *cur) {
     NSData *pre = _replay.length ? [_replay copy] : nil;
     [_feedLock unlock];
     if (pre) [s feed:pre];
+    // هر استریمی که با صدای کهنه شروع شود اولین متن قطعی‌اش تکرار دارد، چه چرخش باشد
+    // چه ری‌استارتِ بعد از مرگ (آنجا هم متنِ همان صدا با salvage تحویل شده). پنجره از
+    // روی طول واقعی همین بازپخش حساب می‌شود، پس هم ۲ ثانیه‌ی چرخش را می‌پوشاند هم
+    // ۱۲ ثانیه‌ی یک گیرِ طولانی، بی‌آنکه هیچ‌کدام پنجره‌ی دیگری را گشاد کند.
+    _overlapStream = pre.length ? s : nil;
+    _overlapWords = ZStitchWords(pre.length / 32000.0);
     // استریمی که با بازپخش شروع می‌شود اول باید همان صدای کهنه را بالا بفرستد و
     // بشنود؛ در آن فاصله نتیجه‌ای نمی‌آید و این «گیر کردن» نیست. بدون این مهلت،
     // خودِ بازپخش باعث تشخیص گیرِ بعدی می‌شد و حلقه هر دور بدتر می‌شد.
@@ -312,7 +322,7 @@ NSString *ZMergeInterim(NSString *best, NSString *cur) {
     if (s == _draining) {
         for (NSString *f in ev.finals) {
             _drainGotFinal = YES;
-            [self deliverFinal:f];
+            [self deliverFinal:[self stitchFinal:f from:s]];
         }
         return;
     }
@@ -336,21 +346,20 @@ NSString *ZMergeInterim(NSString *best, NSString *cur) {
     for (NSString *f in ev.finals) {
         _lastInterim = @"";
         _salvageBest = @"";
-        [self deliverFinal:[self stitchIfArmed:f]];
+        [self deliverFinal:[self stitchFinal:f from:s]];
     }
     // باگ‌فیکس حذف متن: فریم بدون result (endpointer/status) دیگر interim را پاک نمی‌کند؛
     // فقط فریم‌های نتیجه‌دار حق دست زدن به متن خاکستری دارند.
     if (ev.hasResults && (ev.finals.count || ![ev.interim isEqualToString:_lastInterim])) {
         _lastInterim = [ev.interim copy];
         if (_lastInterim.length > _salvageBest.length) _salvageBest = [_lastInterim copy];
-        // تا وقتی سشن قدیمی در حال تخلیه است، متن معلقش هنوز مسئولِ کسی است و هیچ‌جا
-        // نوشته نشده. اگر همین‌جا فقط interim سشن تازه را نشان بدهیم، آن از صفر شروع
-        // می‌کند و جمله‌ی خاکستریِ روی صفحه یک‌دفعه آب می‌شود؛ کاربر می‌بیند حرفش پاک
-        // شد و نمی‌داند برمی‌گردد یا نه. پس در همان یک ثانیه، نمایش = معلقِ قدیمی به
-        // اضافه‌ی تازه. فقط نمایش است، نه تحویل، پس چیزی دو بار در متن نمی‌نشیند.
-        NSString *shown = (_draining && _drainCarry.length)
-            ? ZMergeInterim(_drainCarry, _lastInterim) : _lastInterim;
-        [self.delegate engineInterim:shown];
+        // اینجا یک بار «پل تخلیه» گذاشته شد (نمایش = معلقِ قدیمی + interim تازه) که
+        // جمله‌ی خاکستری سر چرخش آب نشود. در پنل بی‌خطر بود، در حالت کرسر فاجعه:
+        // آنجا «نمایش» یعنی تایپ واقعی، پس آن رشته‌ی بلند سر کرسر تایپ می‌شد و یک
+        // ثانیه بعد که تخلیه تمام می‌شد با یک مشت Backspace پاک. متن گم نمی‌شد ولی
+        // کاربر می‌دید جمله‌اش کوبیده می‌شود. برداشته شد: مصرف‌کننده‌ای که پاک کردنش
+        // گران است نباید قربانی زیباییِ مصرف‌کننده‌ای شود که پاک کردنش مجانی است.
+        [self.delegate engineInterim:_lastInterim];
     }
     // مرز یک متن قطعی بهترین جای چرخش است: هیچ متن معلقی در کار نیست. ولی «متن قطعی»
     // یعنی گوگل یک پاره را بست، نه اینکه کاربر ساکت شد؛ وسط جمله هم می‌آید. پس شرط
@@ -374,16 +383,16 @@ NSString *ZMergeInterim(NSString *best, NSString *cur) {
 // اولین متن قطعیِ استریمِ پس از چرخش، صدای هم‌پوشان را دوباره شنیده، پس چند کلمه‌ی
 // اولش تکرارِ دمِ متن قبلی است. جوش همان‌ها را برمی‌دارد و کلمه‌ی سر درز، که قبلا
 // نصفه می‌افتاد، اینجا کامل برمی‌گردد.
-- (NSString *)stitchIfArmed:(NSString *)text {
-    if (!_stitchArmed) return text;
-    _stitchArmed = NO;
+- (NSString *)stitchFinal:(NSString *)text from:(ZGoogleStream *)s {
+    if (!s || s != _overlapStream) return text;
+    _overlapStream = nil;    // فقط اولین متن قطعیِ همان استریم تکرار دارد
     NSString *prev = [_lastDeliveredFinal stringByTrimmingCharactersInSet:
                       NSCharacterSet.whitespaceAndNewlineCharacterSet];
     NSString *cur = [text stringByTrimmingCharactersInSet:
                      NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (!prev.length || !cur.length) return text;
     // پنجره دقیقا به اندازه‌ی صدایی که دوباره پخش شد، نه یک کلمه بیشتر
-    NSString *joined = ZStitchOverlapMax(prev, cur, ZStitchWords(kZRotateOverlapSec));
+    NSString *joined = ZStitchOverlapMax(prev, cur, _overlapWords);
     if (joined.length <= prev.length) {
         // کل تکه هم‌پوشانی تشخیص داده شد. ممکن است درست باشد، ولی ممکن هم هست تطبیقِ
         // الکیِ گفتار تکراری باشد. اینجا خام را نگه می‌داریم: قرارِ این محصول این است
@@ -425,7 +434,7 @@ NSString *ZMergeInterim(NSString *best, NSString *cur) {
     _stream = nil;
     ZLog(@"engine: closed pair=%@ reason=%@ result=%d voice=%d replay=%.1fs",
          s.pair, reason, _gotResultThisCycle, hadVoice, replayBytes / 32000.0);
-    [self salvage];
+    [self salvageFrom:s];
     if (!_running || _paused) return;
     if (hadVoice && !_gotResultThisCycle) _endsSinceResult++;
     [self scheduleRestart];
@@ -433,7 +442,7 @@ NSString *ZMergeInterim(NSString *best, NSString *cur) {
 
 // متن خاکستری معلق را قبل از هر مرگ/ری‌استارت قطعی کن که هیچ‌وقت گم نشود.
 // بلندترین interim این پاره هم با دم فعلی ادغام می‌شود (پنجره لغزان گوگل کلمه نخورد).
-- (void)salvage {
+- (void)salvageFrom:(ZGoogleStream *)s {
     NSString *t = ZMergeInterim(_salvageBest, _lastInterim);
     _lastInterim = @"";
     _salvageBest = @"";
@@ -446,7 +455,7 @@ NSString *ZMergeInterim(NSString *best, NSString *cur) {
     // میلی‌ثانیه بعد (پشت پاس ویرایش) برمی‌گشت. کاربر جمله‌اش را می‌دید که پاک می‌شود.
     // حالا فقط تحویل می‌دهیم؛ جایگزینی سر جای خودش را مصرف‌کننده انجام می‌دهد.
     ZLog(@"engine: salvaged %lu chars", (unsigned long)t.length);
-    [self deliverFinal:[self stitchIfArmed:t]];
+    [self deliverFinal:[self stitchFinal:t from:s]];
 }
 
 - (void)scheduleRestart {
@@ -523,7 +532,7 @@ NSString *ZMergeInterim(NSString *best, NSString *cur) {
     }
     if (quiet > 12) {
         ZLog(@"engine: watchdog quiet %.0fs, recycling pair=%@", quiet, _stream.pair);
-        [self salvage];
+        [self salvageFrom:_stream];
         [_stream cancel];    // مسیر close ری‌استارت را می‌برد
         return;
     }
@@ -542,7 +551,7 @@ NSString *ZMergeInterim(NSString *best, NSString *cur) {
 // کاملی را که گرفته تشخیص می‌دهد. ولی «همه‌ی صدا» شامل نصفِ کلمه‌ی سر درز نیست: هجای
 // ناقصِ آخر را دور می‌ریزد. برای همین به جای خالی کردن بازپخش، آخرین چند ثانیه‌اش را
 // نگه می‌داریم تا استریم تازه همان کلمه را از اولش بشنود. تکرارِ حاصل مشکل نیست،
-// جوشِ متنی (stitchIfArmed) برش می‌دارد؛ گم شدنِ کلمه مشکل بود.
+// جوشِ متنی (stitchFinal:from:) برش می‌دارد؛ گم شدنِ کلمه مشکل بود.
 - (void)rotate {
     if (!_running || !_stream) return;
     ZGoogleStream *old = _stream;
@@ -561,7 +570,6 @@ NSString *ZMergeInterim(NSString *best, NSString *cur) {
     // معمولا چند صدم ثانیه بیشتر ندارد. هرکدام بلندتر بود همان می‌ماند، پس صدای
     // بی‌جوابِ یک گیرِ طولانی هم قربانیِ سقفِ دو ثانیه‌ای نمی‌شود.
     if (_tailAudio.length > _replay.length) [_replay setData:_tailAudio];
-    _stitchArmed = _replay.length > 0;
     NSUInteger overlapBytes = _replay.length;
     _voiceSinceResult = 0;
     [_feedLock unlock];
