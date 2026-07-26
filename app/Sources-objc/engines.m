@@ -40,6 +40,8 @@
     // بود، و مسیر تخلیه جوش نمی‌زد؛ پس همان چند کلمه دو بار می‌نشستند.
     __weak ZGoogleStream *_overlapStream;   // با هم‌پوشانی باز شد و هنوز متن قطعی نداده
     NSUInteger _overlapWords;               // پنجره‌ی جوش، از روی ثانیه‌های همان هم‌پوشانی
+    NSTimeInterval _streamPrerollSec;       // صدای کهنه‌ای که این استریم با آن شروع شد
+    BOOL _rotating;                         // openStream بعدی از مسیر چرخش می‌آید، نه ری‌استارت
     NSString *_lastDeliveredFinal;   // طرفِ چپِ همان جوش
     NSInteger _endsSinceResult;
     BOOL _gotResultThisCycle;
@@ -317,8 +319,14 @@ NSString *ZMergeInterim(NSString *best, NSString *cur) {
     // چه ری‌استارتِ بعد از مرگ (آنجا هم متنِ همان صدا با salvage تحویل شده). پنجره از
     // روی طول واقعی همین بازپخش حساب می‌شود، پس هم ۲ ثانیه‌ی چرخش را می‌پوشاند هم
     // ۱۲ ثانیه‌ی یک گیرِ طولانی، بی‌آنکه هیچ‌کدام پنجره‌ی دیگری را گشاد کند.
-    _overlapStream = pre.length ? s : nil;
-    _overlapWords = ZStitchWords(pre.length / 32000.0);
+    _streamPrerollSec = pre.length / 32000.0;
+    // جوش فقط برای بازپخشِ چرخش. در مسیر ری‌استارت بعد از مرگ، صدای بازپخش‌شده اصلا
+    // تشخیص داده *نشده* بود (کل دلیل نگه داشتنش همین است)، پس هم‌پوشانیِ متنی وجود
+    // ندارد و پنجره‌ای به عرض همان بازپخش (۸ ثانیه یعنی ۳۲ کلمه) می‌توانست ۳۲ کلمه‌ی
+    // کاملا تازه را با یک تطبیق الکی ببلعد. آنجا متنِ معلق را salvage جدا داده است.
+    _overlapStream = (pre.length && _rotating) ? s : nil;
+    _overlapWords = ZStitchWords(kZRotateOverlapSec);
+    _rotating = NO;
     // استریمی که با بازپخش شروع می‌شود اول باید همان صدای کهنه را بالا بفرستد و
     // بشنود؛ در آن فاصله نتیجه‌ای نمی‌آید و این «گیر کردن» نیست. بدون این مهلت،
     // خودِ بازپخش باعث تشخیص گیرِ بعدی می‌شد و حلقه هر دور بدتر می‌شد.
@@ -377,10 +385,17 @@ NSString *ZMergeInterim(NSString *best, NSString *cur) {
     // یعنی گوگل یک پاره را بست، نه اینکه کاربر ساکت شد؛ وسط جمله هم می‌آید. پس شرط
     // دوم لازم است: همین حالا صدایی نباشد. اگر پیوسته حرف می‌زند، سقف‌های tick می‌بُرند
     // و هم‌پوشانی درز را می‌پوشاند.
-    if (ev.finals.count && [NSDate.date timeIntervalSinceDate:_streamStartedAt] > kZRotateAtFinalSec
-        && [self quietNow]) {
+    if (ev.finals.count && [self audioAge] > kZRotateAtFinalSec && [self quietNow]) {
         [self rotate];
     }
+}
+
+// عمر استریم به «ثانیه‌ی صدایی که خورده» است، نه ساعت دیوار. بودجه‌ی سرور همان است:
+// استریمی که با ۸ ثانیه بازپخش باز شود فقط ~۱۶ ثانیه حرف تازه جا دارد، و اگر ساعت
+// دیوار بشماریم ۲۲ ثانیه بعد هنوز خودمان را زیر سقف می‌بینیم در حالی که ۳۰ ثانیه صدا
+// داده‌ایم و سرور مرده. یک بار همین اتفاق افتاد و گیر کردن جای چرخش را گرفت.
+- (NSTimeInterval)audioAge {
+    return [NSDate.date timeIntervalSinceDate:_streamStartedAt] + _streamPrerollSec;
 }
 
 // همین حالا وسط کلمه‌ایم یا نه. تنها معیارِ در دسترسِ درست: آخرین باری که میکروفن
@@ -523,7 +538,6 @@ NSString *ZMergeInterim(NSString *best, NSString *cur) {
     }
     NSDate *now = NSDate.date;
     NSTimeInterval quiet = [now timeIntervalSinceDate:_lastEventAt];
-    NSTimeInterval age = [now timeIntervalSinceDate:_streamStartedAt];
     // گیر کردن واقعی: سرور زنده است و فریم می‌فرستد، ولی دیگر متنی نمی‌دهد. واچ‌داگ
     // «سکوت رویداد» این را هیچ‌وقت نمی‌دید، چون فریم endpointer/status حساب رویداد
     // می‌شد و تایمر را تازه می‌کرد؛ کاربر مجبور بود دستی مکث و ادامه بزند. حالا
@@ -551,10 +565,11 @@ NSString *ZMergeInterim(NSString *best, NSString *cur) {
     // چرخش اجباری قبل از سقف ~۳۰ ثانیه‌ای صدای سرور. این مسیر عادی است، نه استثنا:
     // اگر همیشه قبل از سقف عوض کنیم، هیچ‌وقت به گیر کردن و بازپخش نمی‌رسیم.
     // اول در اولین سکوت بعد از kZRotateSec؛ اگر پیوسته حرف می‌زند، سر سقف سخت.
-    if (age > kZRotateSec && [self quietNow]) {
+    NSTimeInterval audio = [self audioAge];
+    if (audio > kZRotateSec && [self quietNow]) {
         [self rotate];
-    } else if (age > kZRotateHardSec) {
-        ZLog(@"engine: hard rotate at %.0fs, no silence found", age);
+    } else if (audio > kZRotateHardSec) {
+        ZLog(@"engine: hard rotate at %.0fs of audio, no silence found", audio);
         [self rotate];
     }
 }
@@ -567,7 +582,9 @@ NSString *ZMergeInterim(NSString *best, NSString *cur) {
 - (void)rotate {
     if (!_running || !_stream) return;
     ZGoogleStream *old = _stream;
-    ZLog(@"engine: rotate pair=%@ age=%.0fs", old.pair, [NSDate.date timeIntervalSinceDate:_streamStartedAt]);
+    ZLog(@"engine: rotate pair=%@ age=%.0fs audio=%.0fs", old.pair,
+         [NSDate.date timeIntervalSinceDate:_streamStartedAt], [self audioAge]);
+    _rotating = YES;
     [_draining cancel];
     _draining = old;
     _drainGotFinal = NO;
