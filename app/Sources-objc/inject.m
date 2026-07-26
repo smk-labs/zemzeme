@@ -38,6 +38,17 @@ static const NSUInteger kZMaxErase = 256;
 // یک Backspace متنِ کاربر را می‌خورد؛ پس این سمت گران‌تر ولی محکم‌تر بسته می‌شود.
 static const useconds_t kZEraseMinDelay = 2500;
 
+// مهلت پیش از اولین رویدادِ یک رگبار تایپ، و کف فاصله‌ی بین رویدادها.
+// اندازه‌گیری، نه حدس: در یک درجِ حالت زنده دقیقا ۱۸ واحد UTF-16 از اول تکه نرسید
+// («انگار قاطی می‌کنه » که سر سوزن ۱۸ واحد است)، یعنی درست یک رویداد کامل، و بقیه
+// سالم نشست. متن در فایل خام `sessions/` بود، پس نه تشخیص کم گذاشته بود نه پاس
+// ویرایش؛ اپ مقصد اولین رویداد رگبار را انداخت. با ۱ میلی‌ثانیه فاصله، کل یک جمله
+// در ~۶ میلی‌ثانیه شلیک می‌شد و اپ‌های سنگین (الکترون، مرورگر) فرصت نداشتند.
+// حالت کرسر همیشه سالم بود چون آنجا چند نویسه‌ای و مدام تایپ می‌شود، پس اپ گرم است؛
+// حالت زنده یک جمله را یک‌جا و پس از سکوت می‌فرستد، یعنی دقیقا حالت سرد.
+static const useconds_t kZTypeLeadIn = 25000;
+static const useconds_t kZTypeMinDelay = 6000;
+
 // چرا پرچم صفر: رویدادِ ساخته‌شده با منبع NULL پرچم مودیفایرِ همان لحظه را برمی‌دارد.
 // اگر موقع درج، Command یا Option فیزیکی پایین باشد، کیکد ۰ (که همان A است) می‌شود
 // «همه را انتخاب کن» و kVK_Delete می‌شود «کل خط را پاک کن» یا «کلمه‌ی قبل را پاک کن».
@@ -62,14 +73,16 @@ static void zPostUnicode(const UniChar *units, NSUInteger n) {
 // چون پنل فوکس نمی‌گیرد، متن دقیقا سر کرسرِ اپ مقصد می‌نشیند.
 - (void)type:(NSString *)text delayMicros:(useconds_t)d {
     NSData *utf16 = [text dataUsingEncoding:NSUTF16LittleEndianStringEncoding];
+    useconds_t td = MAX(d, kZTypeMinDelay);
     dispatch_async(_q, ^{
         const UniChar *units = utf16.bytes;
         NSUInteger count = utf16.length / 2;
         NSUInteger i = 0;
+        usleep(kZTypeLeadIn);    // اپ مقصد سرد است؛ اولین رویداد نباید قربانی شود
         while (i < count) {
             NSUInteger n = MIN((NSUInteger)18, count - i);
             zPostUnicode(units + i, n);
-            if (d > 0) usleep(d);
+            usleep(td);
             i += n;
         }
     });
@@ -96,10 +109,11 @@ static void zPostUnicode(const UniChar *units, NSUInteger n) {
         }
         const UniChar *units = utf16.bytes;
         NSUInteger count = utf16.length / 2, i = 0;
+        // اینجا lead-in لازم نیست: پاک‌کن همین حالا رویداد فرستاده، پس اپ گرم است
         while (i < count) {
             NSUInteger k = MIN((NSUInteger)18, count - i);
             zPostUnicode(units + i, k);
-            if (d > 0) usleep(d);
+            usleep(MAX(d, kZTypeMinDelay));
             i += k;
         }
     });
