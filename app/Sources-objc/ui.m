@@ -138,7 +138,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
         [_chipBg addSubview:_chipLabel];
 
         // همه‌ی دکمه‌ها آیکون‌اند و یک اندازه، و هر تولتیپ حرف میان‌بر خودش را می‌گوید.
-        // میان‌بر هر کدام «Command راست + همان حرف» است؛ ⌥ + همان حرف هم کار می‌کند.
+        // میان‌بر هر کدام «Command راست + همان حرف» است، و تنها همان.
         _btnClose = [self makeButton:@"xmark" key:@"esc" tip:@"پایان و درج همه (Esc)"
                               action:@selector(closeTap)];
         _btnPause = [self makeButton:@"pause.fill" key:@"⌘"
@@ -153,7 +153,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
         _btnPolish = [self makeButton:@"wand.and.stars" key:@"P"
                                   tip:@"پاس ویرایش فارسی روی متن جمع‌شده"
                                action:@selector(polishTap)];
-        _btnInsert = [self makeButton:@"text.insert" key:@"V" tip:@"درج سر کرسر همین اپ"
+        _btnInsert = [self makeButton:@"text.insert" key:@"I" tip:@"درج سر کرسر همین اپ"
                                action:@selector(insertTap)];
         // رونویسی فایل: در هر دو حالتِ پنل‌دار پیداست، چون به سشن ربطی ندارد. راه سوم
         // دسترسی است، کنار آیتم منوبار و میان‌بر، و همان یک صف را باز می‌کند.
@@ -582,7 +582,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
         chip = [ZFaDigits([NSString stringWithFormat:@"%ld", (long)m.queued]) stringByAppendingString:@" در صف"];
     }
     _chipBg.toolTip = (m.waitingForTarget && m.targetName.length)
-        ? [NSString stringWithFormat:@"برگرد به %@ تا درج ادامه پیدا کند، یا ⌥V بزن که همینجا درج شود", m.targetName]
+        ? [NSString stringWithFormat:@"برگرد به %@ تا درج ادامه پیدا کند، یا Command راست و I بزن که همینجا درج شود", m.targetName]
         : nil;
     if (!chip.length) {
         _chipBg.hidden = YES;
@@ -631,13 +631,13 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     // دکمه مکث سه چهره دارد: مکث، ادامه، تلاش دوباره بعد از خطا
     if (m.error) {
         [self setButton:_btnPause symbol:@"arrow.clockwise"];
-        _btnPause.toolTip = @"تلاش دوباره (⌥Space)";
+        _btnPause.toolTip = @"تلاش دوباره (تک‌تپ Command راست)";
     } else if (m.paused) {
         [self setButton:_btnPause symbol:@"play.fill"];
-        _btnPause.toolTip = @"ادامه شنیدن (⌥Space)";
+        _btnPause.toolTip = @"ادامه شنیدن (تک‌تپ Command راست)";
     } else {
         [self setButton:_btnPause symbol:@"pause.fill"];
-        _btnPause.toolTip = @"مکث شنیدن (⌥Space)";
+        _btnPause.toolTip = @"مکث شنیدن (تک‌تپ Command راست)";
     }
 
     _dot.color = ZStatusColor(m);
@@ -694,7 +694,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     multiline.listening = YES;
 
     ZPanelModel *paused = [ZPanelModel new];
-    paused.status = @"مکث؛ ⌥Space برای ادامه";
+    paused.status = @"مکث؛ تک‌تپ Command راست برای ادامه";
     paused.paused = YES;
 
     ZPanelModel *queued = [ZPanelModel new];
@@ -734,7 +734,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     veryLong.listening = YES;
 
     ZPanelModel *error = [ZPanelModel new];
-    error.status = @"شبکه ناپایداره؛ دکمه تلاش دوباره یا ⌥Space";
+    error.status = @"شبکه ناپایداره؛ دکمه تلاش دوباره یا تک‌تپ Command راست";
     error.error = YES;
 
     ZPanelModel *collect = [ZPanelModel new];
@@ -773,7 +773,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
 // ---------- ZSession ----------
 // مدل تسمه‌نقاله: پنل فقط بافر خاکستری است؛ هر تکه قطعی، بعد از پاس ویرایش،
 // همان لحظه سر کرسرِ اپ مقصد درج می‌شود. اگر اپ جلویی عوض شود درج می‌ایستد و
-// صف جمع می‌شود (⌥V یعنی همینجا درج کن). در حالت «جمع در پنل» به جای درج زنده،
+// صف جمع می‌شود (Command راست و I یعنی همینجا درج کن). در حالت «جمع در پنل» به جای درج زنده،
 // متن در ادیتور خود پنل می‌نشیند و تهش یکجا درج یا کپی می‌شود. حالت «کرسر» دقیقا
 // همان تسمه‌نقاله‌ی زنده است، فقط بی‌پنل: به جای نوار، یک نقطه کنار کرسر. پس در
 // همه‌ی این کد تنها پرسشِ حالت این است که «جمع هست یا نه»، و کرسر هیچ شاخه‌ی درجِ
@@ -812,6 +812,7 @@ static NSString *ZModeLabel(ZMode m) {
     // مالکش ماییم تا تکه‌ی قطعی برسد و جایش را بگیرد؛ از آن به بعد متن کاربر است.
     NSString *_tail;
     CFAbsoluteTime _tailSyncAt;
+    BOOL _tailHoldsFinal;     // دُم دیگر خاکستری نیست: متن قطعیِ خام است، منتظر نسخه‌ی ویرایش‌شده
     NSMutableArray<NSString *> *_polishPending;
     BOOL _polishBusy;
     NSString *_polishInFlight;   // خامِ تکه در پرواز؛ موقع بستن برمی‌گردد سر صف
@@ -918,6 +919,7 @@ static NSString *ZModeLabel(ZMode m) {
         [_injector replaceLast:_tail.length with:@"" delayMicros:ZSettings.shared.typeDelayMicros];
     }
     _tail = @"";
+    _tailHoldsFinal = NO;
 }
 
 // تکه قطعی: اول خام روی دیسک (sessions طلای تست است و خام می‌ماند)،
@@ -945,6 +947,14 @@ static NSString *ZModeLabel(ZMode m) {
         [self acceptFinal:raw];
         [self drainPolish];
         return;
+    }
+    // حالت کرسر: متن خام همین حالا جای دُم را می‌گیرد و منتظر پاس ویرایش نمی‌ماند.
+    // دو سود دارد. یک، جمله هیچ لحظه‌ای از صفحه غایب نمی‌شود. دو، دیفِ بعدی «خام به
+    // ویرایش‌شده» است (معمولا یک نقطه و چند ویرگول) نه «خاکستریِ نیمه‌کاره به
+    // ویرایش‌شده»، پس پاک‌کن چند نویسه کار دارد نه کل جمله.
+    if (_mode == ZModeCursor && [self canTypeTail]) {
+        [self syncTailNow:[raw stringByAppendingString:@" "]];
+        _tailHoldsFinal = YES;
     }
     _polishBusy = YES;
     _polishInFlight = raw;
@@ -976,6 +986,14 @@ static NSString *ZModeLabel(ZMode m) {
         if ([self canTypeTail]) {
             [self syncTailNow:[text stringByAppendingString:@" "]];
             _tail = @"";
+            _tailHoldsFinal = NO;
+        } else if (_tailHoldsFinal) {
+            // خامِ همین تکه قبلا سر کرسر نشسته و مقصد از جلو رفته: دیگر قابل ویرایش
+            // نیست، ولی هست. صف کردنش یعنی همان جمله دو بار درج شود.
+            ZLog(@"session: tail holds raw final (%lu chars), polish dropped",
+                 (unsigned long)_tail.length);
+            _tail = @"";
+            _tailHoldsFinal = NO;
         } else {
             ZLog(@"session: tail abandoned (%lu chars), final queued", (unsigned long)_tail.length);
             _tail = @"";
@@ -1207,7 +1225,7 @@ static NSString *ZModeLabel(ZMode m) {
     }];
 }
 
-// ⌥V یا دکمه «درج در همین اپ»: هرچه هست، سر کرسر همین اپ جلویی
+// Command راست + I یا دکمه «درج در همین اپ»: هرچه هست، سر کرسر همین اپ جلویی
 - (void)insertHere {
     _target = NSWorkspace.sharedWorkspace.frontmostApplication;
     if (_mode == ZModeCollect) {
@@ -1328,7 +1346,7 @@ static NSString *ZModeLabel(ZMode m) {
     }
     [self flushPasteBuf];
     // پایان: در حالت زنده باقی صف، در حالت جمع کل متن ادیتور؛ اگر مقصد جلوست درج
-    // می‌شود، وگرنه کپیِ زیر همین تابع نجاتش می‌دهد. اگر ⌥V/دکمه درج قبلا درج کرده
+    // می‌شود، وگرنه کپیِ زیر همین تابع نجاتش می‌دهد. اگر Command راست + I یا دکمه درج قبلا درج کرده
     if (_mode == ZModeCollect) {
         NSString *t = [_panel editorText];
         if (t.length && [self targetIsFront]) {

@@ -28,6 +28,36 @@
     return IsSecureEventInputEnabled();
 }
 
+// سقف پاک‌کن. دُم یک پاره است، نه یک سند؛ عددی بزرگ‌تر از این یعنی دفترداریِ دُم به هم
+// ریخته، و آن‌وقت هر Backspace اضافه می‌رود سراغ متن خود کاربر. جلوی فرار را می‌گیرد.
+static const NSUInteger kZMaxErase = 256;
+
+// کف فاصله‌ی بین Backspace ها. تایپ ۱۸ نویسه در یک رویداد می‌رود ولی پاک‌کن یک رویداد
+// به ازای هر نویسه می‌فرستد؛ با ۱ میلی‌ثانیه، اپ‌های سنگین (کروم، الکترون) رویداد
+// می‌انداختند و شمارشِ دُم از واقعیت جدا می‌شد. افتادنِ یک تایپ فقط زشت است، افتادنِ
+// یک Backspace متنِ کاربر را می‌خورد؛ پس این سمت گران‌تر ولی محکم‌تر بسته می‌شود.
+static const useconds_t kZEraseMinDelay = 2500;
+
+// چرا پرچم صفر: رویدادِ ساخته‌شده با منبع NULL پرچم مودیفایرِ همان لحظه را برمی‌دارد.
+// اگر موقع درج، Command یا Option فیزیکی پایین باشد، کیکد ۰ (که همان A است) می‌شود
+// «همه را انتخاب کن» و kVK_Delete می‌شود «کل خط را پاک کن» یا «کلمه‌ی قبل را پاک کن».
+// مسیر sendCmdV پرچمش را عمدا و صریح می‌گذارد؛ این دو مسیر باید صریحا صفرش کنند.
+static void zPostPlain(CGEventRef e) {
+    if (!e) return;
+    CGEventSetFlags(e, 0);
+    CGEventPost(kCGSessionEventTap, e);
+    CFRelease(e);
+}
+
+static void zPostUnicode(const UniChar *units, NSUInteger n) {
+    CGEventRef down = CGEventCreateKeyboardEvent(NULL, 0, true);
+    if (down) {
+        CGEventKeyboardSetUnicodeString(down, (UniCharCount)n, units);
+        zPostPlain(down);
+    }
+    zPostPlain(CGEventCreateKeyboardEvent(NULL, 0, false));
+}
+
 // تایپ مستقیم: تکه‌های حداکثر ۱۸ واحد UTF-16 در هر رویداد؛
 // چون پنل فوکس نمی‌گیرد، متن دقیقا سر کرسرِ اپ مقصد می‌نشیند.
 - (void)type:(NSString *)text delayMicros:(useconds_t)d {
@@ -38,17 +68,7 @@
         NSUInteger i = 0;
         while (i < count) {
             NSUInteger n = MIN((NSUInteger)18, count - i);
-            CGEventRef down = CGEventCreateKeyboardEvent(NULL, 0, true);
-            if (down) {
-                CGEventKeyboardSetUnicodeString(down, n, units + i);
-                CGEventPost(kCGSessionEventTap, down);
-                CFRelease(down);
-            }
-            CGEventRef up = CGEventCreateKeyboardEvent(NULL, 0, false);
-            if (up) {
-                CGEventPost(kCGSessionEventTap, up);
-                CFRelease(up);
-            }
+            zPostUnicode(units + i, n);
             if (d > 0) usleep(d);
             i += n;
         }
@@ -61,31 +81,24 @@
 // همین حالا تایپشان کرده‌ایم؛ متن خودِ کاربر هیچ‌وقت از اینجا پاک نمی‌شود.
 - (void)replaceLast:(NSUInteger)n with:(NSString *)text delayMicros:(useconds_t)d {
     NSData *utf16 = [text dataUsingEncoding:NSUTF16LittleEndianStringEncoding];
+    if (n > kZMaxErase) {
+        ZLog(@"inject: erase %lu clamped to %lu (tail bookkeeping suspect)",
+             (unsigned long)n, (unsigned long)kZMaxErase);
+        n = kZMaxErase;
+    }
+    useconds_t ed = MAX(d, kZEraseMinDelay);
     dispatch_async(_q, ^{
         for (NSUInteger i = 0; i < n; i++) {
             for (int down = 1; down >= 0; down--) {
-                CGEventRef e = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)kVK_Delete, down != 0);
-                if (!e) continue;
-                CGEventPost(kCGSessionEventTap, e);
-                CFRelease(e);
+                zPostPlain(CGEventCreateKeyboardEvent(NULL, (CGKeyCode)kVK_Delete, down != 0));
             }
-            if (d > 0) usleep(d);
+            usleep(ed);
         }
         const UniChar *units = utf16.bytes;
         NSUInteger count = utf16.length / 2, i = 0;
         while (i < count) {
             NSUInteger k = MIN((NSUInteger)18, count - i);
-            CGEventRef down = CGEventCreateKeyboardEvent(NULL, 0, true);
-            if (down) {
-                CGEventKeyboardSetUnicodeString(down, k, units + i);
-                CGEventPost(kCGSessionEventTap, down);
-                CFRelease(down);
-            }
-            CGEventRef up = CGEventCreateKeyboardEvent(NULL, 0, false);
-            if (up) {
-                CGEventPost(kCGSessionEventTap, up);
-                CFRelease(up);
-            }
+            zPostUnicode(units + i, k);
             if (d > 0) usleep(d);
             i += k;
         }
@@ -181,7 +194,7 @@ static void zPostModifier(CGKeyCode key, CGEventFlags flags) {
 // ---------- ZHotkeyTap ----------
 // یک CGEventTap واحد برای کل اپ (نه یک تپ جدا به ازای هر سشن): از launch تا quit
 // زنده می‌ماند. دابل‌تپ Command راست (شروع/پایان سشن) در هر حالتی کار می‌کند و با
-// تنظیم «هاتکی داخلی» روشن/خاموش می‌شود. بقیه (Esc، ⌥Space/C/V، تک‌تپ Command راست،
+// تنظیم «هاتکی داخلی» روشن/خاموش می‌شود. بقیه (Esc، تک‌تپ Command راست،
 // Command راست+C) فقط وقتی sessionActive=YES باشد؛ بیرون از سشن دست‌نخورده رد می‌شوند.
 // تشخیص تپِ راست-Command همان ترفند lazy کارابینر است: رویداد نگه‌داشته می‌شود و فقط
 // اگر با کلید دیگری ترکیب شد دوباره تزریق می‌شود، وگرنه هیچ‌وقت به اپ دیگری نمی‌رسد.
@@ -298,8 +311,8 @@ static CGEventRef zHotkeyCallback(CGEventTapProxy proxy, CGEventType type, CGEve
     return NULL;
 }
 
-// نقشه‌ی واحد کلید به کار: هم Command راست + حرف از آن می‌خواند هم ⌥ + حرف، پس دو
-// مسیر هیچ‌وقت از هم واگرا نمی‌شوند و هر دکمه‌ی پنل دقیقا یک حرف دارد.
+// نقشه‌ی کلید به کار. یک ورودی دارد و بس: Command راست + حرف. هر دکمه‌ی پنل دقیقا
+// یک حرف دارد و همان حرف تنها راهش است.
 // F و H استثنا هستند و بیرون از سشن هم کار می‌کنند: پنل رونویسی فایل به سشن ربطی
 // ندارد، و راهنما را کسی می‌خواهد که هنوز میان‌برها را نمی‌داند، یعنی هنوز سشنی هم
 // ندارد. هزینه‌اش را می‌دانیم: Command راست + F و + H دیگر به اپ زیرین نمی‌رسند
@@ -315,7 +328,11 @@ static CGEventRef zHotkeyCallback(CGEventTapProxy proxy, CGEventType type, CGEve
         case 37: return self.onLangSwitch;    // L
         case 14: return self.onModeToggle;    // E
         case 35: return self.onPolishNow;     // P
-        case 9:  return self.onInsertHere;    // V
+        // I نه V: روی ⌥V سه چیز نشسته بود. مککی (تاریخچه‌ی کلیپ‌بورد مک) و، داخل
+        // ریموت، رول کارابینر که ⌥V را به Win+V می‌برد (تاریخچه‌ی کلیپ‌بورد ویندوز).
+        // آن دو یک معنی‌اند در دو دنیا و کلیدشان مال خودشان است؛ درجِ زمزمه راه‌های
+        // دیگری هم دارد (دکمه‌ی پنل و Esc)، پس همین یکی کنار کشید. I هم مثل insert.
+        case 34: return self.onInsertHere;    // I
         default: return nil;
     }
 }
@@ -341,7 +358,6 @@ static CGEventRef zHotkeyCallback(CGEventTapProxy proxy, CGEventType type, CGEve
     }
 
     CGEventFlags flags = CGEventGetFlags(event) & kZModMask;
-    void (^cb)(void) = nil;
     // Esc: صاحبش خودش تصمیم می‌گیرد (کارت راهنما یا سشن) و می‌گوید مصرف شد یا نه.
     // هم‌زمان، چون همین‌جا باید بدانیم رویداد را برگردانیم یا ببلعیم؛ دیر بگوییم،
     // Esc هم به اپ زیرین رسیده و هم کار ما را کرده.
@@ -349,11 +365,10 @@ static CGEventRef zHotkeyCallback(CGEventTapProxy proxy, CGEventType type, CGEve
         BOOL (^esc)(void) = self.onEscape;
         return (esc && esc()) ? NULL : event;
     }
-    if (flags == kCGEventFlagMaskAlternate) cb = [self actionForCode:code];
-    if (cb) {
-        dispatch_async(dispatch_get_main_queue(), cb);
-        return NULL;
-    }
+    // ⌥ + حرف عمدا دیگر خوانده نمی‌شود. یک تپ سراسری هر ترکیبی را که بگیرد از همه‌ی
+    // اپ‌های دیگر می‌دزدد، و ⌥ شلوغ‌ترین جای ممکن بود: ⌥V مال مککی است، ⌥P مال پین
+    // کردن همان، و داخل ریموت ⌥V به Win+V می‌رود. مسیر دوم هیچ کار تازه‌ای هم نمی‌کرد،
+    // فقط همان نقشه را از راه دیگری صدا می‌زد. حالا یک راه هست: Command راست + حرف.
     return event;
 }
 

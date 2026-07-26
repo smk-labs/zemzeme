@@ -67,7 +67,7 @@ static NSString *const kCSAutosave = @"ZemzemeCheatSheet";
         @{@"title": @"Command راست + یک حرف، در حین سشن",
           @"rows": @[
               @[@[@"C"],     @"doc.on.doc",        @"کپی متن تا اینجا"],
-              @[@[@"V"],     @"text.insert",       @"درج سر کرسر همین اپ"],
+              @[@[@"I"],     @"text.insert",       @"درج سر کرسر همین اپ"],
               @[@[@"D"],     @"trash",             @"دور ریختن متن درج‌نشده"],
               @[@[@"L"],     @"globe",             @"عوض کردن زبان: فارسی و انگلیسی"],
               @[@[@"E"],     @"square.and.pencil", @"چرخش حالت: زنده ← جمع ← کرسر"],
@@ -98,9 +98,9 @@ static NSString *const kCSAutosave = @"ZemzemeCheatSheet";
 // نه یک راهنمای درستِ همیشگی که با دستگاه کاربر جور نیست.
 - (NSArray<NSArray *> *)notes {
     NSMutableArray *n = [NSMutableArray array];
-    // ‎ دور نمونه‌ی کلید: ⌥ نویسه‌ی بی‌جهت است و در جمله‌ی فارسی راست‌چین می‌نشیند،
-    // یعنی «⌥C» برعکس («C⌥») دیده می‌شود. این نشانه همان تکه را چپ‌به‌راست پین می‌کند.
-    [n addObject:@[@"option", @"هر حرف با ⌥ هم کار می‌کند: ‎⌥C‎ همان Command راست و C است", @NO]];
+    // مسیر دوم ⌥ برداشته شد: یک تپ سراسری هر ترکیبی را که بگیرد از اپ‌های دیگر
+    // می‌دزدد، و ⌥ جای شلوغی بود (⌥V و ⌥P مال مککی، ⌥V داخل ریموت مال Win+V).
+    [n addObject:@[@"command", @"همه‌ی میان‌برها فقط با Command راست‌اند؛ ⌥ دیگر کاری نمی‌کند", @NO]];
     [n addObject:@[@"info.circle", @"جز H و F، بقیه‌ی حرف‌ها فقط در حین سشن کار می‌کنند", @NO]];
     if (!ZSettings.shared.internalHotkey) {
         [n addObject:@[@"exclamationmark.triangle",

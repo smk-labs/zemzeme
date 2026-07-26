@@ -83,6 +83,19 @@ ZSpeechEvent *ZProtoDecodeEvent(NSData *body);
 // مسیر دسته‌ای (درز دو پاره‌ی هم‌پوشان فایل).
 NSString *ZMergeInterim(NSString *best, NSString *cur);
 
+// همان کار، ولی بامدارا: در ناحیه‌ی هم‌پوشانی اختلاف چند توکن را نادیده می‌گیرد (۷۰٪
+// تطبیق کافی است). تطبیقِ دقیقِ ZMergeInterim سر درزِ دو تشخیص جدا کور می‌شود، چون
+// همان چند کلمه دو بار شنیده شده‌اند و لزوما یکسان تشخیص داده نمی‌شوند. مسیر دسته‌ای
+// و درزِ چرخشِ مسیر زنده هر دو از این می‌خوانند.
+// maxWords سقف پنجره است و اجباری: همیشه از ثانیه‌های هم‌پوشانی حسابش کن
+// (ZStitchWords)، نه از حدس. پنجره‌ی گشادتر از هم‌پوشانی یعنی متنِ واقعی بلعیده شود.
+NSString *ZStitchOverlapMax(NSString *a, NSString *b, NSUInteger maxWords);
+
+// تندترین گفتارِ معقول، کلمه بر ثانیه. دست‌ودل‌بازانه گرفته شده: پنجره‌ی کمی گشادتر
+// فقط چند کلمه تکرار می‌سازد، پنجره‌ی تنگ‌تر از واقعیت تکرار را اصلا برنمی‌دارد.
+#define kZStitchWordsPerSec 4
+#define ZStitchWords(sec) ((NSUInteger)((sec) * kZStitchWordsPerSec))
+
 // ---------- موتور pluggable ----------
 typedef NS_ENUM(NSInteger, ZEngineState) {
     ZEngineIdle,
@@ -139,6 +152,18 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 // فقط برای خرابی‌های نادر.
 #define kZRotateSec 20.0
 #define kZRotateAtFinalSec 12.0
+
+// هم‌پوشانی سر چرخش. باگ واقعی: بریدن بی‌هم‌پوشانی کلمه‌ی سر درز را نصف می‌کرد و هر دو
+// نصفه می‌افتاد (سرور قدیمی هجای ناقص آخر را دور می‌ریزد، سرور تازه هجای اولش را
+// نشنیده). «آپلود سالم تمام می‌شود پس سرور همه‌ی صدا را دارد» فقط برای صدای کامل
+// درست بود، نه برای نصفِ یک کلمه. حالا استریم تازه این‌قدر ثانیه از صدای قبلی را
+// دوباره می‌شنود و تکرارِ حاصل را جوشِ متنی (ZStitchOverlap) برمی‌دارد، نه پاک کردن صدا.
+#define kZRotateOverlapSec 2.0
+// و ترجیحا در سکوت می‌بُریم: این‌قدر ثانیه صدایی نیامده باشد یعنی وسط کلمه نیستیم.
+#define kZRotateQuietSec 0.35
+// اگر سکوتی پیش نیامد این سقف به هر حال می‌بُرد، زیر سقف ~۳۰ ثانیه‌ای سرور.
+// بریدن وسط حرف اینجا بی‌خطر است، چون هم‌پوشانی درز را می‌پوشاند.
+#define kZRotateHardSec 27.0
 
 // حرف می‌زند و این‌قدر ثانیه هیچ نتیجه‌ای نمی‌آید: استریم مرده، ولی فریم می‌فرستد.
 // واچ‌داگ قدیمی «سکوت رویداد» این حالت را نمی‌دید، چون فریم endpointer/status می‌آمد.
@@ -219,14 +244,14 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 - (void)copyFinalAfterPending:(NSString *)text;         // پشت صف درج، که مسابقه با پیست نگیرد
 @end
 
-// ---------- تپ کیبورد سراسری: Esc، شورتکات‌های ⌥، دابل/تک‌تپ Command راست ----------
+// ---------- تپ کیبورد سراسری: Esc و همه‌ی کارهای Command راست ----------
 // یک CGEventTap واحد برای کل اپ؛ از لانچ تا کوییت زنده می‌ماند (نه هر سشن یک تپ نو).
-// دابل‌تپ Command راست (شروع/پایان سشن) در هر حالتی کار می‌کند؛ بقیه (Esc، ⌥ها،
-// تک‌تپ، Command راست+C) فقط وقتی sessionActive=YES باشد.
+// دابل‌تپ Command راست (شروع/پایان سشن) در هر حالتی کار می‌کند؛ بقیه (Esc، تک‌تپ،
+// Command راست+C) فقط وقتی sessionActive=YES باشد.
 @interface ZHotkeyTap : NSObject
-// همه‌ی میان‌برها روی Command راست سوار شده‌اند: تک‌تپ مکث/ادامه، دابل‌تپ شروع/پایان،
-// و Command راست + یک حرف برای هر دکمه. همان حروف با ⌥ هم کار می‌کنند (عادت قدیمی
-// نشکند)، چون هر دو از یک نقشه‌ی واحد (actionForCode:) می‌خوانند.
+// همه‌ی میان‌برها روی Command راست سوار شده‌اند و جای دیگری ندارند: تک‌تپ مکث/ادامه،
+// دابل‌تپ شروع/پایان، و Command راست + یک حرف برای هر دکمه. مسیر دوم ⌥ برداشته شد،
+// چون یک تپ سراسری هر ترکیبی را که بگیرد از اپ‌های دیگر می‌دزدد و ⌥ جای شلوغی بود.
 @property (nonatomic, copy) void (^onToggle)(void);        // دابل‌تپ Command راست
 // Esc، با اولویت: کارت راهنما باز است ببندش، وگرنه سشن را تمام کن. جواب YES یعنی
 // رویداد مصرف شد و به اپ زیرین نمی‌رسد؛ NO یعنی Esc مال ما نبود، دست‌نخورده رد شود
@@ -237,7 +262,7 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 @property (nonatomic, copy) void (^onHelp)(void);           // H: کارت راهنما، در سشن و بیرونش
 @property (nonatomic, copy) void (^onPauseToggle)(void);    // تک‌تپ Command راست، یا Space
 @property (nonatomic, copy) void (^onCopyNow)(void);        // C
-@property (nonatomic, copy) void (^onInsertHere)(void);     // V
+@property (nonatomic, copy) void (^onInsertHere)(void);     // I (نه V: V مال تاریخچه‌ی کلیپ‌بورد است)
 @property (nonatomic, copy) void (^onTrash)(void);          // D
 @property (nonatomic, copy) void (^onLangSwitch)(void);     // L
 @property (nonatomic, copy) void (^onModeToggle)(void);     // E

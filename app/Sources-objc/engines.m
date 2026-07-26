@@ -27,6 +27,9 @@
     NSDate *_stallGraceUntil;    // تا این لحظه استریمِ تازه متهم به گیر کردن نمی‌شود
     NSString *_drainCarry;       // متن معلقِ سر چرخش، اگر سشن قدیمی final نداد
     BOOL _drainGotFinal;
+    NSDate *_lastVoiceAt;        // آخرین لحظه‌ای که واقعا صدا بود؛ برای بریدن در سکوت
+    BOOL _stitchArmed;           // استریم تازه با هم‌پوشانی شروع شد: اولین متن قطعی‌اش جوش می‌خورد
+    NSString *_lastDeliveredFinal;   // طرفِ چپِ همان جوش
     NSInteger _endsSinceResult;
     BOOL _gotResultThisCycle;
     NSString *_lastInterim;
@@ -150,6 +153,8 @@ NSString *ZMergeInterim(NSString *best, NSString *cur) {
     _feedTarget = nil;
     _replay.length = 0;
     [_feedLock unlock];
+    _stitchArmed = NO;
+    _lastDeliveredFinal = nil;
     [self stopMicAndTimers];
     [self state:ZEngineIdle msg:@""];
     if (was) ZLog(@"engine: stopped by user");
@@ -170,6 +175,8 @@ NSString *ZMergeInterim(NSString *best, NSString *cur) {
     _replay.length = 0;
     _voiceSinceResult = 0;
     [_feedLock unlock];
+    _stitchArmed = NO;         // صدای هم‌پوشان هم رفت، جوشی در کار نیست
+    _lastDeliveredFinal = nil;
     // نال کردن قبل از cancel: مسیر close این‌ها را «غریبه» می‌بیند، پس نه salvage
     // می‌کند نه ری‌استارت، و متن قطعیِ دیررسشان هم دور ریخته می‌شود.
     ZGoogleStream *old = _stream, *dr = _draining;
@@ -213,6 +220,7 @@ NSString *ZMergeInterim(NSString *best, NSString *cur) {
             NSDate *n = NSDate.date;
             NSTimeInterval step = s->_prevLevelAt ? [n timeIntervalSinceDate:s->_prevLevelAt] : 0;
             s->_voiceSinceResult += MIN(MAX(step, 0), 0.5);
+            s->_lastVoiceAt = n;    // چرخش می‌خواهد بداند همین حالا وسط کلمه‌ایم یا نه
             [s->_feedLock unlock];
         }
         [s->_feedLock lock];
@@ -308,7 +316,7 @@ NSString *ZMergeInterim(NSString *best, NSString *cur) {
     for (NSString *f in ev.finals) {
         _lastInterim = @"";
         _salvageBest = @"";
-        [self deliverFinal:f];
+        [self deliverFinal:[self stitchIfArmed:f]];
     }
     // باگ‌فیکس حذف متن: فریم بدون result (endpointer/status) دیگر interim را پاک نمی‌کند؛
     // فقط فریم‌های نتیجه‌دار حق دست زدن به متن خاکستری دارند.
@@ -317,11 +325,53 @@ NSString *ZMergeInterim(NSString *best, NSString *cur) {
         if (_lastInterim.length > _salvageBest.length) _salvageBest = [_lastInterim copy];
         [self.delegate engineInterim:_lastInterim];
     }
-    // مرز یک متن قطعی بهترین جای چرخش است: هیچ متن معلقی در کار نیست. اگر تا سقف
-    // اجباری (tick) چنین مرزی پیش بیاید، همان‌جا عوض می‌کنیم.
-    if (ev.finals.count && [NSDate.date timeIntervalSinceDate:_streamStartedAt] > kZRotateAtFinalSec) {
+    // مرز یک متن قطعی بهترین جای چرخش است: هیچ متن معلقی در کار نیست. ولی «متن قطعی»
+    // یعنی گوگل یک پاره را بست، نه اینکه کاربر ساکت شد؛ وسط جمله هم می‌آید. پس شرط
+    // دوم لازم است: همین حالا صدایی نباشد. اگر پیوسته حرف می‌زند، سقف‌های tick می‌بُرند
+    // و هم‌پوشانی درز را می‌پوشاند.
+    if (ev.finals.count && [NSDate.date timeIntervalSinceDate:_streamStartedAt] > kZRotateAtFinalSec
+        && [self quietNow]) {
         [self rotate];
     }
+}
+
+// همین حالا وسط کلمه‌ایم یا نه. تنها معیارِ در دسترسِ درست: آخرین باری که میکروفن
+// صدای واقعی دید (همان آستانه‌ای که _voiceInCycle از آن می‌خواند).
+- (BOOL)quietNow {
+    [_feedLock lock];
+    NSDate *v = _lastVoiceAt;
+    [_feedLock unlock];
+    return !v || [NSDate.date timeIntervalSinceDate:v] > kZRotateQuietSec;
+}
+
+// اولین متن قطعیِ استریمِ پس از چرخش، صدای هم‌پوشان را دوباره شنیده، پس چند کلمه‌ی
+// اولش تکرارِ دمِ متن قبلی است. جوش همان‌ها را برمی‌دارد و کلمه‌ی سر درز، که قبلا
+// نصفه می‌افتاد، اینجا کامل برمی‌گردد.
+- (NSString *)stitchIfArmed:(NSString *)text {
+    if (!_stitchArmed) return text;
+    _stitchArmed = NO;
+    NSString *prev = [_lastDeliveredFinal stringByTrimmingCharactersInSet:
+                      NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSString *cur = [text stringByTrimmingCharactersInSet:
+                     NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (!prev.length || !cur.length) return text;
+    // پنجره دقیقا به اندازه‌ی صدایی که دوباره پخش شد، نه یک کلمه بیشتر
+    NSString *joined = ZStitchOverlapMax(prev, cur, ZStitchWords(kZRotateOverlapSec));
+    if (joined.length <= prev.length) {
+        // کل تکه هم‌پوشانی تشخیص داده شد. ممکن است درست باشد، ولی ممکن هم هست تطبیقِ
+        // الکیِ گفتار تکراری باشد. اینجا خام را نگه می‌داریم: قرارِ این محصول این است
+        // که یک کلمه هم جا نیفتد، و تکرارِ چند کلمه را کاربر پاک می‌کند، گم‌شده را نه.
+        ZLog(@"engine: seam looked fully redundant, keeping raw (%lu chars)", (unsigned long)cur.length);
+        return text;
+    }
+    NSString *rest = [[joined substringFromIndex:prev.length]
+                      stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (!rest.length) return text;
+    if (rest.length != cur.length) {
+        ZLog(@"engine: seam stitched, %ld dup chars dropped",
+             (long)cur.length - (long)rest.length);
+    }
+    return rest;
 }
 
 - (void)handleClose:(NSString *)reason from:(ZGoogleStream *)s {
@@ -360,10 +410,16 @@ NSString *ZMergeInterim(NSString *best, NSString *cur) {
     NSString *t = ZMergeInterim(_salvageBest, _lastInterim);
     _lastInterim = @"";
     _salvageBest = @"";
-    [self.delegate engineInterim:@""];
-    if (!t.length) return;
+    if (!t.length) {
+        [self.delegate engineInterim:@""];
+        return;
+    }
+    // خالی کردنِ متن خاکستری *قبل* از تحویل متن قطعی غلط بود: در حالت کرسر آن یک خط
+    // یعنی «همین حالا هرچه تایپ کرده‌ای را با Backspace پاک کن»، و متن قطعی چند صد
+    // میلی‌ثانیه بعد (پشت پاس ویرایش) برمی‌گشت. کاربر جمله‌اش را می‌دید که پاک می‌شود.
+    // حالا فقط تحویل می‌دهیم؛ جایگزینی سر جای خودش را مصرف‌کننده انجام می‌دهد.
     ZLog(@"engine: salvaged %lu chars", (unsigned long)t.length);
-    [self deliverFinal:t];
+    [self deliverFinal:[self stitchIfArmed:t]];
 }
 
 - (void)scheduleRestart {
@@ -446,13 +502,20 @@ NSString *ZMergeInterim(NSString *best, NSString *cur) {
     }
     // چرخش اجباری قبل از سقف ~۳۰ ثانیه‌ای صدای سرور. این مسیر عادی است، نه استثنا:
     // اگر همیشه قبل از سقف عوض کنیم، هیچ‌وقت به گیر کردن و بازپخش نمی‌رسیم.
-    if (age > kZRotateSec) [self rotate];
+    // اول در اولین سکوت بعد از kZRotateSec؛ اگر پیوسته حرف می‌زند، سر سقف سخت.
+    if (age > kZRotateSec && [self quietNow]) {
+        [self rotate];
+    } else if (age > kZRotateHardSec) {
+        ZLog(@"engine: hard rotate at %.0fs, no silence found", age);
+        [self rotate];
+    }
 }
 
-// چرخش نرم: برعکس مسیر گیر کردن، اینجا آپلود سالم تمام می‌شود، پس سرور همه‌ی صدا را
-// دارد و متن قطعی‌اش را می‌دهد. یعنی بازپخش نباید انجام شود، وگرنه همان حرف‌ها دو بار
-// درج می‌شوند. متن معلق هم به‌عنوان بیمه کنار گذاشته می‌شود، برای وقتی که سشن قدیمی
-// دست‌خالی بست.
+// چرخش نرم: برعکس مسیر گیر کردن، اینجا آپلود سالم تمام می‌شود، پس سرور همه‌ی صدای
+// کاملی را که گرفته تشخیص می‌دهد. ولی «همه‌ی صدا» شامل نصفِ کلمه‌ی سر درز نیست: هجای
+// ناقصِ آخر را دور می‌ریزد. برای همین به جای خالی کردن بازپخش، آخرین چند ثانیه‌اش را
+// نگه می‌داریم تا استریم تازه همان کلمه را از اولش بشنود. تکرارِ حاصل مشکل نیست،
+// جوشِ متنی (stitchIfArmed) برش می‌دارد؛ گم شدنِ کلمه مشکل بود.
 - (void)rotate {
     if (!_running || !_stream) return;
     ZGoogleStream *old = _stream;
@@ -467,7 +530,12 @@ NSString *ZMergeInterim(NSString *best, NSString *cur) {
     _lastInterim = @"";
     _salvageBest = @"";
     [_feedLock lock];
-    _replay.length = 0;
+    NSUInteger keep = MIN(_replay.length, (NSUInteger)(kZRotateOverlapSec * 32000));
+    keep -= keep % 2;    // مرز نمونه‌ی ۱۶ بیتی، وگرنه بایت‌ها یک‌درمیان جابه‌جا می‌شوند
+    if (_replay.length > keep) {
+        [_replay replaceBytesInRange:NSMakeRange(0, _replay.length - keep) withBytes:NULL length:0];
+    }
+    _stitchArmed = keep > 0;
     _voiceSinceResult = 0;
     [_feedLock unlock];
     [old finishUpload];
@@ -487,6 +555,7 @@ NSString *ZMergeInterim(NSString *best, NSString *cur) {
 - (void)deliverFinal:(NSString *)text {
     NSString *t = [text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (!t.length) return;
+    _lastDeliveredFinal = t;    // طرفِ چپِ جوشِ درزِ چرخشِ بعدی
     [self.delegate engineFinal:t];
 }
 

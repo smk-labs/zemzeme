@@ -313,7 +313,7 @@ int ZSelfTest(NSString *file, NSString *lang) {
         NSMenuItem *copy = [self item:menu title:@"کپی متن" action:@selector(menuCopyNow) key:@"c"];
         [self icon:copy symbol:@"doc.on.doc"];
         copy.toolTip = @"کپی کل متن دیکته‌شده تا الان";
-        NSMenuItem *ins = [self item:menu title:@"درج همینجا" action:@selector(menuInsertHere) key:@"v"];
+        NSMenuItem *ins = [self item:menu title:@"درج همینجا" action:@selector(menuInsertHere) key:@"i"];
         [self icon:ins symbol:@"text.insert"];
         ins.toolTip = @"درج در اپی که پشت پنل باز است";
     }
@@ -419,8 +419,7 @@ int ZSelfTest(NSString *file, NSString *lang) {
     NSMenuItem *keysItem = [self icon:[self item:menu title:@"راهنما"
                                           action:@selector(menuCheatSheet) key:@""]
                                 symbol:@"questionmark.circle"];
-    // نشانه‌ی ⌘H فقط برای دیده شدن است: کار واقعی را تپ سراسری می‌کند و آن هم فقط با
-    // Command راست. ماسک را دستی می‌گذاریم چون item: پیش‌فرض ⌥ می‌گذارد.
+    // نشانه‌ی ⌘H فقط برای دیده شدن است: کار واقعی را تپ سراسری می‌کند، با Command راست
     keysItem.keyEquivalent = @"h";
     keysItem.keyEquivalentModifierMask = NSEventModifierFlagCommand;
     keysItem.toolTip = @"کارت میان‌برها با Command راست + H؛ شناور می‌ماند و با Esc بسته می‌شود";
@@ -429,11 +428,13 @@ int ZSelfTest(NSString *file, NSString *lang) {
     [self icon:[self item:menu title:@"خروج از زمزمه" action:@selector(menuQuit) key:@"q"] symbol:@"power"];
 }
 
-// شورتکات‌های نمایشی ⌥ فقط راهنما هستند؛ کار واقعی را تپ سراسری سشن می‌کند
+// کلیدهای کنار آیتم‌های منو فقط نمایشی‌اند؛ کار واقعی را تپ سراسری می‌کند و آن هم
+// فقط با Command راست. پس همین‌جا هم ⌘ نشان می‌دهیم نه ⌥: ⌥ دیگر هیچ کاری نمی‌کند و
+// نشان دادنش کاربر را دنبال کلیدی می‌فرستد که جواب نمی‌دهد.
 - (NSMenuItem *)item:(NSMenu *)m title:(NSString *)t action:(SEL)a key:(NSString *)k {
     NSMenuItem *i = [[NSMenuItem alloc] initWithTitle:t action:a keyEquivalent:k];
     i.target = self;
-    if (k.length && ![k isEqualToString:@"q"]) i.keyEquivalentModifierMask = NSEventModifierFlagOption;
+    if (k.length) i.keyEquivalentModifierMask = NSEventModifierFlagCommand;
     [m addItem:i];
     return i;
 }

@@ -4,7 +4,7 @@
 // پس نه واچ‌داگ میکروفن لازم است، نه واچ‌داگ گیر کردن، نه دور ریختن بک‌لاگ، نه نجات
 // بازپخشی. در عوض یک برش‌زن قطعی داریم: فایل روی سکوت به پاره‌های ~۲۰ ثانیه‌ای با
 // ۲٫۵ ثانیه هم‌پوشانی بریده می‌شود، هر پاره یک سشن تازه‌ی خودش را می‌گیرد، و درزها با
-// ادغام هم‌پوشانی (ZBatchStitch، نسخه‌ی بامدارای ZMergeInterim) جوش می‌خورند.
+// ادغام هم‌پوشانی (ZStitchOverlap، نسخه‌ی بامدارای ZMergeInterim) جوش می‌خورند.
 //
 // چرا پاره‌ی ۲۰ ثانیه‌ای (اندازه‌گیری tools/probe_markers.py روی همین نقطه):
 // یک سشن ~۳۰ ثانیه صدای پیوسته را می‌شنود و بعد ~۳۰ ثانیه کر می‌شود و همین‌طور
@@ -111,9 +111,16 @@ static void ZSplitTail(NSString *all, NSUInteger words, NSString **head, NSStrin
 // توکن اختلاف در ناحیه هم‌پوشانی کور می‌شود (اندازه‌گیری روی فایل ۱۷ دقیقه‌ای: «year»
 // در یک پاره «ear» شنیده شده بود) و همان چند کلمه دو بار می‌نشست، ۵ درز از ۷۲.
 // پس تطبیق را نسبی می‌کنیم: اگر دست‌کم ۷۰٪ توکن‌ها بخوانند، هم‌پوشانی است.
-// چرا اینجا و نه در خود ZMergeInterim: مسیر زنده قرارداد خودش را دارد و رفتارش نباید
-// به‌خاطر یک قابلیت دیگر عوض شود.
-static NSString *ZBatchStitch(NSString *a, NSString *b) {
+// چرا جدا از ZMergeInterim: آن یکی تطبیق دقیق می‌خواهد و قراردادش (نجات interim های
+// یک استریم) نباید عوض شود. این یکی برای درزِ دو تشخیصِ جداست، چه دو پاره‌ی فایل باشد
+// چه دو استریمِ زنده سر چرخش، و هر دو همان مدارا را لازم دارند.
+// maxWords: بیشترین چند کلمه‌ای که هم‌پوشانیِ صوتی *می‌تواند* داشته باشد. اندازه‌گیری:
+// بی این سقف (پنجره‌ی ثابت ۳۰)، روی گفتار تکراری هر درز یک جمله‌ی کامل را می‌خورد.
+// ۱۲۳ ثانیه گفتار با جمله‌های هم‌شکل: ۶ جمله از ۳۰ رفت، دقیقا یکی سر هر درز. علتش
+// جهت حلقه است (از بزرگ‌ترین k به پایین) بعلاوه‌ی مدارای ۷۰٪: روی متن تکراری یک k
+// بزرگِ الکی زودتر از k درستِ کوچک جواب می‌دهد و هرچه لای آن است دور ریخته می‌شود.
+// سقف از روی ثانیه‌های هم‌پوشانی حساب می‌شود، پس تطبیقِ الکی جا برای بلعیدن ندارد.
+NSString *ZStitchOverlapMax(NSString *a, NSString *b, NSUInteger maxWords) {
     NSArray *A = [a componentsSeparatedByString:@" "];
     NSArray *B = [b componentsSeparatedByString:@" "];
     if (!a.length) return b;
@@ -126,9 +133,9 @@ static NSString *ZBatchStitch(NSString *a, NSString *b) {
             [dst addObject:[[t stringByTrimmingCharactersInSet:punct] lowercaseString]];
         }
     }
-    // پنجره‌ی جست‌وجو به اندازه‌ی هم‌پوشانی واقعی است (~۲٫۵ ثانیه، یعنی ۱۰ تا ۱۵ کلمه)
-    // با کمی حاشیه. بیشتر از این فقط شانس تطبیق الکی را بالا می‌برد.
-    NSUInteger maxK = MIN(MIN(A.count, B.count), (NSUInteger)30);
+    // پنجره‌ی جست‌وجو به اندازه‌ی هم‌پوشانی واقعی است. بیشتر از این فقط شانس تطبیق
+    // الکی را بالا می‌برد، و تطبیق الکی یعنی متنِ واقعی دور ریخته شود.
+    NSUInteger maxK = MIN(MIN(A.count, B.count), MAX((NSUInteger)2, maxWords));
     for (NSUInteger k = maxK; k >= 2; k--) {
         NSUInteger match = 0;
         for (NSUInteger i = 0; i < k; i++) {
@@ -462,7 +469,7 @@ static NSString *ZBatchJoin(NSArray<ZBatchPiece *> *pieces) {
         }
         NSString *head = nil, *tail = nil;
         ZSplitTail(out, 25, &head, &tail);
-        NSString *merged = ZBatchStitch(tail, t);
+        NSString *merged = ZStitchOverlapMax(tail, t, ZStitchWords(kZBatchOverlapSec));
         [out setString:head.length ? [NSString stringWithFormat:@"%@ %@", head, merged] : merged];
     }
     return out;
