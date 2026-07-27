@@ -15,6 +15,7 @@
     NSLock *_lock;
     unsigned long long _pcmBytes;
     unsigned long long _outBytes;
+    BOOL _opened;               // یک بایت هم که نوشته شد، فایل هست و می‌ماند
     BOOL _done;
     BOOL _broken;               // یک بار شکست، دیگر هر تکه را دوباره امتحان نمی‌کنیم
 }
@@ -27,9 +28,14 @@
     return self;
 }
 
+// نال تا اولین بایت (فایل خالی روی دیسک نمی‌ماند)، و از آن به بعد **همیشه** همان مسیر.
+// باگ واقعی و دقیقا اینجا: شرط اولش `_fh != nil` بود، یعنی به *باز بودنِ* فایل بسته
+// بود نه به وجودش. سر پایان اول `finish` صدا می‌خورد و بعد `url` پرسیده می‌شد، پس
+// جواب نال بود و پاس نهایی بی‌سروصدا «صدایی ضبط نشده» می‌گرفت و رد می‌شد. دو سشن
+// واقعی همین‌طور بی‌متن تمام شدند تا لاگ لوش داد.
 - (NSURL *)url {
     [_lock lock];
-    NSURL *u = _fh ? _want : nil;    // نال تا اولین بایت: فایل خالی روی دیسک نمی‌ماند
+    NSURL *u = _opened ? _want : nil;
     [_lock unlock];
     return u;
 }
@@ -73,6 +79,7 @@
     }
     [_fh seekToEndOfFile];
     _outBytes = _enc.streamHeader.length;
+    _opened = YES;
     return YES;
 }
 

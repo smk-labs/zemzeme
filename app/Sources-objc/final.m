@@ -52,6 +52,7 @@ static NSString *ZGThinking(void) {
 
 @implementation ZFinalPass {
     NSString *_key;
+    BOOL _keyChecked;    // یک بار پرسیده شد؛ «نبود» هم جواب است و دوباره پرسیده نمی‌شود
     NSLock *_keyLock;
     NSLock *_logLock;
 }
@@ -114,17 +115,17 @@ static NSString *ZKeyFromSecurityTool(void) {
 - (NSString *)key {
     [_keyLock lock];
     NSString *k = _key;
+    BOOL checked = _keyChecked;
     [_keyLock unlock];
-    if (k.length) return k;
+    if (k.length || checked) return k.length ? k : nil;
     k = NSProcessInfo.processInfo.environment[@"GEMINI_API_KEY"];
     k = [k stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (!k.length) k = ZKeyFromKeychain();
     if (!k.length) k = ZKeyFromSecurityTool();
-    if (k.length) {
-        [_keyLock lock];
-        _key = [k copy];
-        [_keyLock unlock];
-    }
+    [_keyLock lock];
+    _keyChecked = YES;
+    if (k.length) _key = [k copy];
+    [_keyLock unlock];
     return k.length ? k : nil;
 }
 
@@ -132,7 +133,19 @@ static NSString *ZKeyFromSecurityTool(void) {
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{ [self key]; });
 }
 
-+ (BOOL)hasKey { return [ZFinalPass.shared key].length > 0; }
+// جوابِ کش‌شده، و روی نخ اصلی **هیچ‌وقت** پرسشِ تازه. سه فراخوان از نخ اصلی می‌آیند
+// (منو، کارت راهنما، شروع سشن) و پرسیدنِ Keychain می‌تواند پنجره‌ی اجازه باز کند و
+// همان‌جا یخ بزند. اگر هنوز پرسیده نشده، پرسش را در پس‌زمینه راه می‌اندازد و جواب
+// این دفعه «نه» است؛ دفعه‌ی بعد که منو باز شود درست می‌گوید.
++ (BOOL)hasKey {
+    ZFinalPass *s = ZFinalPass.shared;
+    if (!NSThread.isMainThread) return [s key].length > 0;
+    [s->_keyLock lock];
+    BOOL have = s->_key.length > 0, checked = s->_keyChecked;
+    [s->_keyLock unlock];
+    if (!have && !checked) [s prefetchKey];
+    return have;
+}
 
 + (NSString *)missingKeyHint {
     return @"کلید جمینای پیدا نشد. یک بار در ترمینال بزن: "
@@ -212,7 +225,10 @@ static NSTimeInterval ZRetryAfter(NSData *body, NSTimeInterval fallback) {
         NSTimeInterval wait = 2.0 * (try + 1);
         if (st == 429 || st == 503) {
             if (++rateTries > 1) break;    // سقفِ روزانه با صبر کردن باز نمی‌شود
-            wait = MIN(60.0, ZRetryAfter(body, wait));
+            // سقف ۲۰ ثانیه، و نه عددی که سرور می‌گوید (معمولا ~۵۸): پشتِ این مسیر
+            // فال‌بکِ تشخیص گفتار نشسته، و بیست ثانیه چرخنده بعد رفتن به فال‌بک،
+            // بهتر از یک دقیقه چرخنده است. اندازه‌گیری: تلاش دوم هم ۴۲۹ بود.
+            wait = MIN(20.0, ZRetryAfter(body, wait));
             ZLog(@"final: %@ جواب %ld داد، %.0f ثانیه صبر و یک تلاش دوباره", label, (long)st, wait);
         } else if (st < 0) {
             ZLog(@"final: %@ شبکه قطع شد، تلاش %d از ۳", label, try + 2);

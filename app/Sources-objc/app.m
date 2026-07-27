@@ -179,6 +179,9 @@ int ZSelfTest(NSString *file, NSString *lang) {
     [self watchAccessibility];
     // دیمن پاس از همین حالا گرم شود که تکه اول اولین سشن سرد نخورد
     if (ZSettings.shared.polishEnabled) [ZPolish.shared prepare];
+    // و کلید پاس نهایی هم همین حالا، در پس‌زمینه: منو و کارت راهنما باید از اولین بار
+    // درست بگویند کلید هست یا نه، و پرسشِ Keychain حق ندارد نخ اصلی را نگه دارد.
+    if (ZSettings.shared.finalPassEnabled) [ZFinalPass.shared prefetchKey];
     ZLog(@"app: launched res=%@ data=%@ ax=%d polish=%d",
          ZRes().path, ZSupport().path,
          [ZInjector accessibilityOK], ZSettings.shared.polishEnabled);

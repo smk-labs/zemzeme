@@ -980,6 +980,9 @@ static NSString *ZModeLabel(ZMode m) {
     NSString *_enginePending;
 
     NSString *_statusText;
+    // هشدارِ چسبان: شرطش تا آخر سشن عوض نمی‌شود، پس نباید با اولین تغییرِ وضعیتِ
+    // موتور شسته شود. خط وضعیت را تا پایان در دست می‌گیرد.
+    NSString *_warning;
     BOOL _errorState;
     BOOL _troubleState;       // قطعی موقت: نقطه قرمز، ولی سشن زنده است
     BOOL _listening;
@@ -1007,6 +1010,7 @@ static NSString *ZModeLabel(ZMode m) {
     NSArray<NSArray<NSString *> *> *_versions;
     NSInteger _versionAt;
     NSString *_rawSessionText;    // متنِ مسیر معمولی، پیش از پاس نهایی
+    ZBatchJob *_fallbackJob;      // نگه داشته می‌شود، وگرنه وسط کار آزاد می‌شود
 }
 
 - (instancetype)initWithEngine:(id<ZEngine>)engine panel:(ZPanel *)panel {
@@ -1036,7 +1040,7 @@ static NSString *ZModeLabel(ZMode m) {
     _mode = ZSettings.shared.mode;
     _target = NSWorkspace.sharedWorkspace.frontmostApplication;
     _caretSink.target = _target;
-    _engine.recorder = _recorder;
+    _engine.recorder = [self recorderForMode:_mode];
     _ledger = [[ZTextLedger alloc] initWithSink:[self sinkForMode:_mode]];
     ZLog(@"session: start target=%@ engine=%@ lang=%@ mode=%@",
          _target.bundleIdentifier ?: @"?", ZSettings.shared.engineName, ZSettings.shared.lang,
@@ -1073,10 +1077,28 @@ static NSString *ZModeLabel(ZMode m) {
     // پرسشِ Keychain می‌تواند پنجره‌ی اجازه باز کند و کند باشد؛ همین حالا و در
     // پس‌زمینه پرسیده می‌شود که سرِ Esc معطلی نسازد.
     if (ZSettings.shared.finalPassEnabled) [ZFinalPass.shared prefetchKey];
+    // حالت یادداشت بی پاس نهایی یک بن‌بست است: ضبط می‌کند و هیچ متنی نمی‌دهد. پس
+    // **سر شروع** می‌گوید، نه سر پایان. خبر بدی که سه دقیقه دیر برسد، دیگر خبر نیست.
+    // بی کلید یا با تاگل خاموش، یادداشت باز هم متن می‌دهد (تشخیص گفتار گوگل و پاس
+    // ویرایش)، فقط ضعیف‌تر. پس پیامِ سر شروع «بن‌بست» نیست، «انتظارت را تنظیم کن» است.
+    if (_mode == ZModeNote && !(ZSettings.shared.finalPassEnabled && ZFinalPass.hasKey)) {
+        _warning = ZSettings.shared.finalPassEnabled
+            ? @"کلید جمینای نیست؛ متن از تشخیص گفتار گوگل می‌آید"
+            : @"پاس هوش مصنوعی خاموش است؛ متن از تشخیص گفتار گوگل می‌آید";
+        if (ZSettings.shared.finalPassEnabled) ZLog(@"note: %@", ZFinalPass.missingKeyHint);
+    }
     self.engine.delegate = self;
     [self.engine startWithLang:ZSettings.shared.lang];
     [self startClock];
     [self render];
+}
+
+// ضبط می‌شود یا نه. یادداشت همیشه (بی صدا هیچ کاری نمی‌کند)، سه حالت دیگر فقط وقتی
+// تاگل پاس نهایی روشن باشد. چرا شرطی و نه همیشه: بی این شرط، سه حالتِ قدیمی هم برای
+// هر سشن ~۱۲ کیلوبایت بر ثانیه روی دیسک جا می‌گذاشتند، و آن‌ها باید مو‌به‌مو مثل
+// امروز کار کنند. تاگل روشن یعنی کاربر صریحا این کار پایانی را خواسته.
+- (ZRecorder *)recorderForMode:(ZMode)m {
+    return (m == ZModeNote || ZSettings.shared.finalPassEnabled) ? _recorder : nil;
 }
 
 // حالت‌هایی که متن در ادیتور خود پنل می‌نشیند، پس بازنویسی آزاد است و درج تا پایان
@@ -1324,7 +1346,7 @@ static NSString *ZModeLabel(ZMode m) {
     old.recorder = nil;
     [self drainPolish];    // صفِ پاسِ همان موتور خام می‌نشیند، نه اینکه معلق بماند
     _engine = ZMakeEngine(next);
-    _engine.recorder = _recorder;
+    _engine.recorder = [self recorderForMode:next];
     _engine.delegate = self;
     _enginePending = @"";
     [_engine startWithLang:ZSettings.shared.lang];
@@ -1464,10 +1486,11 @@ static NSString *ZModeLabel(ZMode m) {
         return;
     }
     if (_finished || _finishing || _working) return;
-    // حالت یادداشت هیچ متن لحظه‌ای ندارد و کل کارش همین پاس پایانی است، پس Esc در آن
-    // حالت خودش یعنی «پاس نهایی». نداشتنِ کلید یا خاموش بودن تاگل، مسیر معمولی را
-    // برمی‌گرداند و پیامش را هم می‌گوید.
-    if (_mode == ZModeNote && ZSettings.shared.finalPassEnabled) {
+    // حالت یادداشت هیچ متن لحظه‌ای ندارد و کل کارش همین کار پایانی است، پس Esc در آن
+    // حالت خودش یعنی «متن را بساز». شرط تاگل اینجا نیست و عمدا: بی کلید یا با سهمِ
+    // تمام‌شده، همان مسیر خودش به تشخیص گفتار گوگل می‌افتد. یادداشت هیچ‌وقت بی‌متن
+    // تمام نمی‌شود.
+    if (_mode == ZModeNote) {
         [self finalPassNow];
         return;
     }
@@ -1573,7 +1596,9 @@ static NSString *ZModeLabel(ZMode m) {
 // ادیتور و کلیپ‌بورد می‌رسد؛ بازویرایشِ متنی که از دست ما خارج شده ممنوع است.
 - (void)finalPassNow {
     if (_working || _reviewing) return;
-    if (!ZSettings.shared.finalPassEnabled) {
+    // بیرون از یادداشت، تاگلِ خاموش یعنی این دکمه کاری ندارد: آنجا متنِ مسیر معمولی
+    // از قبل سر جایش است و دوباره شنیدنِ همان صدا فقط خرج است.
+    if (!ZSettings.shared.finalPassEnabled && _mode != ZModeNote) {
         [_panel flash:@"پاس نهایی خاموش است؛ از منوی زمزمه روشنش کن"];
         return;
     }
@@ -1601,7 +1626,14 @@ static NSString *ZModeLabel(ZMode m) {
         [self finishNow];
         return;
     }
-    if (!ZFinalPass.hasKey) {
+    // نه تاگل، نه کلید: در یادداشت مستقیم به مسیر مجانی می‌رویم و اصلا تماسی نمی‌زنیم.
+    if (!ZSettings.shared.finalPassEnabled || !ZFinalPass.hasKey) {
+        if (_mode == ZModeNote) {
+            [self transcribeFallback:audio
+                                 why:ZSettings.shared.finalPassEnabled
+                                     ? @"کلید جمینای نیست" : @"پاس هوش مصنوعی خاموش است"];
+            return;
+        }
         [_panel flash:@"کلید جمینای نیست؛ پاس نهایی اجرا نشد"];
         ZLog(@"final: %@", ZFinalPass.missingKeyHint);
         [self finishNow];
@@ -1632,8 +1664,14 @@ static NSString *ZModeLabel(ZMode m) {
     _workingMsg = nil;
     _pass = r;
     if (r.error.length || !r.text.length) {
-        // پاس را باختیم، متن را نه: هرچه از مسیر معمولی آمده بود سر جایش است.
         ZLog(@"final: failed — %@", r.error ?: @"متنی نیامد");
+        // در یادداشت هیچ متنِ دیگری وجود ندارد، پس شکستِ پاس یعنی بن‌بست؛ همان‌جا
+        // می‌افتیم روی تشخیص گفتار گوگل. در سه حالت دیگر متنِ مسیر معمولی از قبل سر
+        // جایش است و دوباره شنیدنِ همان صدا فقط وقت و سهم خرج می‌کند.
+        if (_mode == ZModeNote && _recorder.url) {
+            [self transcribeFallback:_recorder.url why:r.error ?: @"پاس نهایی نشد"];
+            return;
+        }
         _statusText = r.error ?: @"پاس نهایی نشد";
         [_panel flash:r.error ?: @"پاس نهایی نشد؛ متن معمولی سر جایش است"];
         [self finishNow];
@@ -1656,6 +1694,81 @@ static NSString *ZModeLabel(ZMode m) {
         : [NSString stringWithFormat:@"پاس نهایی نشست · %@ ثانیه",
            ZFaDigits([NSString stringWithFormat:@"%.0f", r.seconds])];
     [_panel flash:note];
+    [self finishNow];
+}
+
+// ---------- فال‌بک: همان مسیری که دکمه‌ی F می‌رود ----------
+// کلید نبود، سهم تمام شد، یا تماس نگرفت؟ یادداشت نباید بی‌متن تمام شود. صدا روی دیسک
+// است، پس دقیقا همان کاری را می‌کنیم که کاربر با دست می‌کرد: فایل را از موتور رونویسیِ
+// مجانی (`ZBatchJob`، همان که پنل F استفاده می‌کند) رد کن، بعد پاس ویرایشِ قاعده‌ای
+// رویش. متن از پاس هوش مصنوعی ضعیف‌تر است (روی همین ویس ۷۷٪ در برابر ~۱۰۰٪) و همین
+// را هم صریح به کاربر می‌گوییم؛ ولی متنِ ناقص از هیچ متن بهتر است.
+//
+// `writeTXT` خاموش است و دلیلش نامِ فایل است: خروجی این موتور برای `app-<stamp>.flac`
+// می‌شد `app-<stamp>.txt`، یعنی درست روی دفترِ خامِ همان سشن. متن از کال‌بک می‌آید.
+- (void)transcribeFallback:(NSURL *)audio why:(NSString *)why {
+    _working = YES;
+    _workingMsg = @"تشخیص گفتار گوگل…";
+    _mode = [self editorMode:_mode] ? _mode : ZModeNote;
+    [self applyModeChrome];
+    [self render];
+    ZLog(@"note: fallback to google stt (%@) on %@", why, audio.lastPathComponent);
+    NSString *lang = ZSettings.shared.lang;
+    ZBatchJob *job = [[ZBatchJob alloc] initWithFiles:@[audio] lang:lang];
+    job.writeTXT = NO;
+    job.writeSRT = NO;
+    job.polishFiles = NO;    // پاس را خودمان می‌زنیم، یک بار، روی متن کامل
+    _fallbackJob = job;
+    __weak typeof(self) ws = self;
+    job.onFileProgress = ^(NSURL *f, double doneSec, double totalSec) {
+        __strong typeof(ws) s = ws;
+        if (!s || totalSec <= 0) return;
+        s->_workingMsg = [NSString stringWithFormat:@"تشخیص گفتار گوگل… %@٪",
+                          ZFaDigits(@((int)(100 * MIN(1.0, doneSec / totalSec))).stringValue)];
+        [s render];
+    };
+    job.onFileDone = ^(NSURL *f, NSString *text, NSError *err) {
+        __strong typeof(ws) s = ws;
+        if (!s) return;
+        s->_fallbackJob = nil;
+        if (!text.length) {
+            s->_working = NO;
+            s->_workingMsg = nil;
+            s->_statusText = @"نه پاس نهایی شد نه تشخیص گفتار؛ صدا در پوشه‌ی سشن‌ها هست";
+            ZLog(@"note: fallback also failed — %@", err.localizedDescription ?: @"متنی نیامد");
+            [s->_panel flash:@"متنی نیامد؛ خودِ صدا در پوشه‌ی سشن‌ها ماند"];
+            [s finishNow];
+            return;
+        }
+        s->_workingMsg = @"پاس ویرایش…";
+        [s render];
+        // پاس قاعده‌ای روی نخ پس‌زمینه: متن بلند صدها تکه است و هر تکه تا ۹ ثانیه بودجه دارد
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+            NSString *out = ZSettings.shared.polishEnabled ? ZBatchPolishText(text, lang) : text;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                __strong typeof(ws) s2 = ws;
+                if (!s2) return;
+                [s2 fallbackLanded:out.length ? out : text raw:text];
+            });
+        });
+    };
+    [job start];
+}
+
+- (void)fallbackLanded:(NSString *)text raw:(NSString *)raw {
+    _working = NO;
+    _workingMsg = nil;
+    NSMutableArray *vs = [NSMutableArray arrayWithObject:@[@"تشخیص گفتار", text]];
+    if (raw.length && ![raw isEqualToString:text]) [vs addObject:@[@"خام", raw]];
+    _versions = vs;
+    _versionAt = 0;
+    [_panel setEditorText:text];
+    [ZInjector copyFinal:text];
+    ZPlay(ZSoundPolish);
+    // کاربر باید بداند این متن از کجا آمده: کیفیتش با پاس هوش مصنوعی یکی نیست.
+    _statusText = @"از تشخیص گفتار گوگل آمد (ناقص‌تر از پاس هوش مصنوعی). صدا در پوشه‌ی سشن‌ها ماند";
+    [_panel flash:@"با تشخیص گفتار گوگل و پاس ویرایش انجام شد"];
+    ZLog(@"note: fallback landed, %lu chars", (unsigned long)text.length);
     [self finishNow];
 }
 
@@ -1704,7 +1817,7 @@ static NSString *ZModeLabel(ZMode m) {
     // نشان نمی‌دهد. در دو حالت دیگر نوار تنها جای دیدنش است.
     m.interim = [self editorMode:_mode] ? @"" : ZJoinText([_awaiting componentsJoinedByString:@" "],
                                                           _enginePending);
-    m.status = _statusText;
+    m.status = _warning.length ? _warning : _statusText;
     // چیپ صف از خودِ دفتر عدد می‌گیرد: «درج‌نشده» یعنی همان چیزی که دفتر نتوانسته
     // تحویل بدهد، نه یک شمارنده‌ی جدا که می‌تواند واگرا شود.
     m.queued = (NSInteger)_ledger.undelivered;
