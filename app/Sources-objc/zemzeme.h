@@ -39,14 +39,20 @@ typedef NS_ENUM(NSInteger, ZInsertMode) {
     ZInsertPaste = 1,    // پیست تکه‌ای (برای ریموت دسکتاپ امن‌تر)
 };
 
-// سه حالت دیکته، یک تنظیم. Command راست + E وسط سشن بینشان می‌چرخد، همیشه با حفظ
+// چهار حالت دیکته، یک تنظیم. Command راست + E وسط سشن بینشان می‌چرخد، همیشه با حفظ
 // متن. عددها عمدا از صفر و یک شروع می‌شوند: تنظیم روی دیسک همان کلید BOOL قدیمی
 // «collect» است و NO/YES دقیقا همین دو مقدار را می‌خوانند، پس تنظیم کاربر قدیمی
-// بدون هیچ کد مهاجرتی سر جایش می‌ماند.
+// بدون هیچ کد مهاجرتی سر جایش می‌ماند. حالت چهارم هم از همین مکانیزم می‌آید: عدد
+// تازه در همان کلید می‌نشیند و کد مهاجرتی لازم نیست.
 typedef NS_ENUM(NSInteger, ZMode) {
     ZModeLive = 0,       // درج زنده سر کرسر، با نوار شناور و دُم خاکستری
     ZModeCollect = 1,    // جمع در ادیتور خود پنل، درج یکجا در پایان
     ZModeCursor = 2,     // مثل دیکته‌ی خود مک: بی‌پنل، فقط یک نقطه کنار کرسر. درج همان مسیر زنده است
+    // یادداشت: هیچ استریمی، هیچ تشخیص گفتاری در جریان. فقط ضبط می‌کند و سر پایان
+    // کل صدا را یک‌جا به پاس نهایی می‌دهد. چرا حالت جدا و نه گزینه‌ی همان سه: در آن
+    // سه، متن لحظه‌ای هم هدف است و هم دیده می‌شود؛ اینجا هدف فقط متنِ آخر است، پس
+    // خرج کردن نقطه‌ی گوگل و ریسک تکه‌تکه شدن معنا ندارد.
+    ZModeNote = 3,
 };
 
 @interface ZSettings : NSObject
@@ -61,6 +67,13 @@ typedef NS_ENUM(NSInteger, ZMode) {
 @property (nonatomic) BOOL soundsEnabled;           // صدای کارها؛ پیش‌فرض روشن
 @property (nonatomic) BOOL upstreamFLAC;            // فشرده‌سازی FLAC آپلود؛ پیش‌فرض روشن
 @property (nonatomic, copy) NSString *batchLang;    // زبان پیش‌فرض رونویسی فایل؛ جدا از lang زنده
+// پاس نهایی با هوش مصنوعی. پیش‌فرض خاموش و عمدا: تا کلید ست نشده باشد روشن بودنش
+// فقط یک پیام خطا در پایان هر سشن است. این تاگل به polishEnabled ربطی ندارد؛ آن یکی
+// پاس قاعده‌ای مسیر زنده است و بودجه‌ی ۳۰۰ میلی‌ثانیه‌ای خودش را دارد.
+@property (nonatomic) BOOL finalPassEnabled;
+// «همیشه ساده»: هیچ‌وقت بولت نزن، حتی اگر گفتار شمرده باشد. پیش‌فرض خاموش، چون شکل
+// خروجی را پرامپت از خود گفتار درمی‌آورد و این تاگل فقط برای کسی است که بولت نمی‌خواهد.
+@property (nonatomic) BOOL plainNotes;
 - (ZInsertMode)insertModeForBundleId:(NSString *)bundleId;
 - (void)setInsertMode:(ZInsertMode)m forBundleId:(NSString *)bundleId;   // استثنای یک اپ خاص
 - (useconds_t)typeDelayMicros;
@@ -145,9 +158,15 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 - (void)engineLevel:(float)rms;                                  // ۰ تا ۱ برای ضربان
 @end
 
+@class ZRecorder;
+
 @protocol ZEngine <NSObject>
 @property (nonatomic, weak) id<ZEngineDelegate> delegate;
 @property (nonatomic, readonly) BOOL paused;
+// ضبطِ سشن. موتوری که میکروفن دارد هر تکه‌ی صدا را همان‌جا به این هم می‌دهد، و بس:
+// «کِی ضبط بشود» تصمیم سشن است نه موتور، و «کجا نوشته شود» تصمیم خودِ ضبط‌کننده.
+// نال یعنی ضبط نکن. موتوری که میکروفن ندارد (رله‌ی کروم) نادیده‌اش می‌گیرد.
+@property (nonatomic, strong) ZRecorder *recorder;
 - (void)startWithLang:(NSString *)lang;
 - (void)setLang:(NSString *)lang;
 - (void)pause;     // شنیدن می‌ایستد؛ میکروفن گرم می‌ماند که ادامه آنی باشد
@@ -241,7 +260,27 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 // (ZGoogleStream) باید بی‌سروصدا به آپلود خام l16 برگردد.
 @interface ZFlacEncoder : NSObject
 @property (nonatomic, readonly) NSData *streamHeader;   // "fLaC" + بلاک STREAMINFO؛ فقط یک‌بار، اول بدنه
+@property (nonatomic, readonly) UInt32 blockFrames;     // نمونه در هر بلاک؛ ته‌مانده با سکوت تا همین پر می‌شود
 - (NSData *)encode:(NSData *)pcm;   // ممکن است خالی برگردد (هنوز یک فریم کامل جمع نشده)
+@end
+
+// ---------- ضبط صدای سشن روی دیسک ----------
+// یک فایل FLAC کنار متن هر سشن، با همان انکودری که مسیر آپلود زنده استفاده می‌کند
+// (روی گفتار ~۵۴٪ حجم خام). چرا FLAC و نه WAV: نصف حجم، و خودِ جمینای مستقیم
+// می‌خوانَدش، پس هیچ تبدیلی در مسیر پاس نهایی لازم نیست.
+//
+// فایل تنبل ساخته می‌شود، سرِ اولین بایت: موتوری که میکروفن ندارد یا سشنی که یک
+// ثانیه هم صدا نگرفت، فایل خالی روی دیسک جا نمی‌گذارد و `url` نال می‌ماند.
+// feed: از نخ صداست و بقیه از نخ اصلی، پس همه‌چیز پشت یک قفل است.
+@interface ZRecorder : NSObject
+- (instancetype)initWithURL:(NSURL *)url;
+@property (nonatomic, readonly) NSURL *url;              // نال تا اولین بایت صدا
+@property (nonatomic, readonly) NSTimeInterval seconds;  // از بایت‌های خام، نه ساعت دیوار
+@property (nonatomic, readonly) unsigned long long fileBytes;
+- (void)feed:(NSData *)pcm;   // s16le مونو ۱۶ کیلوهرتز، از نخ صدا
+// ته‌مانده‌ی کمتر از یک بلاک با سکوت پر و فریم می‌شود، وگرنه تا ~۲۹۰ میلی‌ثانیه‌ی آخر
+// (یعنی ممکن است آخرین کلمه) هیچ‌وقت وارد فایل نمی‌شد. بعد از این، feed بی‌اثر است.
+- (void)finish;
 @end
 
 // ---------- استریم full-duplex گوگل ----------
@@ -278,6 +317,17 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 + (void)openPage;    // صفحه موتور کروم را در پس‌زمینه باز می‌کند
 @end
 
+// موتور حالت یادداشت: میکروفن و ضبط، و بس. نه شبکه‌ای، نه تشخیصی، نه رونوشتی.
+// چرا یک موتور جدا و نه یک پرچم روی موتور گوگل: آن موتور سوپروایزرِ اندازه‌گیری‌شده‌ی
+// مسیر زنده است (چرخش، گیر، بازپخش، جوش) و «استریم نکن» شاخه‌ی تازه‌ای در هر پنج تا
+// از آن مسیرها می‌ساخت. اینجا هیچ‌کدام از آن‌ها وجود ندارد.
+@interface ZNoteEngine : NSObject <ZEngine>
+@end
+
+// موتور مناسب هر حالت. یک جا، چون دو فراخوان دارد (شروع سشن، و چرخش حالت وسط سشن)
+// و اگر هر کدام خودش انتخاب کند، حالت یادداشت از یکی از دو راه با موتور اشتباه شروع می‌شود.
+id<ZEngine> ZMakeEngine(ZMode mode);
+
 // ---------- پاس ویرایش ----------
 // پل به دیمن گرم polish.py (پورت ۱۷۶۳۶). قرارداد: polish فقط از نخ اصلی صدا زده
 // می‌شود، کال‌بک همیشه روی نخ اصلی و حداکثر تا ~۰٫۴ ثانیه می‌آید؛ دیر یا خطا یعنی
@@ -290,7 +340,80 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 // سخاوتمندتر است و به قرارداد ۳۰۰ میلی‌ثانیه‌ی مسیر زنده کاری ندارد. دیمن نباشد یا
 // دیر کند، همان متن خام برمی‌گردد.
 - (NSString *)polishSync:(NSString *)raw lang:(NSString *)lang;
+// همان دیمن، ولی فقط لایه‌های مکانیکی: نیم‌فاصله‌ی تاییدشده با دیکشنری، ارقام فارسی،
+// یکدست‌سازی حروف عربی، فاصله‌ی علائم. املای hunspell و مدل نقطه‌گذاری عمدا اجرا
+// نمی‌شوند: در مسیر پاس نهایی کورند و بی‌کانتکست، و LLM هر دو را بهتر انجام داده.
+// خط‌به‌خط، پس پاراگراف و بولت سالم می‌مانند. بلوکه است، پس نخ پس‌زمینه.
+- (NSString *)mechanicalSync:(NSString *)text lang:(NSString *)lang;
 @end
+
+// ---------- دروازه‌ی کامل بودن ----------
+// بازنویسی مولد بی‌صدا محتوا می‌خورد، پس خروجی مدل پیش از قبول شدن با متن مو‌به‌مو
+// سنجیده می‌شود. پورت `measure()` آزمایشگاه، با هر دو باگی که در آن درست شد:
+//   ۱. نیم‌فاصله به *فاصله* تبدیل می‌شود، نه حذف. وگرنه «می‌شود» و «می شود» دو واژه‌ی
+//      متفاوت شمرده می‌شدند.
+//   ۲. تطبیق داخل رشته‌ی بی‌فاصله هم امتحان می‌شود. مرزِ واژه بین دو متن یکی نیست
+//      (متن مو‌به‌مو «میکنه» را سرهم می‌نویسد و پاس «می‌کنه» را با نیم‌فاصله)، پس بی این،
+//      هر نیم‌فاصله‌ی *درستِ* پاس یک «واژه‌ی جاافتاده» می‌شد و دروازه الکی می‌بست.
+// عدد و لاتین تحمل صفر دارند؛ پوشش هشدار است نه رد، چون پاسِ درست هم فیلر و
+// واژه‌ی خودتصحیح‌شده را عمدا می‌اندازد.
+@interface ZCoverage : NSObject
++ (instancetype)ofDraft:(NSString *)draft output:(NSString *)out;
+@property (nonatomic, readonly) NSUInteger draftWords, outWords;
+@property (nonatomic, readonly) double coverage;                     // درصد واژه‌های محتوایی
+@property (nonatomic, readonly) NSArray<NSString *> *missing;
+@property (nonatomic, readonly) NSArray<NSString *> *lostNumbers;    // تحمل صفر
+@property (nonatomic, readonly) NSArray<NSString *> *lostLatin;      // تحمل صفر
+@property (nonatomic, readonly) BOOL passed;
+@property (nonatomic, readonly) NSString *summary;    // یک خط، برای لاگ و خط وضعیت
+@end
+
+// زیر این پوشش، خروجی مشکوک است. ۹۵ نه ۱۰۰: فهرست فیلر همه‌ی «خب» و «یعنی» ها را
+// نمی‌گیرد و خودتصحیحی گوینده هم واژه‌ی واقعی می‌اندازد.
+#define kZCoverageFloor 95.0
+
+// ---------- پاس نهایی: صدا، در دو تماس، تا متن تمیز ----------
+// چرا اصلا: متن خام همین اپ روی یک ویس ۳۶۷ ثانیه‌ای فارسی فقط ۷۷٪ کلمه‌های گفته‌شده
+// را داشت و ۱۱ تکه‌ی محتوا (یک جمله‌ی کامل، اسم شرکت، «اپ اسنپ») اصلا در آن نبودند.
+// هیچ پاس متنی نمی‌تواند چیزی را که در ورودی‌اش نیست برگرداند: پاس متنی روی متن خام
+// صفر از ۱۱ گرفت. مدل که خودش صدا را بشنود، ۱۰ تا ۱۱ از ۱۱.
+//
+// و چرا دو تماس نه یکی: «صدا تا متن نهایی» در یک تماس با thinking_level=minimal متنِ
+// درهم و دوباره‌نویسی‌شده داد (۲۰۷۲ کلمه به جای ۹۶۵). دو مرحله هم سالم‌تر است هم
+// سریع‌تر: رونویسی مو‌به‌مو، بعد پاس متنی روی همان.
+//
+// این مسیر عمدا از ZPolish جداست و مسیر زنده هیچ‌وقت به آن وابسته نمی‌شود: آنجا
+// بودجه ۳۰۰ میلی‌ثانیه است و قاعده «هیچ LLM مولدی» سر جایش می‌ماند. این یک کارِ
+// پایانی است، صریحا انتخابی.
+@interface ZFinalPassResult : NSObject
+@property (nonatomic, copy) NSString *verbatim;    // متن مو‌به‌مو (تماس اول)
+@property (nonatomic, copy) NSString *text;        // متن نهایی؛ رد شدنِ دروازه یعنی همان مو‌به‌مو
+@property (nonatomic, copy) NSString *error;       // نال یعنی موفق
+@property (nonatomic, strong) ZCoverage *coverage;
+@property (nonatomic) BOOL gated;                  // دروازه رد کرد و مو‌به‌مو نشست
+@property (nonatomic) NSInteger inTokens, outTokens;
+@property (nonatomic) NSTimeInterval seconds;
+@property (nonatomic, strong) NSURL *dir;          // پوشه‌ی همین پاس: صدا، مو‌به‌مو، نهایی
+@end
+
+@interface ZFinalPass : NSObject
++ (instancetype)shared;
+// کلید در Keychain (سرویس zemzeme-gemini) یا متغیر محیطی GEMINI_API_KEY. نه در plist،
+// نه در ریپو. نبودنش خطا نیست، فقط یعنی فیچر خاموش است و پیامش همین را می‌گوید.
++ (BOOL)hasKey;
++ (NSString *)missingKeyHint;
+- (void)prefetchKey;    // یک بار، آسنکرون: پرسش Keychain نباید سر Esc معطلی بسازد
+// همه‌ی کار روی نخ پس‌زمینه؛ progress و done هر دو روی نخ اصلی. lang فقط برای پاس
+// مکانیکی به کار می‌آید: خودِ مدل چندزبانه است و پرامپت زبان را از صدا می‌فهمد.
+- (void)runOnAudio:(NSURL *)audio lang:(NSString *)lang
+          progress:(void (^)(NSString *msg))progress
+              done:(void (^)(ZFinalPassResult *r))done;
+@end
+
+// zemzeme --finalpass <audio> [--lang fa-IR]
+// همان مسیر، بی‌میکروفن و بی‌رابط. بی این، تنها راهِ سنجیدنِ این خط لوله «سه دقیقه حرف
+// زدن و امیدوار بودن» بود. مثل --transcribe پیش از ساختن NSApplication برمی‌گردد.
+int ZFinalPassMain(NSArray<NSString *> *args);
 
 // ---------- درج ----------
 // چطور ثابت شد که پاک کردن امن است. شمارنده‌ها همین را می‌شمارند و معیار پذیرش از
@@ -354,6 +477,8 @@ typedef NS_ENUM(NSInteger, ZWriteProof) {
 @property (nonatomic, copy) void (^onLangSwitch)(void);     // L
 @property (nonatomic, copy) void (^onModeToggle)(void);     // E
 @property (nonatomic, copy) void (^onPolishNow)(void);      // P
+@property (nonatomic, copy) void (^onFinalPass)(void);      // N: پایان و پاس نهایی
+@property (nonatomic, copy) void (^onRotateText)(void);     // R: چرخش نسخه‌های متن
 // F: پنل رونویسی فایل. تنها میان‌بری که بی‌سشن هم کار می‌کند، چون به سشن ربطی ندارد
 @property (nonatomic, copy) void (^onFilePanel)(void);      // F
 @property (nonatomic) BOOL sessionActive;
@@ -497,6 +622,16 @@ typedef NS_ENUM(NSInteger, ZSinkResult) {
 @property (nonatomic) BOOL waitingForTarget;
 @property (nonatomic, copy) NSString *targetName;
 @property (nonatomic) ZMode mode;
+// حالت یادداشت هیچ متن لحظه‌ای ندارد، پس بی این دو، پنل مرده به نظر می‌رسید و آدم
+// نمی‌فهمید ضبط می‌شود یا نه. بدترین حالتِ این فیچر همان است.
+@property (nonatomic) NSTimeInterval elapsed;    // ثانیه‌ی ضبط‌شده؛ صفر یعنی نشان نده
+@property (nonatomic) BOOL working;              // کاری در جریان است: چرخنده روشن
+@property (nonatomic, copy) NSString *workingMsg;
+// سشن تمام شده ولی پنل با متن نهایی باز مانده تا خوانده و ویرایش شود. دکمه‌های
+// شنیدن می‌روند، دکمه‌های متن می‌مانند.
+@property (nonatomic) BOOL review;
+@property (nonatomic) NSInteger versions;        // چند نسخه‌ی متن برای چرخش هست
+@property (nonatomic, copy) NSString *versionName;
 @end
 
 // رنگ وضعیت، یک منبع حقیقت: نشان روی پنل، نشانگر کنار کرسر و آیتم منوبار هر سه
@@ -560,6 +695,8 @@ int ZCaretProbeMain(NSArray<NSString *> *args);
 @property (nonatomic, copy) void (^onModeToggle)(void); // چرخش حالت: زنده ← جمع ← کرسر
 @property (nonatomic, copy) void (^onPolishNow)(void);  // اعمال پاس فارسی روی متن جمع‌شده
 @property (nonatomic, copy) void (^onFilePanel)(void);  // باز کردن پنل رونویسی فایل
+@property (nonatomic, copy) void (^onFinalPass)(void);  // پایان سشن و پاس نهایی روی صدای همین سشن
+@property (nonatomic, copy) void (^onRotateText)(void); // چرخش بین نسخه‌های متن (نهایی، مو‌به‌مو، خام)
 - (void)show;
 - (void)hide;
 - (void)render:(ZPanelModel *)m;
@@ -589,6 +726,11 @@ int ZCaretProbeMain(NSArray<NSString *> *args);
 - (void)toggleMode;       // چرخش زنده ← جمع ← کرسر، با حفظ متن
 - (void)switchLang;       // چرخش فارسی/انگلیسی
 - (void)polishCollected;  // پاس فارسی روی متن جمع‌شده، به خواست خودِ کاربر
+// پایان سشن، بعد پاس نهایی روی صدای ضبط‌شده. ترتیب مهم است: اول تحویل معمولی (پس در
+// حالت زنده و کرسر هرچه قرار بود سر کرسر برود می‌رود)، بعد پاس. خروجی پاس *فقط* به
+// ادیتور و کلیپ‌بورد می‌رود، هیچ‌وقت به اپ مقصد: آنجا متن از قبل نشسته و بازویرایش ممنوع.
+- (void)finalPassNow;
+- (void)rotateText;       // چرخش ادیتور بین نهایی، مو‌به‌مو و خام، برای مقایسه
 - (void)finish;           // ممکن است منتظر پاس پایانی بماند، بعد ببندد
 - (void)finishNow;        // بدون معطلی؛ مسیر خروج اپ از این می‌رود
 @end

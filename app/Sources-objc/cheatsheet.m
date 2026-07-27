@@ -70,8 +70,10 @@ static NSString *const kCSAutosave = @"ZemzemeCheatSheet";
               @[@[@"I"],     @"text.insert",       @"درج سر کرسر همین اپ"],
               @[@[@"D"],     @"trash",             @"دور ریختن متن درج‌نشده"],
               @[@[@"L"],     @"globe",             @"عوض کردن زبان: فارسی و انگلیسی"],
-              @[@[@"E"],     @"square.and.pencil", @"چرخش حالت: زنده ← جمع ← کرسر"],
+              @[@[@"E"],     @"square.and.pencil", @"چرخش حالت: زنده ← جمع ← کرسر ← یادداشت"],
               @[@[@"P"],     @"wand.and.stars",    @"پاس ویرایش روی متن جمع‌شده"],
+              @[@[@"N"],     @"sparkles",          @"پاس نهایی: پایان سشن و متن تمیز از خودِ صدا"],
+              @[@[@"R"],     @"arrow.2.squarepath", @"چرخش نسخه‌های متن: نهایی، مو‌به‌مو، خام"],
               @[@[@"Space"], @"pause.circle",      @"مکث و ادامه، مثل تک‌تپ"],
           ]},
         // این دو به سشن ربطی ندارند، پس بخش جدا دارند: تازه‌کاری که هنوز دیکته‌ای شروع
@@ -102,6 +104,10 @@ static NSString *const kCSAutosave = @"ZemzemeCheatSheet";
     // می‌دزدد، و ⌥ جای شلوغی بود (⌥V و ⌥P مال مککی، ⌥V داخل ریموت مال Win+V).
     [n addObject:@[@"command", @"همه‌ی میان‌برها فقط با Command راست‌اند؛ ⌥ دیگر کاری نمی‌کند", @NO]];
     [n addObject:@[@"info.circle", @"جز H و F، بقیه‌ی حرف‌ها فقط در حین سشن کار می‌کنند", @NO]];
+    if (ZSettings.shared.finalPassEnabled && !ZFinalPass.hasKey) {
+        [n addObject:@[@"exclamationmark.triangle",
+                       @"پاس نهایی روشن است ولی کلید جمینای نیست، پس N کاری نمی‌کند", @YES]];
+    }
     if (!ZSettings.shared.internalHotkey) {
         [n addObject:@[@"exclamationmark.triangle",
                        @"دابل‌تپ الان خاموش است: در پیشرفته «هاتکی داخلی» را روشن کن", @YES]];

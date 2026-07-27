@@ -196,6 +196,63 @@ static const NSTimeInterval kPolishFailsafe = 0.40;
     return out ?: raw;
 }
 
+// پاس مکانیکی برای مسیر پاس نهایی: همان دیمن، ولی فقط لایه‌های قاعده‌ای.
+// چرا چند تماس و نه یکی: سقف MAX_CHARS دیمن ۴۰۰۰ نویسه است و متن یک یادداشت بلند از
+// آن می‌گذرد. برشِ روی خط خالی است نه روی کلمه: پاراگراف و بولت باید سالم بمانند و
+// نیم‌فاصله هم هیچ‌وقت از دو طرفِ یک خط خالی رد نمی‌شود، پس درزی در کار نیست.
+- (NSString *)mechanicalSync:(NSString *)text lang:(NSString *)lang {
+    if (!text.length || [lang hasPrefix:@"en"] || ![ZPolish hasPersian:text]) return text;
+    NSMutableArray<NSString *> *out = [NSMutableArray array];
+    NSMutableString *buf = [NSMutableString string];
+    NSArray<NSString *> *paras = [text componentsSeparatedByString:@"\n\n"];
+    for (NSUInteger i = 0; i <= paras.count; i++) {
+        NSString *p = i < paras.count ? paras[i] : nil;
+        if (p && buf.length + p.length + 2 < 3500) {
+            if (buf.length) [buf appendString:@"\n\n"];
+            [buf appendString:p];
+            continue;
+        }
+        if (buf.length) {
+            // `[buf copy]` و نه خودِ buf: چند خط پایین‌تر همین رشته خالی می‌شود، و اگر
+            // دیمن بالا نباشد و فال‌بک خودِ buf باشد، آرایه یک رشته‌ی *تهی* نگه می‌دارد.
+            // یعنی خرابیِ دیمن به «متن نهایی خالی» تبدیل می‌شد؛ درست برعکسِ چیزی که
+            // فال‌بک برایش هست.
+            NSString *chunk = [buf copy];
+            [out addObject:[self postMechanical:chunk lang:lang] ?: chunk];
+            [buf setString:@""];
+        }
+        if (p) [buf appendString:p];
+    }
+    NSString *joined = [out componentsJoinedByString:@"\n\n"];
+    return joined.length ? joined : text;
+}
+
+- (NSString *)postMechanical:(NSString *)chunk lang:(NSString *)lang {
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:
+        [NSURL URLWithString:[kPolishBase stringByAppendingString:@"/polish"]]];
+    req.HTTPMethod = @"POST";
+    req.HTTPBody = [NSJSONSerialization dataWithJSONObject:
+        @{@"text": chunk, @"lang": lang, @"mode": @"mechanical",
+          @"terms": @(ZSettings.shared.latinTerms)} options:0 error:nil];
+    req.timeoutInterval = 10;
+    __block NSString *outText = nil;
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    [[NSURLSession.sharedSession dataTaskWithRequest:req
+                                  completionHandler:^(NSData *d, NSURLResponse *r, NSError *e) {
+        if (!e && d.length) {
+            NSDictionary *o = [NSJSONSerialization JSONObjectWithData:d options:0 error:nil];
+            if ([o isKindOfClass:NSDictionary.class] && [o[@"text"] isKindOfClass:NSString.class]
+                && [o[@"text"] length]) {
+                outText = o[@"text"];
+            }
+        }
+        dispatch_semaphore_signal(sem);
+    }] resume];
+    dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(11 * NSEC_PER_SEC)));
+    [self log:@"mechanical" ms:0 raw:chunk out:outText ?: chunk];
+    return outText;
+}
+
 // جفت قبل/بعد هر تکه، کنار app.log؛ فایل در .gitignore است
 - (void)log:(NSString *)outcome ms:(int)ms raw:(NSString *)raw out:(NSString *)out {
     static NSDateFormatter *df;

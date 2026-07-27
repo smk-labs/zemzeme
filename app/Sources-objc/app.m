@@ -153,6 +153,8 @@ int ZSelfTest(NSString *file, NSString *lang) {
     _hotkeys.onLangSwitch = ^{ [ws sessionDo:@selector(switchLang)]; };
     _hotkeys.onModeToggle = ^{ [ws sessionDo:@selector(toggleMode)]; };
     _hotkeys.onPolishNow = ^{ [ws sessionDo:@selector(polishCollected)]; };
+    _hotkeys.onFinalPass = ^{ [ws sessionDo:@selector(finalPassNow)]; };
+    _hotkeys.onRotateText = ^{ [ws sessionDo:@selector(rotateText)]; };
     // بی‌سشن هم کار می‌کند، پس مثل بقیه از sessionDo رد نمی‌شود. تاگل است نه فقط باز
     // کردن: پنل رونویسی با همان F می‌رود پس‌زمینه و با همان F برمی‌گردد، و کار در
     // جریان با پنهان شدنش نمی‌ایستد.
@@ -246,9 +248,9 @@ int ZSelfTest(NSString *file, NSString *lang) {
 }
 
 - (void)startSession {
-    id<ZEngine> engine = [ZSettings.shared.engineName isEqualToString:@"chrome"]
-        ? (id<ZEngine>)[ZChromeRelayEngine new] : (id<ZEngine>)[ZGoogleEngine new];
-    ZSession *s = [[ZSession alloc] initWithEngine:engine panel:_panel];
+    // موتور از حالت می‌آید، نه فقط از تنظیم: حالت یادداشت موتور ضبط را می‌خواهد و
+    // همان یک تابع هر دو راه (شروع سشن، و چرخش حالت وسط سشن) را یکی نگه می‌دارد.
+    ZSession *s = [[ZSession alloc] initWithEngine:ZMakeEngine(ZSettings.shared.mode) panel:_panel];
     _session = s;
     __weak typeof(self) ws = self;
     s.onFinish = ^{
@@ -339,6 +341,27 @@ int ZSelfTest(NSString *file, NSString *lang) {
     lat.state = ZSettings.shared.latinTerms ? NSControlStateValueOn : NSControlStateValueOff;
     lat.toolTip = @"وام‌واژه‌های فنی به لاتین برمی‌گردند (کامیت ← commit). فقط واژه‌های "
                    "فهرست app/py/terms.txt، بدون هیچ حدسی؛ واژه‌های دوپهلو عمدا در فهرست نیستند";
+    // پاس نهایی: کنار پاس ویرایش می‌نشیند چون هم‌رده‌ی آن است، ولی کارِ دیگری می‌کند و
+    // تولتیپش همین را می‌گوید. تا کلید ست نشده باشد، ردیف خودش خبر می‌دهد: روشن بودنش
+    // بی‌کلید فقط یک پیام خطا در پایان هر سشن است.
+    BOOL hasKey = ZFinalPass.hasKey;
+    NSMenuItem *fin = [self icon:[self item:menu title:hasKey ? @"پاس نهایی با هوش مصنوعی"
+                                                              : @"پاس نهایی با هوش مصنوعی (کلید نیست)"
+                                     action:@selector(menuToggleFinalPass) key:@""]
+                           symbol:@"sparkles"];
+    fin.state = ZSettings.shared.finalPassEnabled ? NSControlStateValueOn : NSControlStateValueOff;
+    fin.toolTip = hasKey
+        ? @"سر پایان سشن، کل صدا یک‌جا به جمینای می‌رود و یک متن تمیز و کامل برمی‌گردد "
+           "(Command راست + N). مسیر زنده دست‌نخورده می‌ماند."
+        : ZFinalPass.missingKeyHint;
+    if (ZSettings.shared.finalPassEnabled) {
+        NSMenuItem *plain = [self icon:[self item:menu title:@"همیشه ساده (بی‌بولت)"
+                                           action:@selector(menuTogglePlainNotes) key:@""]
+                                 symbol:@"text.alignright"];
+        plain.state = ZSettings.shared.plainNotes ? NSControlStateValueOn : NSControlStateValueOff;
+        plain.toolTip = @"شکل خروجی را خودِ گفتار تعیین می‌کند: فهرست شمرده بولت می‌شود و "
+                         "روایت پاراگراف می‌ماند. این تاگل بولت را کلا خاموش می‌کند.";
+    }
     NSMenuItem *snd = [self icon:[self item:menu title:@"صدا" action:@selector(menuToggleSounds) key:@""]
                            symbol:@"speaker.wave.2"];
     snd.state = ZSettings.shared.soundsEnabled ? NSControlStateValueOn : NSControlStateValueOff;
@@ -478,6 +501,15 @@ int ZSelfTest(NSString *file, NSString *lang) {
     if (ZSettings.shared.polishEnabled) [ZPolish.shared prepare];
 }
 - (void)menuToggleLatinTerms { ZSettings.shared.latinTerms = !ZSettings.shared.latinTerms; }
+- (void)menuToggleFinalPass {
+    ZSettings.shared.finalPassEnabled = !ZSettings.shared.finalPassEnabled;
+    if (!ZSettings.shared.finalPassEnabled) return;
+    // پرسشِ Keychain می‌تواند پنجره‌ی اجازه باز کند، پس همین حالا و در پس‌زمینه پرسیده
+    // می‌شود: کاربر همان لحظه‌ای که تاگل را زده جواب می‌دهد، نه وسط پایانِ یک سشن.
+    [ZFinalPass.shared prefetchKey];
+    if (!ZFinalPass.hasKey) ZLog(@"final: %@", ZFinalPass.missingKeyHint);
+}
+- (void)menuTogglePlainNotes { ZSettings.shared.plainNotes = !ZSettings.shared.plainNotes; }
 - (void)menuToggleSounds {
     ZSettings.shared.soundsEnabled = !ZSettings.shared.soundsEnabled;
     ZPlay(ZSoundStart);    // روشن که شد، خودش را می‌شنوانَد
@@ -511,6 +543,9 @@ int main(int argc, const char *argv[]) {
         // چون گارد «یک نمونه» در applicationDidFinishLaunching است و اینجا
         // هیچ‌وقت به آن نمی‌رسیم.
         if ([args containsObject:@"--transcribe"]) return ZBatchMain(args);
+        // پاس نهایی روی یک فایل صوتی، بی‌رابط. مثل حالت دسته‌ای پیش از NSApplication
+        // برمی‌گردد، پس اپ منوبارِ در حال اجرا دست‌نخورده می‌ماند.
+        if ([args containsObject:@"--finalpass"]) return ZFinalPassMain(args);
         // آیکون بسته برای build.sh؛ مثل حالت دسته‌ای قبل از NSApplication برمی‌گردد
         NSUInteger ic = [args indexOfObject:@"--appicon"];
         if (ic != NSNotFound && ic + 1 < args.count) return ZMarkIconMain(args[ic + 1]);

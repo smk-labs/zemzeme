@@ -68,7 +68,8 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     NSView *_chipBg;
     NSTextField *_chipLabel;
     NSButton *_btnClose, *_btnPause, *_btnCopy, *_btnTrash, *_btnInsert;
-    NSButton *_btnLang, *_btnMode, *_btnPolish, *_btnFile;
+    NSButton *_btnLang, *_btnMode, *_btnPolish, *_btnFinal, *_btnRotate, *_btnFile;
+    NSProgressIndicator *_spinner;    // جای نشان، وقتی کاری در جریان است
     NSArray<NSButton *> *_bar;    // ترتیب دکمه‌ها؛ یک منبع حقیقت برای چیدمان و پهنای متن
     NSMutableArray<NSTextField *> *_barCaps;   // حرف میان‌بر زیر هر دکمه، به همان ترتیب
     id<ZTextSink> _editorSink;
@@ -79,7 +80,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     NSTextView *_editor;
     NSTimer *_saveOriginTimer;
     BOOL _pulsing;
-    BOOL _collectVisible;
+    BOOL _editorVisible;
     NSPoint _wantOrigin;         // جای انتخابی کاربر؛ قد کشیدن پنل جابه‌جایش نمی‌کند
     BOOL _haveWantOrigin;
     BOOL _resizing;
@@ -118,6 +119,15 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
         _dot = [[ZMarkView alloc] initWithFrame:
             NSMakeRect(kPW - 16 - 9 * ZMarkAspect, (kBarH - 9) / 2, 9 * ZMarkAspect, 9)];
         [_effect addSubview:_dot];
+
+        // چرخنده، دقیقا جای نشان. پاس نهایی ~۲۰ ثانیه طول می‌کشد و در آن فاصله هیچ
+        // متنی نمی‌آید؛ پنلِ بی‌حرکت در همان لحظه بدترین حالت این فیچر است.
+        _spinner = [[NSProgressIndicator alloc] initWithFrame:
+            NSMakeRect(kPW - 16 - 14, (kBarH - 14) / 2, 14, 14)];
+        _spinner.style = NSProgressIndicatorStyleSpinning;
+        _spinner.controlSize = NSControlSizeSmall;
+        _spinner.displayedWhenStopped = NO;
+        [_effect addSubview:_spinner];
 
         // دستگیرهٔ کشیدن: فقط راهنمای دیداری (کل پس‌زمینه از قبل قابل کشیدن است)، کنار نقطه
         NSImage *gripImg = [NSImage imageWithSystemSymbolName:@"line.3.horizontal"
@@ -167,6 +177,14 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
         _btnPolish = [self makeButton:@"wand.and.stars" key:@"P"
                                   tip:@"پاس ویرایش فارسی روی متن جمع‌شده"
                                action:@selector(polishTap)];
+        // پاس نهایی، جدا از پاس ویرایش و با آیکون جدا: آن یکی قاعده‌ای و لحظه‌ای است،
+        // این یکی کل صدا را به مدل می‌دهد و کارِ پایانِ سشن است.
+        _btnFinal = [self makeButton:@"sparkles" key:@"N"
+                                tip:@"پاس نهایی: پایان سشن و متن تمیز از خودِ صدا"
+                             action:@selector(finalTap)];
+        _btnRotate = [self makeButton:@"arrow.2.squarepath" key:@"R"
+                                 tip:@"چرخش بین نسخه‌های متن: نهایی، مو‌به‌مو، خام"
+                              action:@selector(rotateTap)];
         _btnInsert = [self makeButton:@"text.insert" key:@"I" tip:@"درج سر کرسر همین اپ"
                                action:@selector(insertTap)];
         // رونویسی فایل: در هر دو حالتِ پنل‌دار پیداست، چون به سشن ربطی ندارد. راه سوم
@@ -175,11 +193,13 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
                                 tip:@"رونویسی فایل صوتی: صف، پیشرفت و متن یکجا (Command راست + F)"
                              action:@selector(fileTap)];
         _btnPolish.hidden = YES;
+        _btnFinal.hidden = YES;
+        _btnRotate.hidden = YES;
         _btnInsert.hidden = YES;
         // ترتیب چیدمان؛ layoutViews و textWidth هر دو از همین یک لیست می‌خوانند، پس
         // پیدا و ناپیدا شدن دکمه‌ها هیچ‌وقت با عدد هاردکد ناهمخوان نمی‌شود.
         _bar = @[_btnClose, _btnPause, _btnCopy, _btnTrash, _btnLang, _btnMode, _btnPolish,
-                 _btnInsert, _btnFile];
+                 _btnFinal, _btnRotate, _btnInsert, _btnFile];
 
         [self layoutViews];
         [self applyColors];
@@ -252,9 +272,9 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     }
     CGFloat right = _grip.frame.origin.x - 8;   // قبل از دستگیره تمام شود، نه زیر نقطه
     // در تسمه‌نقاله، فریم متن با قد پنل بالا می‌رود که تا سه خط جا شود
-    CGFloat textH = (_collectVisible ? kBarH : H) - 22;
+    CGFloat textH = (_editorVisible ? kBarH : H) - 22;
     _text.frame = NSMakeRect(left, 11, MAX(40, right - left), textH);
-    if (_collectVisible) {
+    if (_editorVisible) {
         _editorScroll.frame = NSMakeRect(12, kBarH, kPW - 24, H - kBarH - 10);
     }
 }
@@ -291,10 +311,10 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     [_effect addSubview:_editorScroll];
 }
 
-- (void)setCollectVisible:(BOOL)on {
+- (void)setEditorVisible:(BOOL)on {
     if (on) [self ensureEditor];
-    if (_collectVisible == on) return;
-    _collectVisible = on;
+    if (_editorVisible == on) return;
+    _editorVisible = on;
     _editorScroll.hidden = !on;
     // پیدا و ناپیدا شدن دکمه‌ها را render می‌گذارد، یک جا، که دو منبع حقیقت نشود
     [self resizeTo:on ? kBarH + kEditorH : [self conveyorHeight]];
@@ -528,35 +548,66 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     [_panel orderOut:nil];
 }
 
+// دقیقه و ثانیه، با ارقام فارسی. حالت یادداشت متنی برای نشان دادن ندارد، پس همین
+// عدد تنها مدرکِ «ضبط دارد جلو می‌رود» است.
+static NSString *ZClock(NSTimeInterval sec) {
+    int s = (int)(sec + 0.5);
+    return ZFaDigits([NSString stringWithFormat:@"%02d:%02d", s / 60, s % 60]);
+}
+
 - (void)render:(ZPanelModel *)m {
     _lastModel = m;
-    // حالت کرسر پنل را اصلا نشان نمی‌دهد، پس اینجا فقط دو حالتِ پنل‌دار می‌مانند و
-    // «جمع یا نه» همان یک پرسش قبلی است.
+    // حالت کرسر پنل را اصلا نشان نمی‌دهد، پس اینجا فقط حالت‌های پنل‌دار می‌مانند.
+    // ادیتور در دو حالت باز است: جمع، و یادداشت (که متن نهایی همان‌جا می‌نشیند).
     BOOL collect = m.mode == ZModeCollect;
-    [self setCollectVisible:collect];
+    // ادیتور در حالت جمع همیشه باز است، ولی در یادداشت فقط وقتی متنی برای نشستن هست.
+    // موقع ضبط هیچ متنی وجود ندارد و یک باکسِ خالیِ ۱۵۰ نقطه‌ای فقط فضای مرده بود؛
+    // نوارِ باریک با ساعت و نشانِ شنیدن هم زنده‌تر است هم صادق‌تر.
+    BOOL editor = collect || (m.mode == ZModeNote && m.review);
+    [self setEditorVisible:editor];
 
     // زبان روی همان دکمه دیده می‌شود: آیکون یکی است و تولتیپ می‌گوید الان کدام زبان
     // است و زدنش چه می‌کند. متن روی دکمه نمی‌گذاریم که ردیف یک‌دست بماند.
     BOOL en = [m.lang hasPrefix:@"en"];
     _btnLang.toolTip = en ? @"زبان: انگلیسی. برای رفتن به فارسی بزن (Command راست + L)"
                           : @"زبان: فارسی. برای رفتن به انگلیسی بزن (Command راست + L)";
-    // آیکون حالت، همان چیزی که با زدنش می‌گیری. چرخه سه‌تایی است، پس آیکون از
+    // آیکون حالت، همان چیزی که با زدنش می‌گیری. چرخه چهارتایی است، پس آیکون از
     // حالتِ بعدی خوانده می‌شود نه از حالت فعلی.
-    ZMode next = (ZMode)((m.mode + 1) % (ZModeCursor + 1));
+    ZMode next = (ZMode)((m.mode + 1) % (ZModeNote + 1));
     [self setButton:_btnMode symbol:next == ZModeCollect ? @"square.and.pencil"
-                                : next == ZModeCursor ? @"text.cursor" : @"bolt.fill"];
+                                : next == ZModeCursor ? @"text.cursor"
+                                : next == ZModeNote ? @"waveform" : @"bolt.fill"];
     _btnMode.toolTip = next == ZModeCollect
         ? @"رفتن به جمع در پنل، جایی که می‌شود ویرایش کرد (Command راست + E)"
         : next == ZModeCursor
         ? @"رفتن به حالت کنار کرسر: پنل می‌رود و فقط یک نقطه می‌ماند (Command راست + E)"
+        : next == ZModeNote
+        ? @"رفتن به یادداشت: فقط ضبط، و سر پایان یک متن تمیز از خودِ صدا (Command راست + E)"
         : @"رفتن به درج زنده؛ متن جمع‌شده هم با خودش می‌آید (Command راست + E)";
-    // پاس دستی و درج فقط در حالت جمع معنا دارند
-    _btnPolish.hidden = !collect;
-    _btnInsert.hidden = !collect && !m.waitingForTarget;
 
-    // چیپ صف (فقط تسمه‌نقاله، وقتی مقصد جلو نیست)
+    // سشن که تمام شد (در بازبینی، یا وسط کارِ پایانی) دکمه‌های شنیدن معنا ندارند؛
+    // دکمه‌های متن می‌مانند. نشان دادنِ دکمه‌ای که کار نمی‌کند، دروغ است.
+    BOOL over = m.review || m.working;
+    _btnPause.hidden = over;
+    _btnMode.hidden = over;
+    _btnLang.hidden = over;
+    _btnClose.toolTip = m.review ? @"بستن (Esc)" : @"پایان و درج همه (Esc)";
+    // پاس قاعده‌ای فقط در حالت جمع معنا دارد؛ پاس نهایی هر جا که روشن باشد و سشن زنده
+    // باشد. بعد از نشستنِ پاس دیگر نشان داده نمی‌شود: همان صدا دوباره همان جواب را
+    // می‌دهد و فقط پول و وقت خرج می‌کند.
+    _btnPolish.hidden = !collect || over;
+    _btnFinal.hidden = !ZSettings.shared.finalPassEnabled || over;
+    _btnRotate.hidden = m.versions < 2;
+    _btnInsert.hidden = (!editor && !m.waitingForTarget) || m.working;
+
+    // چیپ: سه معنی، هیچ‌وقت هم‌زمان. نسخه‌ی متن در بازبینی، ساعتِ ضبط در یادداشت،
+    // شمارِ صف در تسمه‌نقاله.
     NSString *chip = @"";
-    if (!collect && m.queued > 0) {
+    if (m.versions > 1 && m.versionName.length) {
+        chip = m.versionName;
+    } else if (m.elapsed > 0) {
+        chip = ZClock(m.elapsed);
+    } else if (!editor && m.queued > 0) {
         chip = [ZFaDigits([NSString stringWithFormat:@"%ld", (long)m.queued]) stringByAppendingString:@" در صف"];
     }
     _chipBg.toolTip = (m.waitingForTarget && m.targetName.length)
@@ -580,8 +631,14 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     // بعد خودش می‌رود. بدون این، زدن دکمه هیچ نشانه‌ای روی صفحه نداشت.
     // متن خاکستری در حالت جمع اینجا نمی‌آید: آنجا دنبال متن سفیدِ ادیتور استریم می‌شود،
     // چون در این نوار نصفه می‌ماند و آدم نمی‌فهمد ادامه‌اش چه بود.
-    NSString *interimHere = collect ? @"" : m.interim;
-    if (_flash.length) {
+    NSString *interimHere = editor ? @"" : m.interim;
+    if (m.working && m.workingMsg.length) {
+        // کاری در جریان (پاس نهایی): پیام مرحله بر همه‌چیز مقدم است، چون تنها خبرِ
+        // زنده‌ای است که در آن بیست ثانیه وجود دارد.
+        _text.stringValue = m.workingMsg;
+        _text.font = ZFont(12.5, YES);
+        _text.textColor = NSColor.secondaryLabelColor;
+    } else if (_flash.length) {
         _text.stringValue = _flash;
         _text.font = ZFont(12.5, YES);
         _text.textColor = NSColor.secondaryLabelColor;
@@ -622,7 +679,13 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     if (m.listening && !m.paused && !_pulsing) [self startPulse];
     if ((!m.listening || m.paused) && _pulsing) [self stopPulse];
 
-    [self resizeTo:collect ? kBarH + kEditorH : [self conveyorHeight]];
+    // نشان و چرخنده یک جا می‌نشینند و هیچ‌وقت هر دو دیده نمی‌شوند: تا کاری در جریان
+    // است چرخنده حرف می‌زند، بعدش نشان.
+    _dot.hidden = m.working;
+    if (m.working) [_spinner startAnimation:nil];
+    else [_spinner stopAnimation:nil];
+
+    [self resizeTo:editor ? kBarH + kEditorH : [self conveyorHeight]];
 }
 
 - (void)pulseLevel:(float)level {
@@ -657,6 +720,8 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
 - (void)langTap { if (self.onLangSwitch) self.onLangSwitch(); }
 - (void)modeTap { if (self.onModeToggle) self.onModeToggle(); }
 - (void)polishTap { if (self.onPolishNow) self.onPolishNow(); }
+- (void)finalTap { if (self.onFinalPass) self.onFinalPass(); }
+- (void)rotateTap { if (self.onRotateText) self.onRotateText(); }
 - (void)insertTap { if (self.onInsertAll) self.onInsertAll(); }
 - (void)fileTap { if (self.onFilePanel) self.onFilePanel(); }
 
@@ -720,14 +785,46 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     collect.listening = YES;
     collect.interim = @"و این هم متن خاکستری در جریان";
 
+    // یادداشت در حال ضبط: هیچ متنی نیست و همین سخت‌ترین حالتِ طراحی است. ساعت و نشانِ
+    // شنیدن تنها چیزی‌اند که می‌گویند کار جلو می‌رود.
+    ZPanelModel *note = [ZPanelModel new];
+    note.mode = ZModeNote;
+    note.listening = YES;
+    note.elapsed = 102;
+    note.status = @"دارم ضبط می‌کنم؛ سرِ Esc متن می‌آید";
+
+    // و لحظه‌ی بعد از Esc: چرخنده و پیام مرحله، تا جواب برسد
+    ZPanelModel *noteWorking = [ZPanelModel new];
+    noteWorking.mode = ZModeNote;
+    noteWorking.elapsed = 187;
+    noteWorking.working = YES;
+    noteWorking.workingMsg = @"رونویسی مو‌به‌مو…";
+
+    // بازبینی: سشن تمام شده، متن نشسته، و می‌شود بین نسخه‌ها چرخید
+    ZPanelModel *review = [ZPanelModel new];
+    review.mode = ZModeNote;
+    review.review = YES;
+    review.versions = 2;
+    review.versionName = @"نهایی";
+    review.status = @"متن نهایی نشست و در کلیپ‌بورد هم هست";
+
     NSArray *states = @[@[@"listening", listening], @[@"multiline", multiline], @[@"paused", paused],
                         @[@"queued", queued], @[@"long-narrow", longNarrow],
                         @[@"very-long", veryLong],
-                        @[@"error", error], @[@"collect", collect]];
+                        @[@"error", error], @[@"collect", collect],
+                        @[@"note", note], @[@"note-working", noteWorking],
+                        @[@"note-review", review]];
     [_panel orderFrontRegardless];
     for (NSArray *pair in states) {
         ZPanelModel *m = pair[1];
-        if (m.mode == ZModeCollect) {
+        if (m.mode == ZModeNote) {
+            [self clearEditor];
+            if (m.review) {
+                [self setEditorText:@"دیروز با تیم فنی نشستیم و درباره‌ی معماری تازه حرف زدیم. "
+                                    @"قرار شد تا آخر هفته یک نمونه‌ی کوچک بسازیم و بعد تصمیم بگیریم "
+                                    @"چطور بقیه‌ی سامانه را هم به همان شکل ببریم."];
+            }
+        } else if (m.mode == ZModeCollect) {
             [self clearEditor];
             // از همان دفتر و همان مقصدی که مسیر واقعی استفاده می‌کند، نه یک راه دوم
             ZTextLedger *shot = [[ZTextLedger alloc] initWithSink:[self editorSink]];
@@ -745,7 +842,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
         [png writeToFile:[dir stringByAppendingPathComponent:
                           [NSString stringWithFormat:@"panel-%@.png", pair[0]]] atomically:YES];
     }
-    [self setCollectVisible:NO];
+    [self setEditorVisible:NO];
     [_panel orderOut:nil];
 }
 
@@ -844,11 +941,15 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
 
 // نام حالت برای لاگ و برای فیدبک روی صفحه؛ دو جا، یک منبع
 static NSString *ZModeSlug(ZMode m) {
-    return m == ZModeCollect ? @"collect" : (m == ZModeCursor ? @"cursor" : @"live");
+    return m == ZModeCollect ? @"collect"
+         : m == ZModeCursor ? @"cursor"
+         : m == ZModeNote ? @"note" : @"live";
 }
 
 static NSString *ZModeLabel(ZMode m) {
-    return m == ZModeCollect ? @"جمع در پنل" : (m == ZModeCursor ? @"کنار کرسر" : @"درج زنده");
+    return m == ZModeCollect ? @"جمع در پنل"
+         : m == ZModeCursor ? @"کنار کرسر"
+         : m == ZModeNote ? @"یادداشت (فقط ضبط)" : @"درج زنده";
 }
 
 @implementation ZSession {
@@ -891,6 +992,21 @@ static NSString *ZModeLabel(ZMode m) {
     BOOL _finishing;          // منتظر پاس ویرایشِ پایانی حالت جمع
     BOOL _closing;            // موتور بسته شده و خط لوله در حال تخلیه است
     id _frontObserver;
+
+    // ---------- صدا و پاس نهایی ----------
+    // صدای *هر* سشن ضبط می‌شود، نه فقط یادداشت: پاس نهایی به صدا احتیاج دارد و صدا
+    // بعد از تمام شدن سشن دیگر پیدا نمی‌شود. با ضبطِ همیشگی، همین کار پایانی روی هر
+    // سشنی شدنی است. فایل تنبل ساخته می‌شود، پس سشن بی‌صدا چیزی روی دیسک نمی‌گذارد.
+    ZRecorder *_recorder;
+    NSTimer *_clock;              // ساعت ضبط در حالت یادداشت؛ فقط برای دیده شدن
+    BOOL _working;                // پاس نهایی در جریان
+    NSString *_workingMsg;
+    BOOL _reviewing;              // سشن تمام شده ولی پنل با متن نهایی باز مانده
+    ZFinalPassResult *_pass;
+    // نسخه‌های متن برای چرخش و مقایسه: (نام، متن). خام همان چیزی است که موتور شنید.
+    NSArray<NSArray<NSString *> *> *_versions;
+    NSInteger _versionAt;
+    NSString *_rawSessionText;    // متنِ مسیر معمولی، پیش از پاس نهایی
 }
 
 - (instancetype)initWithEngine:(id<ZEngine>)engine panel:(ZPanel *)panel {
@@ -906,6 +1022,8 @@ static NSString *ZModeLabel(ZMode m) {
         NSString *stamp = ZTimestampId();
         _sessionFile = [ZSessionsDir() URLByAppendingPathComponent:
                         [NSString stringWithFormat:@"app-%@.txt", stamp]];
+        _recorder = [[ZRecorder alloc] initWithURL:[ZSessionsDir() URLByAppendingPathComponent:
+                     [NSString stringWithFormat:@"app-%@.flac", stamp]]];
         // ورودیِ خامِ رونوشت، کنار متنِ خام. سشنِ بعدی که چیزی از دستش برود، با
         // `zemzeme --replay` دقیقا همان‌جا دوباره پخش می‌شود، بی‌میکروفن و بی‌شبکه.
         ZEventLogStart([ZSessionsDir() URLByAppendingPathComponent:
@@ -918,6 +1036,7 @@ static NSString *ZModeLabel(ZMode m) {
     _mode = ZSettings.shared.mode;
     _target = NSWorkspace.sharedWorkspace.frontmostApplication;
     _caretSink.target = _target;
+    _engine.recorder = _recorder;
     _ledger = [[ZTextLedger alloc] initWithSink:[self sinkForMode:_mode]];
     ZLog(@"session: start target=%@ engine=%@ lang=%@ mode=%@",
          _target.bundleIdentifier ?: @"?", ZSettings.shared.engineName, ZSettings.shared.lang,
@@ -941,23 +1060,52 @@ static NSString *ZModeLabel(ZMode m) {
     _panel.onLangSwitch = ^{ [ws switchLang]; };
     _panel.onModeToggle = ^{ [ws toggleMode]; };
     _panel.onPolishNow = ^{ [ws polishCollected]; };
-    if (_mode == ZModeCollect) [_panel clearEditor];
+    _panel.onFinalPass = ^{ [ws finalPassNow]; };
+    _panel.onRotateText = ^{ [ws rotateText]; };
+    if ([self editorMode:_mode]) [_panel clearEditor];
     [self applyModeChrome];
-    if (![ZInjector accessibilityOK]) {
+    // در حالت یادداشت درج زنده‌ای در کار نیست، پس نبودن اکسسبیلیتی هم مانعی نیست:
+    // آن پیام آنجا فقط ترساندنِ بی‌دلیل بود.
+    if (![ZInjector accessibilityOK] && _mode != ZModeNote) {
         _statusText = @"دسترسی Accessibility نیست؛ درج کار نمی‌کند، متن آخر کار کپی می‌شود";
     }
     if (ZSettings.shared.polishEnabled) [ZPolish.shared prepare];
+    // پرسشِ Keychain می‌تواند پنجره‌ی اجازه باز کند و کند باشد؛ همین حالا و در
+    // پس‌زمینه پرسیده می‌شود که سرِ Esc معطلی نسازد.
+    if (ZSettings.shared.finalPassEnabled) [ZFinalPass.shared prefetchKey];
     self.engine.delegate = self;
     [self.engine startWithLang:ZSettings.shared.lang];
+    [self startClock];
     [self render];
+}
+
+// حالت‌هایی که متن در ادیتور خود پنل می‌نشیند، پس بازنویسی آزاد است و درج تا پایان
+// عقب می‌افتد. جمع و یادداشت هر دو همین‌اند و همه‌ی شرط‌های قبلیِ «جمع هست یا نه» از
+// همین یک تابع می‌خوانند، وگرنه با آمدن حالت چهارم پانزده جا واگرا می‌شد.
+- (BOOL)editorMode:(ZMode)m {
+    return m == ZModeCollect || m == ZModeNote;
 }
 
 // حالت فقط مقصد را عوض می‌کند و یک بولین را، نه منطق را
 - (id<ZTextSink>)sinkForMode:(ZMode)m {
-    if (m == ZModeCollect) return [_panel editorSink];
+    if ([self editorMode:m]) return [_panel editorSink];
     _caretSink.renderPending = (m == ZModeCursor);
     _caretSink.target = _target;
     return _caretSink;
+}
+
+// ساعت ضبط. فقط در حالت یادداشت می‌چرخد، چون فقط آنجا هیچ متنی روی صفحه نمی‌آید و
+// پنلِ بی‌حرکت یعنی «معلوم نیست دارد کار می‌کند یا نه».
+- (void)startClock {
+    [_clock invalidate];
+    _clock = nil;
+    if (_mode != ZModeNote) return;
+    __weak typeof(self) ws = self;
+    _clock = [NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *t) {
+        __strong typeof(ws) s = ws;
+        if (!s || s->_finished) return;
+        [s render];
+    }];
 }
 
 // ---------- ZEngineDelegate (روی نخ اصلی) ----------
@@ -992,7 +1140,7 @@ static NSString *ZModeLabel(ZMode m) {
     // حالت جمع: خام می‌نشیند در ادیتور. پاس ویرایش وسط کار روی متنی که داری ویرایشش
     // می‌کنی می‌افتد و ویرایش‌هایت را می‌شوید، پس تا خودت نخواهی (دکمه پاس) یا تا
     // لحظه‌ی درج و پایان، اجرا نمی‌شود. موقع بستن هم معطلی نداریم: خام و همین حالا.
-    if (_mode == ZModeCollect || _closing || !ZSettings.shared.polishEnabled) {
+    if ([self editorMode:_mode] || _closing || !ZSettings.shared.polishEnabled) {
         [_awaiting removeObjectAtIndex:0];
         [_transcript setString:ZJoinText(_transcript, raw)];
         [self sync];
@@ -1029,7 +1177,10 @@ static NSString *ZModeLabel(ZMode m) {
         case ZEngineConnecting: _statusText = @"در حال اتصال…"; break;
         case ZEngineListening:
             _listening = YES;
-            _statusText = @"دارم گوش می‌دم";   // نام زبان را پنل از مدل می‌چسباند
+            // در یادداشت هیچ تشخیصی در جریان نیست، پس «گوش می‌دم» گمراه‌کننده بود:
+            // آنجا واقعا فقط ضبط می‌شود و متن سرِ پایان می‌آید.
+            _statusText = _mode == ZModeNote ? @"دارم ضبط می‌کنم؛ سرِ Esc متن می‌آید"
+                                             : @"دارم گوش می‌دم";   // زبان را پنل می‌چسباند
             break;
         case ZEngineReconnecting:
             _troubleState = YES;
@@ -1075,9 +1226,9 @@ static NSString *ZModeLabel(ZMode m) {
     }
 }
 
-// کل متن سشن. در حالت جمع، متنِ ادیتور مرجع است چون کاربر آنجا ویرایشش کرده.
+// کل متن سشن. در حالت‌های ادیتوردار، متنِ ادیتور مرجع است چون کاربر آنجا ویرایشش کرده.
 - (NSString *)fullText {
-    if (_mode == ZModeCollect) return [_panel editorText] ?: @"";
+    if ([self editorMode:_mode]) return [_panel editorText] ?: @"";
     return [ZJoinText(_transcript, [_awaiting componentsJoinedByString:@" "])
             stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
 }
@@ -1101,10 +1252,15 @@ static NSString *ZModeLabel(ZMode m) {
     [_awaiting removeAllObjects];
     _polishGen++;              // جوابِ دیررسِ پاسِ در پرواز نباید بعدا بنشیند
     [_ledger dropOwned];       // دُم را از روی صفحه هم بردار، اگر بشود ثابت کرد
-    NSUInteger keep = _mode == ZModeCollect ? _editorStintStart : _ledger.deliveredLength;
-    if (_mode == ZModeCollect) {
-        // در حالت جمع هیچ‌چیز درج نشده، پس همه‌اش «درج‌نشده» است و ادیتور خالی می‌شود
+    BOOL inEditor = [self editorMode:_mode];
+    NSUInteger keep = inEditor ? _editorStintStart : _ledger.deliveredLength;
+    if (inEditor) {
+        // در حالت‌های ادیتوردار هیچ‌چیز درج نشده، پس همه‌اش «درج‌نشده» است و ادیتور
+        // خالی می‌شود. فایل صدا اما هیچ‌وقت پاک نمی‌شود: «هیچ چیز گم نمی‌شود» از هر
+        // دکمه‌ای بالاتر است، و متنِ دورریخته را همیشه می‌شود از همان صدا دوباره ساخت.
         [_panel clearEditor];
+        _versions = nil;
+        _versionAt = 0;
     }
     if (keep < _transcript.length) {
         [_transcript deleteCharactersInRange:NSMakeRange(keep, _transcript.length - keep)];
@@ -1115,13 +1271,14 @@ static NSString *ZModeLabel(ZMode m) {
     [self sync];
 }
 
-// چرخش حالت وسط کار، بدون گم شدن متن: زنده ← جمع ← کرسر ← زنده.
+// چرخش حالت وسط کار، بدون گم شدن متن: زنده ← جمع ← کرسر ← یادداشت ← زنده.
 // قرارداد قدیمی سر جایش است: بیرون آمدن از جمع متن را درج می‌کند یا با خودش می‌برد،
 // هیچ‌وقت دور نمی‌ریزد. دور ریختن کار سطل آشغال است.
 - (void)toggleMode {
-    ZMode next = (ZMode)((_mode + 1) % (ZModeCursor + 1));
+    if (_reviewing) return;    // سشن تمام شده؛ چرخاندن حالت اینجا معنایی ندارد
+    ZMode next = (ZMode)((_mode + 1) % (ZModeNote + 1));
     NSUInteger delivered = _ledger.deliveredLength;
-    if (_mode == ZModeCollect) {
+    if ([self editorMode:_mode]) {
         // متنِ جمع‌شده، با ویرایش‌های خودِ کاربر، می‌رود همان‌جا که داشتی می‌نوشتی و
         // یک نسخه هم در کلیپ‌بورد می‌ماند. رونوشت از همان نقطه‌ای که ادیتور شروع شده
         // بود با متنِ ویرایش‌شده جایگزین می‌شود، پس دفتر دقیقا همان را تحویل می‌دهد.
@@ -1133,15 +1290,44 @@ static NSString *ZModeLabel(ZMode m) {
         delivered = cut;
         if (t.length) [ZInjector copyFinal:t];
     }
+    ZMode prev = _mode;
     _mode = next;
     ZSettings.shared.mode = next;
-    if (next == ZModeCollect) _editorStintStart = delivered;
+    if ([self editorMode:next]) _editorStintStart = delivered;
+    [self swapEngineFrom:prev to:next];
     [self applyModeChrome];
+    [self startClock];
     [_ledger adoptSink:[self sinkForMode:next] committed:_transcript delivered:delivered];
     ZPlay(ZSoundMode);
     ZLog(@"session: mode -> %@", ZModeSlug(next));
     [_panel flash:[@"حالت: " stringByAppendingString:ZModeLabel(next)]];
     [self sync];
+}
+
+// یادداشت موتور دیگری می‌خواهد (فقط ضبط، بی‌شبکه)، پس چرخیدن به آن یا از آن یعنی
+// موتور عوض شود. سه حالت دیگر همان موتور را می‌گیرند و اینجا هیچ اتفاقی نمی‌افتد.
+//
+// ضبط از این تعویض جان سالم می‌برد و همین نکته‌ی اصلی است: فایل صدا مالِ سشن است نه
+// موتور، پس یک سشنی که نیمه‌اش زنده بود و نیمه‌اش یادداشت، یک فایل صدای پیوسته دارد
+// و پاس نهایی کلش را می‌بیند. متنِ قطعی‌شده هم دست‌نخورده در رونوشت مانده، چون
+// stop موتور قبلی هرچه معلق بود را قطعی می‌کند و از همان دلیگیت می‌آید.
+- (void)swapEngineFrom:(ZMode)prev to:(ZMode)next {
+    if ((prev == ZModeNote) == (next == ZModeNote)) return;
+    ZLog(@"session: engine swap for mode %@", ZModeSlug(next));
+    id<ZEngine> old = _engine;
+    // ترتیب مهم است: **اول stop با دلیگیتِ سرجایش**، چون همان stop است که متنِ معلق
+    // را قطعی می‌کند و همان‌جا و همگام تحویلش می‌دهد. نال کردن دلیگیت پیش از stop یعنی
+    // آخرین چند کلمه بی‌صدا گم شوند. بعد از stop نال می‌شود، که کال‌بک‌های آسنکرونِ
+    // بسته شدنِ اتصال دیگر روی موتور تازه نریزند.
+    [old stop];
+    old.delegate = nil;
+    old.recorder = nil;
+    [self drainPolish];    // صفِ پاسِ همان موتور خام می‌نشیند، نه اینکه معلق بماند
+    _engine = ZMakeEngine(next);
+    _engine.recorder = _recorder;
+    _engine.delegate = self;
+    _enginePending = @"";
+    [_engine startWithLang:ZSettings.shared.lang];
 }
 
 // پنل و نشانگر دقیقا یکی‌شان دیده می‌شود، هیچ‌وقت هر دو: قرار حالت کرسر این است که
@@ -1176,7 +1362,10 @@ static NSString *ZModeLabel(ZMode m) {
 // روی نخ پس‌زمینه، چون نسخه‌ی دسته‌ای تا ۹ ثانیه بودجه دارد و نخ اصلی نباید یخ بزند.
 - (void)withPolishedCollected:(void (^)(NSString *text))done {
     NSString *raw = [_panel editorText];
-    if (!ZSettings.shared.polishEnabled || !raw.length) {
+    // فقط حالت جمع. در یادداشت متنِ ادیتور از پاس نهایی آمده، یعنی نقطه‌گذاری و
+    // نیم‌فاصله‌اش را همین حالا یک مدلِ بزرگ و بعد یک پاس مکانیکی گذاشته‌اند؛ دوباره
+    // زدنِ پاس قاعده‌ای فقط می‌تواند خرابش کند.
+    if (_mode != ZModeCollect || !ZSettings.shared.polishEnabled || !raw.length) {
         done(raw);
         return;
     }
@@ -1218,7 +1407,7 @@ static NSString *ZModeLabel(ZMode m) {
 - (void)insertHere {
     _target = NSWorkspace.sharedWorkspace.frontmostApplication;
     _caretSink.target = _target;
-    if (_mode == ZModeCollect) {
+    if ([self editorMode:_mode]) {
         if (![_panel editorText].length) return;
         // I درج می‌کند ولی سشن را نمی‌بندد: ادیتور خالی می‌شود و می‌توانی ادامه بدهی.
         // بستن کار Esc است.
@@ -1269,7 +1458,19 @@ static NSString *ZModeLabel(ZMode m) {
 // اصلی نباید آن‌قدر یخ بزند. مسیر خروج اپ عمدا از این معطلی رد نمی‌شود (finishNow):
 // آنجا اپ دارد بسته می‌شود و از دست دادن پاس مهم نیست، از دست دادن متن مهم است.
 - (void)finish {
-    if (_finished || _finishing) return;
+    // در بازبینی، Esc و دکمه‌ی بستن یک معنی دارند: پنل را ببند و سشن را واقعا تمام کن.
+    if (_reviewing) {
+        [self closeReview];
+        return;
+    }
+    if (_finished || _finishing || _working) return;
+    // حالت یادداشت هیچ متن لحظه‌ای ندارد و کل کارش همین پاس پایانی است، پس Esc در آن
+    // حالت خودش یعنی «پاس نهایی». نداشتنِ کلید یا خاموش بودن تاگل، مسیر معمولی را
+    // برمی‌گرداند و پیامش را هم می‌گوید.
+    if (_mode == ZModeNote && ZSettings.shared.finalPassEnabled) {
+        [self finalPassNow];
+        return;
+    }
     // ترتیب مهم است و یک بار اشتباه بود: **اول موتور را ببند و خط لوله را خالی کن،
     // بعد پاس بزن**. برعکسش یعنی پاس روی یک عکسِ ناقص از متن بیفتد و آخرین تکه‌ی
     // موتور (که چند صد میلی‌ثانیه بعد می‌رسد) بعد از متنِ پاس‌خورده بچسبد. آن‌وقت
@@ -1293,6 +1494,10 @@ static NSString *ZModeLabel(ZMode m) {
 }
 
 - (void)finishNow {
+    if (_reviewing) {
+        [self closeReview];
+        return;
+    }
     if (_finished) return;
     _finished = YES;
     _finishing = NO;
@@ -1300,31 +1505,176 @@ static NSString *ZModeLabel(ZMode m) {
     // اینجا هم لازم است. stop دو بار صدا خوردن بی‌ضرر است.
     _closing = YES;
     [self.engine stop];
+    [_clock invalidate];
+    _clock = nil;
+    // فایل صدا بسته می‌شود، ولی پاک نمی‌شود: کنار متنِ همان سشن روی دیسک می‌ماند و
+    // پاس نهایی (همین حالا، یا هیچ‌وقت) از همان می‌خواند.
+    [_recorder finish];
     _polishBusy = NO;
     [self drainPolish];
     // آخرین تحویل، بی‌معطلیِ سقفِ زمانی. مقصد جلو نباشد، متن در دفتر می‌ماند و
     // کپیِ پایانی نجاتش می‌دهد.
-    if (_mode != ZModeCollect) {
+    if (![self editorMode:_mode]) {
         [_ledger flushNow];
         if (_ledger.undelivered) {
             ZLog(@"session: %lu chars never reached the target, clipboard holds them",
                  (unsigned long)_ledger.undelivered);
         }
-    } else if ([_panel editorText].length && [self targetIsFront]) {
+    } else if (_mode == ZModeCollect && [_panel editorText].length && [self targetIsFront]) {
+        // فقط حالت جمع خودبه‌خود درج می‌کند. یادداشت نه، و عمدا: آنجا داشتی با خودت
+        // حرف می‌زدی، نه در یک باکس تایپ. متن در ادیتور و کلیپ‌بورد می‌نشیند و دکمه‌ی
+        // درج یک کلیک دورتر است.
         [self injectText:[[_panel editorText] stringByAppendingString:@" "]];
     }
     // بیمه: کل متن سشن، یک بار، ماندگار در کلیپ‌بورد؛ پشتِ صف درج که با پیست مسابقه نگیرد
     NSString *full = [self fullText];
     if (full.length) [_injector copyFinalAfterPending:full];
     ZPlay(ZSoundFinish);
+    ZLog(@"session: finished, %lu chars, audio %.0fs, ledger %@",
+         (unsigned long)full.length, _recorder.seconds, _ledger.stats.summary);
+    // متن نهایی روی صفحه است و باید خوانده و ویرایش شود، پس پنل می‌ماند و سشن هم
+    // (از دید تپ کیبورد) زنده می‌ماند تا میان‌برهای متن کار کنند. بستنش کارِ Esc است.
+    if (_versions.count && [self editorMode:_mode]) {
+        _reviewing = YES;
+        _statusText = @"متن آماده است. Esc می‌بندد، C کپی می‌کند، I درج می‌کند";
+        [self render];
+        return;
+    }
+    [self teardown];
+}
+
+// بستنِ واقعی: از اینجا به بعد سشنی نیست.
+- (void)teardown {
     if (_frontObserver) [NSWorkspace.sharedWorkspace.notificationCenter removeObserver:_frontObserver];
     _frontObserver = nil;
+    [_clock invalidate];
+    _clock = nil;
     [_panel hide];
     [_dot hide];    // تایمر دنبال‌کردن کرسر همین‌جا می‌ایستد، نه یک تیک بعد
-    ZLog(@"session: finished, %lu chars, ledger %@",
-         (unsigned long)full.length, _ledger.stats.summary);
     ZEventLogStop();
     if (self.onFinish) self.onFinish();
+    self.onFinish = nil;    // دو بار خبر دادن یعنی دلیگیت اپ دو بار سشن را نال کند
+}
+
+- (void)closeReview {
+    if (!_reviewing) return;
+    _reviewing = NO;
+    // ویرایش‌های خودِ کاربر در این فاصله هم باید در کلیپ‌بورد بنشینند
+    NSString *t = [_panel editorText];
+    if (t.length) [ZInjector copyFinal:t];
+    ZLog(@"session: review closed, %lu chars", (unsigned long)t.length);
+    [self teardown];
+}
+
+// ---------- پاس نهایی ----------
+
+// N یا دکمه‌ی نوار، و در حالت یادداشت خودِ Esc. ترتیب عمدی است: **اول پایانِ معمولی،
+// بعد پاس**. یعنی در حالت زنده و کرسر هرچه قرار بود سر کرسر برود رفته و پاس فقط به
+// ادیتور و کلیپ‌بورد می‌رسد؛ بازویرایشِ متنی که از دست ما خارج شده ممنوع است.
+- (void)finalPassNow {
+    if (_working || _reviewing) return;
+    if (!ZSettings.shared.finalPassEnabled) {
+        [_panel flash:@"پاس نهایی خاموش است؛ از منوی زمزمه روشنش کن"];
+        return;
+    }
+    // ضبط را ببند تا فایل کامل شود، و همان لحظه سشن را هم به شکل معمولی تمام کن.
+    if (!_finished) {
+        _closing = YES;
+        [self.engine stop];
+        [_clock invalidate];
+        _clock = nil;
+        [_recorder finish];
+        _polishBusy = NO;
+        [self drainPolish];
+        if (![self editorMode:_mode]) {
+            [_ledger flushNow];
+        }
+        NSString *raw = [self fullText];
+        if (raw.length) [_injector copyFinalAfterPending:raw];
+        _rawSessionText = [raw copy];
+    }
+    NSURL *audio = _recorder.url;
+    if (!audio) {
+        // نه فایلی، نه صدایی: موتور رله‌ی کروم میکروفن ندارد، یا سشن یک ثانیه هم صدا
+        // نگرفت. متن سر جایش است و همان چیزی است که همیشه بود.
+        [_panel flash:@"صدایی ضبط نشده؛ پاس نهایی چیزی برای شنیدن ندارد"];
+        [self finishNow];
+        return;
+    }
+    if (!ZFinalPass.hasKey) {
+        [_panel flash:@"کلید جمینای نیست؛ پاس نهایی اجرا نشد"];
+        ZLog(@"final: %@", ZFinalPass.missingKeyHint);
+        [self finishNow];
+        return;
+    }
+    _working = YES;
+    _workingMsg = @"پاس نهایی…";
+    // ادیتور باید دیده شود تا متن جایی برای نشستن داشته باشد، حتی اگر سشن زنده بود
+    _mode = [self editorMode:_mode] ? _mode : ZModeNote;
+    [self applyModeChrome];
+    [self render];
+    ZLog(@"final: start on %@ (%.0fs)", audio.lastPathComponent, _recorder.seconds);
+    __weak typeof(self) ws = self;
+    [ZFinalPass.shared runOnAudio:audio lang:ZSettings.shared.lang progress:^(NSString *msg) {
+        __strong typeof(ws) s = ws;
+        if (!s) return;
+        s->_workingMsg = msg;
+        [s render];
+    } done:^(ZFinalPassResult *r) {
+        __strong typeof(ws) s = ws;
+        if (!s) return;
+        [s finalPassLanded:r];
+    }];
+}
+
+- (void)finalPassLanded:(ZFinalPassResult *)r {
+    _working = NO;
+    _workingMsg = nil;
+    _pass = r;
+    if (r.error.length || !r.text.length) {
+        // پاس را باختیم، متن را نه: هرچه از مسیر معمولی آمده بود سر جایش است.
+        ZLog(@"final: failed — %@", r.error ?: @"متنی نیامد");
+        _statusText = r.error ?: @"پاس نهایی نشد";
+        [_panel flash:r.error ?: @"پاس نهایی نشد؛ متن معمولی سر جایش است"];
+        [self finishNow];
+        return;
+    }
+    // سه نسخه، برای مقایسه با یک دکمه. خام فقط وقتی هست که موتوری واقعا شنیده باشد
+    // (حالت یادداشت متن خام ندارد).
+    NSMutableArray *vs = [NSMutableArray arrayWithObject:@[@"نهایی", r.text]];
+    if (r.verbatim.length && ![r.verbatim isEqualToString:r.text]) {
+        [vs addObject:@[@"مو‌به‌مو", r.verbatim]];
+    }
+    if (_rawSessionText.length) [vs addObject:@[@"خام", _rawSessionText]];
+    _versions = vs;
+    _versionAt = 0;
+    [_panel setEditorText:r.text];
+    [ZInjector copyFinal:r.text];
+    ZPlay(ZSoundPolish);
+    NSString *note = r.gated
+        ? @"دروازه بست؛ متن مو‌به‌مو نشست"
+        : [NSString stringWithFormat:@"پاس نهایی نشست · %@ ثانیه",
+           ZFaDigits([NSString stringWithFormat:@"%.0f", r.seconds])];
+    [_panel flash:note];
+    [self finishNow];
+}
+
+// چرخش بین نسخه‌ها. ویرایش‌های خودِ کاربر روی نسخه‌ی جاری نگه داشته می‌شوند: چرخیدن
+// برای *مقایسه* است و نباید کار کسی را بشوید.
+- (void)rotateText {
+    if (_versions.count < 2) {
+        [_panel flash:@"فقط یک نسخه از متن هست"];
+        return;
+    }
+    NSMutableArray *vs = [_versions mutableCopy];
+    NSString *shown = [_panel editorText] ?: @"";
+    NSArray *cur = vs[_versionAt];
+    if (![cur[1] isEqualToString:shown]) vs[_versionAt] = @[cur[0], shown];
+    _versions = vs;
+    _versionAt = (_versionAt + 1) % (NSInteger)_versions.count;
+    [_panel setEditorText:_versions[_versionAt][1]];
+    [_panel flash:[@"نسخه: " stringByAppendingString:_versions[_versionAt][0]]];
+    [self render];
 }
 
 // ---------- کمکی ----------
@@ -1350,10 +1700,10 @@ static NSString *ZModeLabel(ZMode m) {
 
 - (void)render {
     ZPanelModel *m = [ZPanelModel new];
-    // در حالت جمع، دُم خاکستری داخل ادیتور نشسته، پس نوار پایین آن را دوباره نشان
-    // نمی‌دهد. در دو حالت دیگر نوار تنها جای دیدنش است.
-    m.interim = _mode == ZModeCollect ? @"" : ZJoinText([_awaiting componentsJoinedByString:@" "],
-                                                        _enginePending);
+    // در حالت‌های ادیتوردار، دُم خاکستری داخل ادیتور نشسته، پس نوار پایین آن را دوباره
+    // نشان نمی‌دهد. در دو حالت دیگر نوار تنها جای دیدنش است.
+    m.interim = [self editorMode:_mode] ? @"" : ZJoinText([_awaiting componentsJoinedByString:@" "],
+                                                          _enginePending);
     m.status = _statusText;
     // چیپ صف از خودِ دفتر عدد می‌گیرد: «درج‌نشده» یعنی همان چیزی که دفتر نتوانسته
     // تحویل بدهد، نه یک شمارنده‌ی جدا که می‌تواند واگرا شود.
@@ -1364,8 +1714,16 @@ static NSString *ZModeLabel(ZMode m) {
     m.trouble = _troubleState;
     m.lang = ZSettings.shared.lang;
     m.mode = _mode;
-    m.waitingForTarget = _mode != ZModeCollect && _ledger.undelivered > 0 && ![self targetIsFront];
+    m.waitingForTarget = ![self editorMode:_mode] && _ledger.undelivered > 0 && ![self targetIsFront];
     m.targetName = _target.localizedName ?: @"";
+    // ساعت فقط در حالت یادداشت و فقط تا وقتی ضبط ادامه دارد: در بازبینی، جای چیپ
+    // مالِ نامِ نسخه است.
+    m.elapsed = (_mode == ZModeNote && !_reviewing) ? _recorder.seconds : 0;
+    m.working = _working;
+    m.workingMsg = _workingMsg;
+    m.review = _reviewing;
+    m.versions = (NSInteger)_versions.count;
+    m.versionName = _versions.count ? _versions[_versionAt][0] : @"";
     // در حالت کرسر پنل پنهان است؛ رندر کردنش یعنی قد کشیدن و چیدن یک پنجره‌ی نادیده
     if (_mode == ZModeCursor) [_dot render:m];
     else [_panel render:m];

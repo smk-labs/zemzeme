@@ -615,6 +615,12 @@ static CGEventRef zHotkeyCallback(CGEventTapProxy proxy, CGEventType type, CGEve
         case 37: return self.onLangSwitch;    // L
         case 14: return self.onModeToggle;    // E
         case 35: return self.onPolishNow;     // P
+        // N و R تازه‌اند و مثل بقیه فقط در حین سشن: N پایان و پاس نهایی، R چرخش بین
+        // نسخه‌های متن. عمدا بیرون از سشن کار نمی‌کنند، چون Command راست + N و + R در
+        // اپ‌های دیگر معنی دارند (پنجره‌ی نو، بازخوانی) و یک تپ سراسری هر ترکیبی را که
+        // همیشه بگیرد، همیشه از همه می‌دزدد.
+        case 45: return self.onFinalPass;     // N
+        case 15: return self.onRotateText;    // R
         // I نه V: روی ⌥V سه چیز نشسته بود. مککی (تاریخچه‌ی کلیپ‌بورد مک) و، داخل
         // ریموت، رول کارابینر که ⌥V را به Win+V می‌برد (تاریخچه‌ی کلیپ‌بورد ویندوز).
         // آن دو یک معنی‌اند در دو دنیا و کلیدشان مال خودشان است؛ درجِ زمزمه راه‌های

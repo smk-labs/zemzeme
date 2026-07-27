@@ -725,14 +725,50 @@ static NSString *ZClock(double sec) {
     [self syncButtons];
 }
 
-// پاس نهایی روی نخ پس‌زمینه: هر تکه تا ۹ ثانیه بودجه دارد و متن بلند صدها تکه است،
-// پس روی نخ اصلی یعنی پنجره‌ی یخ‌زده. دیمن نباشد، همان متن خام برمی‌گردد.
+// قالب‌هایی که خودِ جمینای مستقیم می‌گیرد. تبدیلی در کار نیست: فایلی که در این فهرست
+// نباشد از مسیر قاعده‌ای رد می‌شود و پیامش را هم می‌گوید.
+static NSString *ZGeminiMime(NSURL *url) {
+    static NSDictionary *map;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        map = @{@"flac": @"audio/flac", @"wav": @"audio/wav", @"mp3": @"audio/mpeg",
+                @"m4a": @"audio/mp4", @"aac": @"audio/aac", @"ogg": @"audio/ogg",
+                @"oga": @"audio/ogg", @"opus": @"audio/ogg", @"aiff": @"audio/aiff",
+                @"aif": @"audio/aiff"};
+    });
+    return map[url.pathExtension.lowercaseString];
+}
+
+// پاس نهایی، دو مسیر و یک دکمه:
+//   · با هوش مصنوعی روشن و کلید موجود و فایل‌های صوتیِ قابل‌قبول: کل صدا از نو شنیده
+//     می‌شود. اندازه‌گیری روی یک ویس ۶ دقیقه‌ای فارسی: متن خام گوگل ۱۱ تکه محتوا را
+//     انداخته بود و هیچ پاس متنی برشان نمی‌گرداند، چون در ورودی نبودند.
+//   · وگرنه همان پاس قاعده‌ای روی متنِ چسبانده‌شده.
+// هر دو روی نخ پس‌زمینه: پاس قاعده‌ای صدها تکه دارد و پاس هوش مصنوعی دقیقه‌ها طول
+// می‌کشد؛ روی نخ اصلی یعنی پنجره‌ی یخ‌زده.
 - (void)tapPolish {
     if (_polishing) return;
     NSString *raw = _editor.string;
     if (!raw.length) {
         [self flash:@"اول متنی بچسبان"];
         return;
+    }
+    if (ZSettings.shared.finalPassEnabled && ZFinalPass.hasKey) {
+        NSMutableArray<NSURL *> *files = [NSMutableArray array];
+        NSMutableArray<NSString *> *bad = [NSMutableArray array];
+        for (ZBatchRow *r in _rows) {
+            if (!r.url) continue;
+            if (ZGeminiMime(r.url)) [files addObject:r.url];
+            else [bad addObject:r.url.pathExtension.lowercaseString ?: @"?"];
+        }
+        if (files.count && !bad.count) {
+            [self aiPolish:files];
+            return;
+        }
+        [self flash:bad.count
+            ? [NSString stringWithFormat:@"پاس هوش مصنوعی این قالب را نمی‌گیرد (%@)؛ پاس قاعده‌ای اجرا شد",
+               [[NSSet setWithArray:bad].allObjects componentsJoinedByString:@"، "]]
+            : @"فایلی در صف نیست؛ پاس قاعده‌ای روی همین متن اجرا شد"];
     }
     _polishing = YES;
     [self syncButtons];
@@ -754,6 +790,49 @@ static NSString *ZClock(double sec) {
             [s syncButtons];
         });
     });
+}
+
+// فایل‌به‌فایل و به همان ترتیب صف، چون خروجی هم به همان ترتیب چسبانده می‌شود. صفِ
+// چندفایلی سریالی می‌رود نه موازی: سهم مجانی سقف ۲۰ درخواست در دقیقه دارد و هر فایل
+// دو تماس می‌خورد.
+- (void)aiPolish:(NSArray<NSURL *> *)files {
+    _polishing = YES;
+    [self syncButtons];
+    NSString *lang = ZSettings.shared.batchLang;
+    __weak typeof(self) ws = self;
+    __block NSMutableArray<NSString *> *out = [NSMutableArray array];
+    __block NSInteger at = 0;
+    __block void (^next)(void);
+    next = ^{
+        __strong typeof(ws) s = ws;
+        if (!s) return;
+        if (at >= (NSInteger)files.count) {
+            s->_polishing = NO;
+            NSString *joined = [out componentsJoinedByString:@"\n\n"];
+            if (joined.length) [s setEditorText:joined];
+            ZPlay(ZSoundPolish);
+            [s flash:joined.length ? @"پاس نهایی با هوش مصنوعی انجام شد"
+                                   : @"پاس نهایی چیزی برنگرداند؛ متن قبلی سر جایش است"];
+            [s syncButtons];
+            next = nil;
+            return;
+        }
+        NSURL *f = files[at];
+        s->_status.stringValue = [NSString stringWithFormat:@"پاس نهایی %@ از %@: %@",
+            ZFaDigits(@(at + 1).stringValue), ZFaDigits(@(files.count).stringValue),
+            f.lastPathComponent];
+        [ZFinalPass.shared runOnAudio:f lang:lang progress:^(NSString *msg) {
+            __strong typeof(ws) s2 = ws;
+            if (s2) s2->_status.stringValue = [NSString stringWithFormat:@"%@ · %@",
+                                               f.lastPathComponent, msg];
+        } done:^(ZFinalPassResult *r) {
+            if (r.text.length) [out addObject:r.text];
+            else ZLog(@"batchui: پاس نهایی %@ نشد — %@", f.lastPathComponent, r.error ?: @"?");
+            at++;
+            if (next) next();
+        }];
+    };
+    next();
 }
 
 - (void)tapCopy {

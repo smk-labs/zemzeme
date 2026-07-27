@@ -92,6 +92,7 @@
 }
 
 - (NSData *)streamHeader { return _streamHeader; }
+- (UInt32)blockFrames { return _blockSize; }
 
 // "fLaC" + یک بلاک متادیتای STREAMINFO (۳۴ بایت، طبق اسپک FLAC). چون استریم زنده
 // است min/max frame size و total_samples را «نامعلوم» (صفر) می‌گذاریم؛ هر دوی

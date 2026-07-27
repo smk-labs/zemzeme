@@ -185,7 +185,7 @@ NSFont *ZFont(CGFloat size, BOOL medium) {
 // (کلید دستکاری‌شده) به زنده برمی‌گردد، نه به حالتی که کاربر نمی‌شناسد.
 - (ZMode)mode {
     NSInteger v = [self.d integerForKey:@"collect"];
-    return (v >= ZModeLive && v <= ZModeCursor) ? (ZMode)v : ZModeLive;
+    return (v >= ZModeLive && v <= ZModeNote) ? (ZMode)v : ZModeLive;
 }
 - (void)setMode:(ZMode)v { [self.d setInteger:v forKey:@"collect"]; }
 
@@ -214,6 +214,14 @@ NSFont *ZFont(CGFloat size, BOOL medium) {
 // را بچرخاند.
 - (NSString *)batchLang { return [self.d stringForKey:@"batchLang"] ?: @"fa-IR"; }
 - (void)setBatchLang:(NSString *)v { [self.d setObject:v forKey:@"batchLang"]; }
+
+// پیش‌فرض خاموش، و عمدا: بی‌کلید روشن بودنش فقط یک پیام خطا در پایان هر سشن است.
+// روشن کردنش هم انتخاب صریح کاربر است، چون یک تماس شبکه‌ای و پولی به کار اضافه می‌کند.
+- (BOOL)finalPassEnabled { return [self.d boolForKey:@"finalPass"]; }
+- (void)setFinalPassEnabled:(BOOL)v { [self.d setBool:v forKey:@"finalPass"]; }
+
+- (BOOL)plainNotes { return [self.d boolForKey:@"plainNotes"]; }
+- (void)setPlainNotes:(BOOL)v { [self.d setBool:v forKey:@"plainNotes"]; }
 
 - (BOOL)upstreamFLAC {
     NSObject *o = [self.d objectForKey:@"upstreamFLAC"];

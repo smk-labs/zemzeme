@@ -243,6 +243,33 @@ class Pipeline:
             t = rx.sub(la, t)
         return t
 
+    # ---------- پاس مکانیکی: فقط لایه‌های قاعده‌ای ----------
+    # مسیر پاس نهایی این را *بعد* از مدل بزرگ صدا می‌زند، پس دو لایه عمدا اجرا
+    # نمی‌شوند: املای hunspell و مدل نقطه‌گذاری. هر دو کورند و بی‌کانتکست، و مدل بزرگ
+    # که کل صدا را شنیده هر دو را بهتر انجام داده؛ اجرای دوباره‌شان فقط می‌تواند خرابش
+    # کند. آنچه می‌ماند همان چیزی است که LLM ها واقعا در آن بی‌دقت‌اند: نیم‌فاصله.
+    #
+    # خط‌به‌خط و نه یکجا: normalize فاصله‌های اضافه را برمی‌دارد و متن نهایی پاراگراف و
+    # بولت دارد. علامت بولت هم از دید normalize قایم می‌شود، وگرنه «- » ممکن است عوض شود.
+    BULLET_RE = re.compile(r"^(\s*(?:[-*•‣▪]|\d+[.)]|[۰-۹]+[.)])\s+)(.*)$")
+
+    def mechanical(self, text, terms=False):
+        if not text or not PERSIAN_RE.search(text):
+            return text
+        out = []
+        with self._lock:
+            for line in text.split("\n"):
+                if not line.strip():
+                    out.append(line)
+                    continue
+                m = self.BULLET_RE.match(line)
+                head, body = (m.group(1), m.group(2)) if m else ("", line)
+                t = self.halfspace(self.normalize(body))
+                if terms and self.terms:
+                    t = self.latinize(t)
+                out.append(head + t)
+        return "\n".join(out)
+
     def polish(self, text, terms=False):
         t0 = time.time()
         if not text or len(text) > MAX_CHARS or not PERSIAN_RE.search(text):
@@ -322,12 +349,18 @@ class Handler(BaseHTTPRequestHandler):
         text = req.get("text", "")
         lang = req.get("lang", "fa-IR")
         terms = bool(req.get("terms", False))
+        # mode=mechanical: فقط لایه‌های قاعده‌ای، برای پاس نهایی. سقف MAX_CHARS آنجا
+        # اعمال نمی‌شود چون هیچ مدلی اجرا نمی‌شود و کار خطی و میلی‌ثانیه‌ای است.
+        mech = req.get("mode") == "mechanical"
         t0 = time.time()
         if not isinstance(text, str) or not READY.is_set() or str(lang).startswith("en"):
             self._send(200, {"text": text, "ready": READY.is_set(), "ms": 0, "spell": []})
             return
         try:
-            out, ops = PIPE.polish(text, terms=terms)
+            if mech:
+                out, ops = PIPE.mechanical(text, terms=terms), []
+            else:
+                out, ops = PIPE.polish(text, terms=terms)
         except Exception:  # noqa: BLE001 — هر خطایی یعنی همان متن خام برگردد
             out, ops = text, []
         self._send(200, {"text": out, "ready": True,

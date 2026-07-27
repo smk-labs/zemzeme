@@ -21,7 +21,7 @@ clang -fobjc-arc -O2 -Wall -Wno-unused-function \
   Sources-objc/*.m \
   -framework AppKit -framework AVFoundation -framework Carbon \
   -framework CoreText -framework ApplicationServices -framework QuartzCore \
-  -framework AudioToolbox -framework CoreMedia \
+  -framework AudioToolbox -framework CoreMedia -framework Security \
   -o .build/zemzeme
 
 rm -rf "$APP"
@@ -32,6 +32,10 @@ cp Info.plist "$APP/Contents/Info.plist"
 # venv و مدل‌ها (~۵۰۰ مگ) عمدا بیرون می‌مانند؛ setup.sh آن‌ها را در
 # ~/Library/Application Support/Zemzeme/py می‌گذارد.
 cp ../serve.py ../index.html py/polish.py py/terms.txt "$APP/Contents/Resources/"
+# پرامپت‌های پاس نهایی: فایل‌اند نه رشته‌ی هاردکد، چون هر دو روی متن واقعی تیون شده‌اند
+# و باید بی‌بیلد قابل ویرایش باشند.
+mkdir -p "$APP/Contents/Resources/prompts"
+cp prompts/verbatim.md prompts/polish.md "$APP/Contents/Resources/prompts/"
 
 # آیکون بسته از خود باینری تازه می‌آید (نشان یک بار در mark.m تعریف شده، بیت‌مپی در
 # ریپو نیست) و iconutil سیستم به icns تبدیلش می‌کند. قبل از امضا، چون داخل بسته است.
