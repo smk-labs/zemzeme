@@ -224,6 +224,12 @@ int ZSelfTest(NSString *file, NSString *lang) {
         if (!_session) [self startSession];
     } else if ([url isEqualToString:@"zemzeme://stop"]) {
         [_session finish];
+    } else if ([url isEqualToString:@"zemzeme://trash"]) {
+        // همان کار سطل آشغال (D). از بیرون هم لازم بود: تنها راهِ سنجیدنِ «صدا هم دور
+        // ریخته شود» بی‌دست‌زدن به کیبورد، و برای Karabiner و Shortcuts هم به کار می‌آید.
+        [self sessionDo:@selector(dropPending)];
+    } else if ([url isEqualToString:@"zemzeme://final"]) {
+        [self sessionDo:@selector(finalPassNow)];
     } else if ([url isEqualToString:@"zemzeme://files"]) {
         [self openBatchPanel];
     } else if ([url isEqualToString:@"zemzeme://keys"]) {
@@ -365,6 +371,15 @@ int ZSelfTest(NSString *file, NSString *lang) {
         plain.toolTip = @"شکل خروجی را خودِ گفتار تعیین می‌کند: فهرست شمرده بولت می‌شود و "
                          "روایت پاراگراف می‌ماند. این تاگل بولت را کلا خاموش می‌کند.";
     }
+    // ضبط صدا در سه حالت دیکته. جدا از تاگل بالا و پیش‌فرض خاموش: ضبطِ ناخواسته بدترین
+    // پیش‌فرض ممکن است. حالت یادداشت به این ردیف کاری ندارد و همیشه ضبط می‌کند.
+    NSMenuItem *rec = [self icon:[self item:menu title:@"ضبط صدای سشن"
+                                     action:@selector(menuToggleRecord) key:@""]
+                           symbol:@"record.circle"];
+    rec.state = ZSettings.shared.recordSessions ? NSControlStateValueOn : NSControlStateValueOff;
+    rec.toolTip = @"صدای دیکته‌های زنده/جمع/کرسر را هم روی دیسک نگه می‌دارد (~۱۲ کیلوبایت "
+                   "بر ثانیه)، تا پاس نهایی روی آن‌ها هم شدنی باشد. سطل آشغال صدا را هم "
+                   "دور می‌ریزد. حالت یادداشت همیشه ضبط می‌کند.";
     NSMenuItem *snd = [self icon:[self item:menu title:@"صدا" action:@selector(menuToggleSounds) key:@""]
                            symbol:@"speaker.wave.2"];
     snd.state = ZSettings.shared.soundsEnabled ? NSControlStateValueOn : NSControlStateValueOff;
@@ -513,6 +528,7 @@ int ZSelfTest(NSString *file, NSString *lang) {
     if (!ZFinalPass.hasKey) ZLog(@"final: %@", ZFinalPass.missingKeyHint);
 }
 - (void)menuTogglePlainNotes { ZSettings.shared.plainNotes = !ZSettings.shared.plainNotes; }
+- (void)menuToggleRecord { ZSettings.shared.recordSessions = !ZSettings.shared.recordSessions; }
 - (void)menuToggleSounds {
     ZSettings.shared.soundsEnabled = !ZSettings.shared.soundsEnabled;
     ZPlay(ZSoundStart);    // روشن که شد، خودش را می‌شنوانَد

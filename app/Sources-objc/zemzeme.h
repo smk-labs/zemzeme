@@ -74,6 +74,11 @@ typedef NS_ENUM(NSInteger, ZMode) {
 // «همیشه ساده»: هیچ‌وقت بولت نزن، حتی اگر گفتار شمرده باشد. پیش‌فرض خاموش، چون شکل
 // خروجی را پرامپت از خود گفتار درمی‌آورد و این تاگل فقط برای کسی است که بولت نمی‌خواهد.
 @property (nonatomic) BOOL plainNotes;
+// ضبط صدای سشن در سه حالت دیکته (زنده، جمع، کرسر). **پیش‌فرض خاموش، و جدا از تاگل
+// پاس نهایی**: ممکن است کسی پاس نهایی را بخواهد ولی نخواهد صدایش روی دیسک بماند، و
+// ضبطِ بی‌خواسته بدترین پیش‌فرض ممکن است. حالت یادداشت به این تاگل کاری ندارد: آنجا
+// ضبط تنها کاری است که انجام می‌شود.
+@property (nonatomic) BOOL recordSessions;
 - (ZInsertMode)insertModeForBundleId:(NSString *)bundleId;
 - (void)setInsertMode:(ZInsertMode)m forBundleId:(NSString *)bundleId;   // استثنای یک اپ خاص
 - (useconds_t)typeDelayMicros;
@@ -281,6 +286,10 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 // ته‌مانده‌ی کمتر از یک بلاک با سکوت پر و فریم می‌شود، وگرنه تا ~۲۹۰ میلی‌ثانیه‌ی آخر
 // (یعنی ممکن است آخرین کلمه) هیچ‌وقت وارد فایل نمی‌شد. بعد از این، feed بی‌اثر است.
 - (void)finish;
+// سطل آشغال: هرچه تا اینجا ضبط شده از روی دیسک هم برود، و ضبط از همین لحظه از صفر
+// ادامه پیدا کند. تنها جایی که صدا حق دارد پاک شود، و عمدا صریح است: «دور بریز» اگر
+// صدا را نگه دارد، پاس نهایی همان حرف‌های دورریخته را برمی‌گرداند.
+- (void)discard;
 @end
 
 // ---------- استریم full-duplex گوگل ----------
@@ -391,6 +400,7 @@ id<ZEngine> ZMakeEngine(ZMode mode);
 @property (nonatomic, copy) NSString *error;       // نال یعنی موفق
 @property (nonatomic, strong) ZCoverage *coverage;
 @property (nonatomic) BOOL gated;                  // دروازه رد کرد و مو‌به‌مو نشست
+@property (nonatomic) BOOL cancelled;              // کاربر وسط کار زدش؛ خطا نیست
 @property (nonatomic) NSInteger inTokens, outTokens;
 @property (nonatomic) NSTimeInterval seconds;
 @property (nonatomic, strong) NSURL *dir;          // پوشه‌ی همین پاس: صدا، مو‌به‌مو، نهایی
@@ -401,13 +411,24 @@ id<ZEngine> ZMakeEngine(ZMode mode);
 // کلید در Keychain (سرویس zemzeme-gemini) یا متغیر محیطی GEMINI_API_KEY. نه در plist،
 // نه در ریپو. نبودنش خطا نیست، فقط یعنی فیچر خاموش است و پیامش همین را می‌گوید.
 + (BOOL)hasKey;
+// «پرسیدیم و نبود»، در برابر «هنوز نپرسیده‌ایم». hasKey روی نخ اصلی محافظه‌کار است و
+// تا جواب نرسیده «نه» می‌گوید، پس برای *هشدار دادن* به کاربر کافی نیست: سشنی که
+// همان لحظه‌ی لانچ شروع شود، هشدارِ غلطِ «کلید نیست» می‌گرفت و بعد خودِ پاس درست
+// اجرا می‌شد. هشدار فقط با این تابع.
++ (BOOL)keyKnownMissing;
 + (NSString *)missingKeyHint;
 - (void)prefetchKey;    // یک بار، آسنکرون: پرسش Keychain نباید سر Esc معطلی بسازد
 // همه‌ی کار روی نخ پس‌زمینه؛ progress و done هر دو روی نخ اصلی. lang فقط برای پاس
 // مکانیکی به کار می‌آید: خودِ مدل چندزبانه است و پرامپت زبان را از صدا می‌فهمد.
+// یک پاس در هر لحظه (فراخوان‌ها خودشان نگهبانش‌اند: سشن با _working، پنل فایل با
+// _polishing). همین یک قاعده باعث می‌شود لغو یک بولین باشد نه یک دفترِ کار.
 - (void)runOnAudio:(NSURL *)audio lang:(NSString *)lang
           progress:(void (^)(NSString *msg))progress
               done:(void (^)(ZFinalPassResult *r))done;
+// لغو، وسط کار. آپلودِ در پرواز هم واقعا قطع می‌شود، نه اینکه فقط جوابش دور ریخته
+// شود: بدنه‌ی درخواست چند مگابایت است و کسی که «کنسل» می‌زند منتظر تمام شدنش نیست.
+// `done` باز هم صدا زده می‌شود، با `cancelled = YES`.
+- (void)cancel;
 @end
 
 // zemzeme --finalpass <audio> [--lang fa-IR]

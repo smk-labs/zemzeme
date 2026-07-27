@@ -173,8 +173,10 @@ sudo rm -rf /Library/Developer/CommandLineTools && xcode-select --install
 **کلید.** در Keychain، سرویس `zemzeme-gemini`. نه در plist، نه در `.env`، نه در ریپو:
 
 ```
-security add-generic-password -a "$USER" -s zemzeme-gemini -w
+security add-generic-password -a "$USER" -s zemzeme-gemini -T /Applications/Zemzeme.app -T /usr/bin/security -w
 ```
+
+`-T` اتفاقی نیست و از یک آزار واقعی آمد. آیتمی که بی آن ساخته شود هیچ اپِ مورد اعتمادی ندارد (در `security dump-keychain -a` می‌شود `applications: <null>`)، پس مک سرِ **هر پروسه** اجازه می‌پرسد و «Always Allow» هم نمی‌چسبد؛ در یک نشستِ توسعه که اپ ده بار بیلد و اجرا می‌شود، ده بار می‌پرسد. با `-T` شرطِ ذخیره‌شده می‌شود «شناسه‌ی `io.seyed.zemzeme` + گواهیِ `Zemzeme Dev`»، و چون `make-cert.sh` همان گواهی موجود را نگه می‌دارد، از هر بیلد تازه هم جان سالم می‌برد. اگر کلید را قبلا بی `-T` گذاشته‌ای، اول `security delete-generic-password -s zemzeme-gemini` و بعد دستور بالا.
 
 مدل **پین** است روی `gemini-3.6-flash` و دو دلیل دارد: alias بی‌خبر جابه‌جا می‌شود، و `gemini-flash-latest` همین حالا `thinking_level: minimal` را رد می‌کند (فقط `low` و `high`). `minimal` تا امروز مالِ همین یک مدل است. سهم مجانی این مدل **۲۰ درخواست در روز** است و هر پاس ۲ تا می‌خورد، یعنی ۱۰ یادداشت در روز؛ تمام شد، پیامش همین را می‌گوید و متن خام سر جایش می‌ماند. دو متغیر محیطی `ZEMZEME_FINAL_MODEL` و `ZEMZEME_FINAL_THINKING` فقط شیر اطمینان‌اند برای روزی که گوگل این مدل را بردارد.
 

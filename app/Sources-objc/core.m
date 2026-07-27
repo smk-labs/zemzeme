@@ -223,6 +223,11 @@ NSFont *ZFont(CGFloat size, BOOL medium) {
 - (BOOL)plainNotes { return [self.d boolForKey:@"plainNotes"]; }
 - (void)setPlainNotes:(BOOL)v { [self.d setBool:v forKey:@"plainNotes"]; }
 
+// پیش‌فرض خاموش، و جدا از تاگل پاس نهایی: ضبطِ ناخواسته‌ی صدا بدترین پیش‌فرض ممکن است.
+// حالت یادداشت به این کاری ندارد؛ آنجا ضبط تنها کاری است که انجام می‌شود.
+- (BOOL)recordSessions { return [self.d boolForKey:@"recordSessions"]; }
+- (void)setRecordSessions:(BOOL)v { [self.d setBool:v forKey:@"recordSessions"]; }
+
 - (BOOL)upstreamFLAC {
     NSObject *o = [self.d objectForKey:@"upstreamFLAC"];
     return o ? [self.d boolForKey:@"upstreamFLAC"] : YES;    // پیش‌فرض روشن

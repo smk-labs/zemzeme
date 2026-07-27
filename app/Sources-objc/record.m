@@ -58,7 +58,7 @@
 - (BOOL)openLocked {
     if (_fh) return YES;
     if (_broken) return NO;
-    _enc = [ZFlacEncoder new];
+    if (!_enc) _enc = [ZFlacEncoder new];
     if (!_enc) {
         _broken = YES;
         ZLog(@"record: انکودر FLAC راه نیفتاد؛ صدای این سشن ضبط نمی‌شود");
@@ -126,6 +126,31 @@
     } @catch (NSException *e) {
         ZLog(@"record: نوشتن طول در هدر نشد (%@)؛ فایل باز می‌شود ولی طولش حدسی است", e.name);
     }
+}
+
+// سطل آشغال در حین ضبط: فایل می‌رود و ضبط از صفر ادامه پیدا می‌کند.
+//
+// انکودر هم از نو ساخته می‌شود و این نکته‌ی اصلی است: داخلش تا یک بلاکِ ناقص پی‌سی‌ام
+// مانده و اگر همان نمونه را نگه داریم، اولین فریمِ فایلِ تازه با صدای دورریخته شروع
+// می‌شود. «دور بریز» یعنی هیچ‌کدامش نماند.
+- (void)discard {
+    [_lock lock];
+    if (!_done) {
+        if (_fh) {
+            @try { [_fh closeFile]; } @catch (NSException *e) {}
+            _fh = nil;
+        }
+        if (_opened) {
+            [NSFileManager.defaultManager removeItemAtURL:_want error:nil];
+            ZLog(@"record: %.0f ثانیه صدا دور ریخته شد", _pcmBytes / 32000.0);
+        }
+        _opened = NO;
+        _broken = NO;    // خرابیِ قبلی مالِ فایلِ رفته بود
+        _enc = nil;
+        _pcmBytes = 0;
+        _outBytes = 0;
+    }
+    [_lock unlock];
 }
 
 - (void)finish {

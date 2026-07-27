@@ -591,7 +591,11 @@ static NSString *ZClock(NSTimeInterval sec) {
     _btnPause.hidden = over;
     _btnMode.hidden = over;
     _btnLang.hidden = over;
-    _btnClose.toolTip = m.review ? @"بستن (Esc)" : @"پایان و درج همه (Esc)";
+    _btnClose.toolTip = m.working ? @"لغو؛ صدا سر جایش می‌ماند (Esc)"
+                      : m.review ? @"بستن (Esc)" : @"پایان و درج همه (Esc)";
+    _btnTrash.toolTip = m.working ? @"لغو و پاک کردن صدا و متن (D)"
+                      : m.mode == ZModeNote ? @"دور ریختن صدای ضبط‌شده تا اینجا (D)"
+                      : @"دور ریختن هرچه هنوز درج نشده، و صدای ضبط‌شده (D)";
     // پاس قاعده‌ای فقط در حالت جمع معنا دارد؛ پاس نهایی هر جا که روشن باشد و سشن زنده
     // باشد. بعد از نشستنِ پاس دیگر نشان داده نمی‌شود: همان صدا دوباره همان جواب را
     // می‌دهد و فقط پول و وقت خرج می‌کند.
@@ -1081,11 +1085,13 @@ static NSString *ZModeLabel(ZMode m) {
     // **سر شروع** می‌گوید، نه سر پایان. خبر بدی که سه دقیقه دیر برسد، دیگر خبر نیست.
     // بی کلید یا با تاگل خاموش، یادداشت باز هم متن می‌دهد (تشخیص گفتار گوگل و پاس
     // ویرایش)، فقط ضعیف‌تر. پس پیامِ سر شروع «بن‌بست» نیست، «انتظارت را تنظیم کن» است.
-    if (_mode == ZModeNote && !(ZSettings.shared.finalPassEnabled && ZFinalPass.hasKey)) {
-        _warning = ZSettings.shared.finalPassEnabled
-            ? @"کلید جمینای نیست؛ متن از تشخیص گفتار گوگل می‌آید"
-            : @"پاس هوش مصنوعی خاموش است؛ متن از تشخیص گفتار گوگل می‌آید";
-        if (ZSettings.shared.finalPassEnabled) ZLog(@"note: %@", ZFinalPass.missingKeyHint);
+    // «کلید نیست» فقط وقتی که واقعا پرسیده و نبوده باشد، نه وقتی که جواب هنوز نرسیده:
+    // سشنی که همان لحظه‌ی لانچ شروع شود هشدارِ غلط می‌گرفت و بعد خودِ پاس درست اجرا می‌شد.
+    if (_mode == ZModeNote && !ZSettings.shared.finalPassEnabled) {
+        _warning = @"پاس هوش مصنوعی خاموش است؛ متن از تشخیص گفتار گوگل می‌آید";
+    } else if (_mode == ZModeNote && ZFinalPass.keyKnownMissing) {
+        _warning = @"کلید جمینای نیست؛ متن از تشخیص گفتار گوگل می‌آید";
+        ZLog(@"note: %@", ZFinalPass.missingKeyHint);
     }
     self.engine.delegate = self;
     [self.engine startWithLang:ZSettings.shared.lang];
@@ -1093,12 +1099,14 @@ static NSString *ZModeLabel(ZMode m) {
     [self render];
 }
 
-// ضبط می‌شود یا نه. یادداشت همیشه (بی صدا هیچ کاری نمی‌کند)، سه حالت دیگر فقط وقتی
-// تاگل پاس نهایی روشن باشد. چرا شرطی و نه همیشه: بی این شرط، سه حالتِ قدیمی هم برای
-// هر سشن ~۱۲ کیلوبایت بر ثانیه روی دیسک جا می‌گذاشتند، و آن‌ها باید مو‌به‌مو مثل
-// امروز کار کنند. تاگل روشن یعنی کاربر صریحا این کار پایانی را خواسته.
+// ضبط می‌شود یا نه. یادداشت همیشه (بی صدا هیچ کاری نمی‌کند)، سه حالت دیگر فقط با تاگلِ
+// صریحِ «ضبط صدای سشن» که پیش‌فرض خاموش است.
+//
+// چرا جدا از تاگل پاس نهایی و نه سوار بر آن: آن‌ها دو خواسته‌ی متفاوت‌اند. ممکن است
+// کسی پاس نهایی را برای یادداشت‌هایش بخواهد ولی نخواهد صدای هر دیکته‌ی کاری‌اش روی
+// دیسک بماند. ضبطِ ناخواسته بدترین پیش‌فرض ممکن است، پس خاموش شروع می‌شود.
 - (ZRecorder *)recorderForMode:(ZMode)m {
-    return (m == ZModeNote || ZSettings.shared.finalPassEnabled) ? _recorder : nil;
+    return (m == ZModeNote || ZSettings.shared.recordSessions) ? _recorder : nil;
 }
 
 // حالت‌هایی که متن در ادیتور خود پنل می‌نشیند، پس بازنویسی آزاد است و درج تا پایان
@@ -1268,18 +1276,28 @@ static NSString *ZModeLabel(ZMode m) {
 // این تنها جایی است که رونوشت حق دارد کوتاه شود، و دقیقا تا جایی که واقعا درج شده.
 // متنِ درج‌شده برنمی‌گردد، چون از دست ما خارج شده. `sessions/` هم خام و کامل می‌ماند:
 // آن دفتر است، خروجی نیست.
+//
+// **و صدا هم دور می‌رود.** قاعده‌ی «هیچ چیز گم نمی‌شود» درباره‌ی متن است، نه درباره‌ی
+// خواسته‌ی صریح کاربر. اگر صدا بماند، اولین پاس نهایی همان حرف‌هایی را برمی‌گرداند که
+// کاربر همین حالا دور ریخت؛ آن دیگر «نجاتِ متن» نیست، غافلگیری است.
 - (void)dropPending {
+    // وسط پاس نهایی، سطل آشغال یعنی «ولش کن و پاکش کن»: هم کار می‌ایستد هم صدا می‌رود.
+    if (_working) {
+        [self cancelPass:YES];
+        return;
+    }
     [self.engine dropPending];
     _enginePending = @"";
     [_awaiting removeAllObjects];
     _polishGen++;              // جوابِ دیررسِ پاسِ در پرواز نباید بعدا بنشیند
     [_ledger dropOwned];       // دُم را از روی صفحه هم بردار، اگر بشود ثابت کرد
+    BOOL hadAudio = _recorder.url != nil;
+    [_recorder discard];       // ضبط از همین لحظه از صفر ادامه پیدا می‌کند
     BOOL inEditor = [self editorMode:_mode];
     NSUInteger keep = inEditor ? _editorStintStart : _ledger.deliveredLength;
     if (inEditor) {
         // در حالت‌های ادیتوردار هیچ‌چیز درج نشده، پس همه‌اش «درج‌نشده» است و ادیتور
-        // خالی می‌شود. فایل صدا اما هیچ‌وقت پاک نمی‌شود: «هیچ چیز گم نمی‌شود» از هر
-        // دکمه‌ای بالاتر است، و متنِ دورریخته را همیشه می‌شود از همان صدا دوباره ساخت.
+        // خالی می‌شود.
         [_panel clearEditor];
         _versions = nil;
         _versionAt = 0;
@@ -1289,7 +1307,10 @@ static NSString *ZModeLabel(ZMode m) {
     }
     [_ledger adoptSink:[self sinkForMode:_mode] committed:_transcript delivered:keep];
     ZPlay(ZSoundTrash);
-    [_panel flash:@"متن درج‌نشده دور ریخته شد"];
+    // پیام باید همان چیزی را بگوید که واقعا رفت، وگرنه کاربر نمی‌داند صدایش کجاست
+    [_panel flash:_mode == ZModeNote
+        ? (hadAudio ? @"صدای ضبط‌شده دور ریخته شد؛ از الان از نو" : @"چیزی برای دور ریختن نبود")
+        : (hadAudio ? @"متن درج‌نشده و صدای ضبط‌شده دور ریخته شد" : @"متن درج‌نشده دور ریخته شد")];
     [self sync];
 }
 
@@ -1485,7 +1506,13 @@ static NSString *ZModeLabel(ZMode m) {
         [self closeReview];
         return;
     }
-    if (_finished || _finishing || _working) return;
+    // وسط پاس نهایی، Esc یعنی «کنسل»: منتظر نمان، ولی صدا و متن را نگه دار.
+    // بی این، کاربری که پشیمان شده هیچ راه بیرون آمدنی نداشت جز بستن اپ.
+    if (_working) {
+        [self cancelPass:NO];
+        return;
+    }
+    if (_finished || _finishing) return;
     // حالت یادداشت هیچ متن لحظه‌ای ندارد و کل کارش همین کار پایانی است، پس Esc در آن
     // حالت خودش یعنی «متن را بساز». شرط تاگل اینجا نیست و عمدا: بی کلید یا با سهمِ
     // تمام‌شده، همان مسیر خودش به تشخیص گفتار گوگل می‌افتد. یادداشت هیچ‌وقت بی‌متن
@@ -1660,6 +1687,12 @@ static NSString *ZModeLabel(ZMode m) {
 }
 
 - (void)finalPassLanded:(ZFinalPassResult *)r {
+    // جوابی که بعد از لغو می‌رسد: کاربر همین حالا گفت نمی‌خواهد. نشاندنش روی صفحه
+    // یعنی متنی که پاک شد برگردد، که از هر خطایی بدتر است.
+    if (r.cancelled || _finished) {
+        ZLog(@"final: نتیجه بعد از لغو رسید و دور ریخته شد");
+        return;
+    }
     _working = NO;
     _workingMsg = nil;
     _pass = r;
@@ -1697,6 +1730,35 @@ static NSString *ZModeLabel(ZMode m) {
     [self finishNow];
 }
 
+// لغو وسط کار. Esc یعنی «منتظر نمان» (صدا و متن می‌مانند)، سطل آشغال یعنی «پاکش کن».
+// دو در، یک مسیر، و همان معنی‌هایی که این دو کلید همه‌جای اپ دارند.
+//
+// آپلودِ در پرواز هم واقعا قطع می‌شود، نه اینکه فقط جوابش دور ریخته شود: بدنه‌ی
+// درخواست چند مگابایت صداست و کسی که کنسل زده منتظر تمام شدنش نیست.
+- (void)cancelPass:(BOOL)deleteAudio {
+    if (!_working) return;
+    [ZFinalPass.shared cancel];
+    [_fallbackJob cancel];      // اگر روی مسیر مجانی بودیم
+    _fallbackJob = nil;
+    _working = NO;
+    _workingMsg = nil;
+    if (deleteAudio) {
+        [_recorder discard];
+        _versions = nil;
+        _versionAt = 0;
+        [_panel clearEditor];
+        _statusText = @"لغو شد و صدا هم پاک شد";
+        ZPlay(ZSoundTrash);
+        [_panel flash:@"لغو شد؛ صدا و متن پاک شدند"];
+    } else {
+        _statusText = _recorder.url ? @"لغو شد؛ صدا در پوشه‌ی سشن‌ها ماند" : @"لغو شد";
+        ZPlay(ZSoundTrash);
+        [_panel flash:@"لغو شد؛ صدا سر جایش ماند"];
+    }
+    ZLog(@"final: cancelled by user (deleteAudio=%d)", deleteAudio);
+    [self finishNow];
+}
+
 // ---------- فال‌بک: همان مسیری که دکمه‌ی F می‌رود ----------
 // کلید نبود، سهم تمام شد، یا تماس نگرفت؟ یادداشت نباید بی‌متن تمام شود. صدا روی دیسک
 // است، پس دقیقا همان کاری را می‌کنیم که کاربر با دست می‌کرد: فایل را از موتور رونویسیِ
@@ -1722,14 +1784,14 @@ static NSString *ZModeLabel(ZMode m) {
     __weak typeof(self) ws = self;
     job.onFileProgress = ^(NSURL *f, double doneSec, double totalSec) {
         __strong typeof(ws) s = ws;
-        if (!s || totalSec <= 0) return;
+        if (!s || !s->_working || totalSec <= 0) return;
         s->_workingMsg = [NSString stringWithFormat:@"تشخیص گفتار گوگل… %@٪",
                           ZFaDigits(@((int)(100 * MIN(1.0, doneSec / totalSec))).stringValue)];
         [s render];
     };
     job.onFileDone = ^(NSURL *f, NSString *text, NSError *err) {
         __strong typeof(ws) s = ws;
-        if (!s) return;
+        if (!s || !s->_working) return;    // لغو شده؛ متنش هم نباید بنشیند
         s->_fallbackJob = nil;
         if (!text.length) {
             s->_working = NO;
@@ -1747,7 +1809,7 @@ static NSString *ZModeLabel(ZMode m) {
             NSString *out = ZSettings.shared.polishEnabled ? ZBatchPolishText(text, lang) : text;
             dispatch_async(dispatch_get_main_queue(), ^{
                 __strong typeof(ws) s2 = ws;
-                if (!s2) return;
+                if (!s2 || !s2->_working) return;
                 [s2 fallbackLanded:out.length ? out : text raw:text];
             });
         });

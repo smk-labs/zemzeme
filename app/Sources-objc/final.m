@@ -47,14 +47,23 @@ static NSString *ZGThinking(void) {
 #define kGInlineMaxBytes (15 * 1024 * 1024)
 #define kGTimeout 300.0
 
+// `key` در هدر نیست و نباید هم باشد (کلید از این فایل بیرون نمی‌رود)، ولی مسیر خط
+// فرمان همین پایین لازمش دارد: آنجا پرسشِ بلوکه درست است.
+@interface ZFinalPass (ZBlockingKey)
+- (NSString *)key;
+@end
+
 @implementation ZFinalPassResult
 @end
 
 @implementation ZFinalPass {
     NSString *_key;
     BOOL _keyChecked;    // یک بار پرسیده شد؛ «نبود» هم جواب است و دوباره پرسیده نمی‌شود
-    NSLock *_keyLock;
+    NSLock *_keyLock;    // کلید، و حالتِ لغو و تسکِ در پرواز: هر سه زیر همین یک قفل
     NSLock *_logLock;
+    BOOL _cancelled;
+    NSURLSessionTask *_liveTask;
+    NSURLSession *_liveSession;
 }
 
 + (instancetype)shared {
@@ -79,6 +88,9 @@ static NSString *ZGThinking(void) {
 // کلیدش را با خط فرمان گذاشته خاموش می‌ماند و کاربر نمی‌فهمد چرا.
 // هیچ‌وقت لاگ نمی‌شود، در plist نمی‌رود، در ریپو نیست.
 
+// چرا کدِ خطا لاگ می‌شود: نسخه‌ی اول ساکت بود و «کلید پیدا نشد» هیچ نمی‌گفت از کجا.
+// یک بار ACL آیتم عوض شد و همین سکوت، عیب‌یابی را به حدس زدن تبدیل کرد. حالا هر شکست
+// کد خودش را می‌گوید: ۲۵۳۰۰ یعنی نیست، ۲۵۳۰۸ یعنی اجازه نداد، ۵۱ یعنی ACL راهت نمی‌دهد.
 static NSString *ZKeyFromKeychain(void) {
     NSDictionary *q = @{(id)kSecClass: (id)kSecClassGenericPassword,
                         (id)kSecAttrService: kKeychainService,
@@ -92,6 +104,7 @@ static NSString *ZKeyFromKeychain(void) {
         return [s stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     }
     if (out) CFRelease(out);
+    ZLog(@"final: Keychain کلید نداد (OSStatus %d)", (int)st);
     return nil;
 }
 
@@ -103,10 +116,16 @@ static NSString *ZKeyFromSecurityTool(void) {
     t.standardOutput = p;
     t.standardError = NSFileHandle.fileHandleWithNullDevice;
     NSError *e = nil;
-    if (![t launchAndReturnError:&e]) return nil;
+    if (![t launchAndReturnError:&e]) {
+        ZLog(@"final: ابزار security اجرا نشد: %@", e.localizedDescription ?: @"?");
+        return nil;
+    }
     NSData *d = [p.fileHandleForReading readDataToEndOfFile];
     [t waitUntilExit];
-    if (t.terminationStatus != 0 || !d.length) return nil;
+    if (t.terminationStatus != 0 || !d.length) {
+        ZLog(@"final: ابزار security کلید نداد (exit %d)", t.terminationStatus);
+        return nil;
+    }
     return [[[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding]
             stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
 }
@@ -147,9 +166,22 @@ static NSString *ZKeyFromSecurityTool(void) {
     return have;
 }
 
++ (BOOL)keyKnownMissing {
+    ZFinalPass *s = ZFinalPass.shared;
+    [s->_keyLock lock];
+    BOOL missing = s->_keyChecked && s->_key.length == 0;
+    [s->_keyLock unlock];
+    return missing;
+}
+
 + (NSString *)missingKeyHint {
+    // `-T` اتفاقی نیست و از یک آزار واقعی آمد: آیتمی که بی آن ساخته شود هیچ اپِ مورد
+    // اعتمادی ندارد (`applications: <null>`)، پس مک سرِ **هر پروسه** اجازه می‌پرسد و
+    // «Always Allow» هم نمی‌چسبد. با `-T` یک بار برای همیشه تمام می‌شود، چون شرطِ
+    // ذخیره‌شده «شناسه + گواهیِ ثابتِ بیلد» است و از هر بیلد تازه جان سالم می‌برد.
     return @"کلید جمینای پیدا نشد. یک بار در ترمینال بزن: "
-            "security add-generic-password -a \"$USER\" -s zemzeme-gemini -w";
+            "security add-generic-password -a \"$USER\" -s zemzeme-gemini "
+            "-T /Applications/Zemzeme.app -T /usr/bin/security -w";
 }
 
 // ---------- پرامپت‌ها ----------
@@ -174,7 +206,10 @@ static NSString *ZKeyFromSecurityTool(void) {
 // پس ۴۲۹ فقط **یک** تلاش دوباره دارد و آن هم با سقف ۶۰ ثانیه: اگر سقف دقیقه‌ای باشد
 // همان یک صبر جوابش است، و اگر روزانه باشد کاربر بیست ثانیه بعد جوابِ روشن می‌گیرد
 // نه سه دقیقه چرخنده.
-static NSData *ZHttp(NSMutableURLRequest *req, NSInteger *status, NSDictionary **headers) {
+// متد است نه تابع، و فقط به یک دلیل: تسکِ در پرواز باید جایی ثبت شود که `cancel`
+// بتواند بکشدش. بدنه‌ی درخواست چند مگابایت صداست و کسی که «کنسل» می‌زند منتظر تمام
+// شدنِ آپلود نیست.
+- (NSData *)http:(NSMutableURLRequest *)req status:(NSInteger *)status headers:(NSDictionary **)headers {
     __block NSData *body = nil;
     __block NSInteger code = 0;
     __block NSDictionary *hd = nil;
@@ -183,7 +218,8 @@ static NSData *ZHttp(NSMutableURLRequest *req, NSInteger *status, NSDictionary *
     cfg.timeoutIntervalForRequest = kGTimeout;
     cfg.timeoutIntervalForResource = kGTimeout;
     NSURLSession *s = [NSURLSession sessionWithConfiguration:cfg];
-    [[s dataTaskWithRequest:req completionHandler:^(NSData *d, NSURLResponse *r, NSError *e) {
+    NSURLSessionDataTask *task = [s dataTaskWithRequest:req
+                                     completionHandler:^(NSData *d, NSURLResponse *r, NSError *e) {
         body = d;
         if ([r isKindOfClass:NSHTTPURLResponse.class]) {
             code = ((NSHTTPURLResponse *)r).statusCode;
@@ -191,12 +227,48 @@ static NSData *ZHttp(NSMutableURLRequest *req, NSInteger *status, NSDictionary *
         }
         if (e && !code) code = -1;
         dispatch_semaphore_signal(sem);
-    }] resume];
+    }];
+    [_keyLock lock];
+    BOOL dead = _cancelled;
+    if (!dead) {
+        _liveTask = task;
+        _liveSession = s;
+    }
+    [_keyLock unlock];
+    if (dead) {    // بین شروع کار و اینجا لغو رسیده؛ حتی درخواست را هم نمی‌فرستیم
+        if (status) *status = -2;
+        return nil;
+    }
+    [task resume];
     dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)((kGTimeout + 30) * NSEC_PER_SEC)));
+    [_keyLock lock];
+    _liveTask = nil;
+    _liveSession = nil;
+    [_keyLock unlock];
     [s finishTasksAndInvalidate];
     if (status) *status = code;
     if (headers) *headers = hd;
     return body;
+}
+
+- (BOOL)cancelled {
+    [_keyLock lock];
+    BOOL c = _cancelled;
+    [_keyLock unlock];
+    return c;
+}
+
+- (void)cancel {
+    [_keyLock lock];
+    _cancelled = YES;
+    NSURLSessionTask *t = _liveTask;
+    NSURLSession *s = _liveSession;
+    _liveTask = nil;
+    _liveSession = nil;
+    [_keyLock unlock];
+    [t cancel];
+    [s invalidateAndCancel];
+    ZLog(@"final: لغو شد");
 }
 
 // «Please retry in 57.4s» را خود سرور در پیام ۴۲۹ می‌گوید. حدس زدن به‌جایش یعنی یا
@@ -219,7 +291,7 @@ static NSTimeInterval ZRetryAfter(NSData *body, NSTimeInterval fallback) {
     NSInteger st = 0;
     int rateTries = 0;
     for (int try = 0; try < 3; try++) {
-        body = ZHttp(req, &st, outHeaders);
+        body = [self http:req status:&st headers:outHeaders];
         if (st == 200) break;
         if (try == 2) break;
         NSTimeInterval wait = 2.0 * (try + 1);
@@ -452,7 +524,7 @@ static NSString *ZDropPreamble(NSString *t) {
         NSMutableURLRequest *q = [NSMutableURLRequest requestWithURL:
             [NSURL URLWithString:[NSString stringWithFormat:@"%@/v1beta/%@", kGBase, fname]]];
         [q setValue:key forHTTPHeaderField:@"x-goog-api-key"];
-        NSData *qb = ZHttp(q, &st, nil);
+        NSData *qb = [self http:q status:&st headers:nil];
         file = st == 200 ? [NSJSONSerialization JSONObjectWithData:qb options:0 error:nil] : nil;
         if (!file) break;
     }
@@ -467,6 +539,9 @@ static NSString *ZDropPreamble(NSString *t) {
     void (^say)(NSString *) = ^(NSString *m) {
         dispatch_async(dispatch_get_main_queue(), ^{ if (progress) progress(m); });
     };
+    [_keyLock lock];
+    _cancelled = NO;
+    [_keyLock unlock];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         ZFinalPassResult *r = [self work:audio lang:lang say:say];
         dispatch_async(dispatch_get_main_queue(), ^{ done(r); });
@@ -476,6 +551,11 @@ static NSString *ZDropPreamble(NSString *t) {
 - (ZFinalPassResult *)work:(NSURL *)audio lang:(NSString *)lang say:(void (^)(NSString *))say {
     ZFinalPassResult *r = [ZFinalPassResult new];
     NSDate *t0 = NSDate.date;
+    // لغو بین هر دو مرحله چک می‌شود، نه فقط اولش: تماس اول ده ثانیه طول می‌کشد و
+    // کاربری که در آن فاصله کنسل زده نباید تماس دوم را هم بپردازد.
+    #define ZBailIfCancelled() do { \
+        if ([self cancelled]) { r.cancelled = YES; return r; } \
+    } while (0)
     NSString *key = [self key];
     if (!key) {
         r.error = ZFinalPass.missingKeyHint;
@@ -489,6 +569,7 @@ static NSString *ZDropPreamble(NSString *t) {
     }
     NSMutableDictionary *usage = [NSMutableDictionary dictionary];
     NSString *err = nil;
+    ZBailIfCancelled();
 
     // ---------- تماس ۱: صدا ← رونویسی مو‌به‌مو ----------
     NSDictionary *part = [self audioPart:audio key:key progress:say error:&err];
@@ -497,6 +578,7 @@ static NSString *ZDropPreamble(NSString *t) {
         return r;
     }
     say(@"رونویسی مو‌به‌مو…");
+    ZBailIfCancelled();
     NSString *verbatim = [self ask:pVerbatim
                              parts:@[@{@"type": @"text", @"text": @"فقط صدا."}, part]
                              label:@"verbatim" key:key usage:usage error:&err];
@@ -509,6 +591,7 @@ static NSString *ZDropPreamble(NSString *t) {
 
     // ---------- تماس ۲: متن مو‌به‌مو ← متن نهایی ----------
     say(@"تمیزکاری متن…");
+    ZBailIfCancelled();
     NSString *shape = ZSettings.shared.plainNotes
         ? @"\n\nساختار: پاراگراف. هیچ بولت و فهرستی نزن، حتی اگر گفتار شمرده بود."
         : @"";
@@ -576,11 +659,13 @@ static NSString *ZDropPreamble(NSString *t) {
     r.inTokens = [usage[@"in"] integerValue];
     r.outTokens = [usage[@"out"] integerValue];
     r.seconds = [NSDate.date timeIntervalSinceDate:t0];
+    ZBailIfCancelled();
     r.dir = [self archive:audio result:r];
     ZLog(@"final: تمام در %.0f ثانیه، %ld+%ld توکن، %@%@", r.seconds,
          (long)r.inTokens, (long)r.outTokens,
          r.coverage ? r.coverage.summary : @"بی‌سنجش", r.gated ? @" (دروازه بست)" : @"");
     return r;
+    #undef ZBailIfCancelled
 }
 
 // فهرست همان چیزی که افتاد، به زبان خودِ پرامپت. متنِ کمکی عمدا «مرجع» صدا زده
@@ -652,7 +737,10 @@ int ZFinalPassMain(NSArray<NSString *> *args) {
     }
     NSUInteger li = [args indexOfObject:@"--lang"];
     NSString *lang = (li != NSNotFound && li + 1 < args.count) ? args[li + 1] : @"fa-IR";
-    if (!ZFinalPass.hasKey) {
+    // پرسشِ بلوکه، عمدا، و نه `hasKey`: آن یکی برای رابط است و روی نخ اصلی هیچ‌وقت
+    // Keychain را نمی‌پرسد (پنجره‌ی اجازه می‌تواند یخ بزند)، پس اینجا همیشه «نه»
+    // می‌گفت و خط فرمان بی‌دلیل تسلیم می‌شد. در یک ابزار خط فرمان، صبر کردن درست است.
+    if (![ZFinalPass.shared key]) {
         printf("finalpass: %s\n", ZFinalPass.missingKeyHint.UTF8String);
         return 1;
     }
