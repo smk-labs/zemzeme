@@ -183,14 +183,17 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
         _btnFinal = [self makeButton:@"sparkles" key:@"N"
                                 tip:@"پاس نهایی: پایان سشن و متن تمیز از خودِ صدا"
                              action:@selector(finalTap)];
-        _btnRotate = [self makeButton:@"arrow.2.squarepath" key:@"R"
-                                 tip:@"چرخش بین نسخه‌های متن: نهایی، مو‌به‌مو، خام"
-                              action:@selector(rotateTap)];
         // بهبود پرامپت (بتا). آیکونش عمدا نه جادو است نه جرقه: آن دو مالِ «همین متن،
         // تمیزتر»اند و این یکی متن را به چیز دیگری تبدیل می‌کند.
+        // **ترتیبِ ساختن باید همان ترتیبِ `_bar` باشد.** حرفِ میان‌بر در آرایه‌ی جدایی
+        // (`_barCaps`) می‌نشیند و `layoutViews` این دو را با *همان اندیس* جفت می‌کند؛
+        // یک بار همین‌جا جابه‌جا ساخته شد و روی نوار، زیر همین دکمه «R» نوشته شده بود.
         _btnEnhance = [self makeButton:@"curlybraces" key:@"B"
                                    tip:@"بهبود پرامپت (بتا): همین متن، به یک پرامپت آماده برای ایجنت"
                                 action:@selector(enhanceTap)];
+        _btnRotate = [self makeButton:@"arrow.2.squarepath" key:@"R"
+                                 tip:@"چرخش بین نسخه‌های متن: نهایی، مو‌به‌مو، خام"
+                              action:@selector(rotateTap)];
         _btnInsert = [self makeButton:@"text.insert" key:@"I" tip:@"درج سر کرسر همین اپ"
                                action:@selector(insertTap)];
         // رونویسی فایل: در هر دو حالتِ پنل‌دار پیداست، چون به سشن ربطی ندارد. راه سوم
