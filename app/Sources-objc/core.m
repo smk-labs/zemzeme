@@ -223,6 +223,11 @@ NSFont *ZFont(CGFloat size, BOOL medium) {
 - (BOOL)plainNotes { return [self.d boolForKey:@"plainNotes"]; }
 - (void)setPlainNotes:(BOOL)v { [self.d setBool:v forKey:@"plainNotes"]; }
 
+// بتا، پس پیش‌فرض خاموش و بی‌هیچ استثنایی: تا کاربر صریحا روشنش نکند، نه دکمه‌ای
+// دیده می‌شود، نه میان‌بری کار می‌کند، نه تماسی گرفته می‌شود.
+- (BOOL)enhanceEnabled { return [self.d boolForKey:@"enhance"]; }
+- (void)setEnhanceEnabled:(BOOL)v { [self.d setBool:v forKey:@"enhance"]; }
+
 // پیش‌فرض خاموش، و جدا از تاگل پاس نهایی: ضبطِ ناخواسته‌ی صدا بدترین پیش‌فرض ممکن است.
 // حالت یادداشت به این کاری ندارد؛ آنجا ضبط تنها کاری است که انجام می‌شود.
 - (BOOL)recordSessions { return [self.d boolForKey:@"recordSessions"]; }

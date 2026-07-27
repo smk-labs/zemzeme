@@ -155,6 +155,7 @@ int ZSelfTest(NSString *file, NSString *lang) {
     _hotkeys.onPolishNow = ^{ [ws sessionDo:@selector(polishCollected)]; };
     _hotkeys.onFinalPass = ^{ [ws sessionDo:@selector(finalPassNow)]; };
     _hotkeys.onRotateText = ^{ [ws sessionDo:@selector(rotateText)]; };
+    _hotkeys.onEnhance = ^{ [ws sessionDo:@selector(enhancePrompt)]; };
     // بی‌سشن هم کار می‌کند، پس مثل بقیه از sessionDo رد نمی‌شود. تاگل است نه فقط باز
     // کردن: پنل رونویسی با همان F می‌رود پس‌زمینه و با همان F برمی‌گردد، و کار در
     // جریان با پنهان شدنش نمی‌ایستد.
@@ -230,6 +231,8 @@ int ZSelfTest(NSString *file, NSString *lang) {
         [self sessionDo:@selector(dropPending)];
     } else if ([url isEqualToString:@"zemzeme://final"]) {
         [self sessionDo:@selector(finalPassNow)];
+    } else if ([url isEqualToString:@"zemzeme://enhance"]) {
+        [self sessionDo:@selector(enhancePrompt)];
     } else if ([url isEqualToString:@"zemzeme://files"]) {
         [self openBatchPanel];
     } else if ([url isEqualToString:@"zemzeme://keys"]) {
@@ -361,7 +364,8 @@ int ZSelfTest(NSString *file, NSString *lang) {
     fin.state = ZSettings.shared.finalPassEnabled ? NSControlStateValueOn : NSControlStateValueOff;
     fin.toolTip = hasKey
         ? @"سر پایان سشن، کل صدا یک‌جا به جمینای می‌رود و یک متن تمیز و کامل برمی‌گردد "
-           "(Command راست + N). مسیر زنده دست‌نخورده می‌ماند."
+           "(Command راست + N). مسیر زنده دست‌نخورده می‌ماند. در زنده/جمع/کرسر به ردیف "
+           "«ضبط صدای سشن» هم نیاز دارد، وگرنه صدایی برای شنیدن نیست."
         : ZFinalPass.missingKeyHint;
     if (ZSettings.shared.finalPassEnabled) {
         NSMenuItem *plain = [self icon:[self item:menu title:@"همیشه ساده (بی‌بولت)"
@@ -371,6 +375,20 @@ int ZSelfTest(NSString *file, NSString *lang) {
         plain.toolTip = @"شکل خروجی را خودِ گفتار تعیین می‌کند: فهرست شمرده بولت می‌شود و "
                          "روایت پاراگراف می‌ماند. این تاگل بولت را کلا خاموش می‌کند.";
     }
+    // بهبود پرامپت: بتا، و برچسبش واقعی است نه تعارف. تاگل جدا، پیش‌فرض خاموش، و
+    // ردیفش زیر پاس نهایی چون همان کلید و همان انتقال را استفاده می‌کند. با این حال
+    // کارِ دیگری است: آن سه روی «متن چه شکلی دربیاید» کار می‌کنند، این یکی متن را به
+    // چیز دیگری تبدیل می‌کند، و به صدا و به پایان سشن هیچ ربطی ندارد.
+    NSMenuItem *enh = [self icon:[self item:menu title:hasKey ? @"بهبود پرامپت (بتا)"
+                                                              : @"بهبود پرامپت (بتا، کلید نیست)"
+                                     action:@selector(menuToggleEnhance) key:@""]
+                           symbol:@"curlybraces"];
+    enh.state = ZSettings.shared.enhanceEnabled ? NSControlStateValueOn : NSControlStateValueOff;
+    enh.toolTip = hasKey
+        ? @"متنِ آماده را به یک پرامپت درست تبدیل می‌کند، از همان چیزی که دیکته کرده‌ای "
+           "(Command راست + B). هیچ‌وقت خودکار نیست و هیچ‌وقت به اپ مقصد تایپ نمی‌شود؛ "
+           "متن دیکته می‌ماند و R بین دو نسخه می‌چرخد."
+        : ZFinalPass.missingKeyHint;
     // ضبط صدا در سه حالت دیکته. جدا از تاگل بالا و پیش‌فرض خاموش: ضبطِ ناخواسته بدترین
     // پیش‌فرض ممکن است. حالت یادداشت به این ردیف کاری ندارد و همیشه ضبط می‌کند.
     NSMenuItem *rec = [self icon:[self item:menu title:@"ضبط صدای سشن"
@@ -528,6 +546,14 @@ int ZSelfTest(NSString *file, NSString *lang) {
     if (!ZFinalPass.hasKey) ZLog(@"final: %@", ZFinalPass.missingKeyHint);
 }
 - (void)menuTogglePlainNotes { ZSettings.shared.plainNotes = !ZSettings.shared.plainNotes; }
+- (void)menuToggleEnhance {
+    ZSettings.shared.enhanceEnabled = !ZSettings.shared.enhanceEnabled;
+    if (!ZSettings.shared.enhanceEnabled) return;
+    // همان کلیدِ پاس نهایی، پس همان پرسشِ پس‌زمینه: کاربر همان لحظه‌ای که تاگل را زده
+    // جواب پنجره‌ی Keychain را می‌دهد، نه وسط کار.
+    [ZFinalPass.shared prefetchKey];
+    if (!ZFinalPass.hasKey) ZLog(@"enhance: %@", ZFinalPass.missingKeyHint);
+}
 - (void)menuToggleRecord { ZSettings.shared.recordSessions = !ZSettings.shared.recordSessions; }
 - (void)menuToggleSounds {
     ZSettings.shared.soundsEnabled = !ZSettings.shared.soundsEnabled;
@@ -565,6 +591,9 @@ int main(int argc, const char *argv[]) {
         // پاس نهایی روی یک فایل صوتی، بی‌رابط. مثل حالت دسته‌ای پیش از NSApplication
         // برمی‌گردد، پس اپ منوبارِ در حال اجرا دست‌نخورده می‌ماند.
         if ([args containsObject:@"--finalpass"]) return ZFinalPassMain(args);
+        // بهبود پرامپت روی یک متن، بی‌رابط و بی‌صدا. مثل دو حالت بالا پیش از
+        // NSApplication برمی‌گردد؛ دلیل وجودش ست طلایی است.
+        if ([args containsObject:@"--enhance"]) return ZEnhanceMain(args);
         // آیکون بسته برای build.sh؛ مثل حالت دسته‌ای قبل از NSApplication برمی‌گردد
         NSUInteger ic = [args indexOfObject:@"--appicon"];
         if (ic != NSNotFound && ic + 1 < args.count) return ZMarkIconMain(args[ic + 1]);

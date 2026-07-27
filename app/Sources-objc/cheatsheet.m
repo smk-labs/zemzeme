@@ -75,6 +75,7 @@ static NSString *const kCSAutosave = @"ZemzemeCheatSheet";
               @[@[@"N"],     @"sparkles",          @"پاس نهایی: پایان سشن و متن تمیز از خودِ صدا"],
               @[@[@"Esc"],   @"xmark.circle",      @"وسط پاس نهایی: لغو، ولی صدا سر جایش می‌ماند"],
               @[@[@"R"],     @"arrow.2.squarepath", @"چرخش نسخه‌های متن: نهایی، مو‌به‌مو، خام"],
+              @[@[@"B"],     @"curlybraces",       @"بهبود پرامپت (بتا): همین متن، آماده برای یک ایجنت"],
               @[@[@"Space"], @"pause.circle",      @"مکث و ادامه، مثل تک‌تپ"],
           ]},
         // این دو به سشن ربطی ندارند، پس بخش جدا دارند: تازه‌کاری که هنوز دیکته‌ای شروع
@@ -108,6 +109,21 @@ static NSString *const kCSAutosave = @"ZemzemeCheatSheet";
     if (ZSettings.shared.finalPassEnabled && !ZFinalPass.hasKey) {
         [n addObject:@[@"exclamationmark.triangle",
                        @"پاس نهایی روشن است ولی کلید جمینای نیست، پس N کاری نمی‌کند", @YES]];
+    } else if (ZSettings.shared.finalPassEnabled && !ZSettings.shared.recordSessions) {
+        // دو شرط جدا برای یک کار: N بی صدا چیزی برای شنیدن ندارد. کاربری که تاگل پاس
+        // نهایی را روشن کرده حق دارد بداند چرا در زنده دکمه‌اش را نمی‌بیند.
+        [n addObject:@[@"exclamationmark.triangle",
+                       @"N الان فقط در یادداشت کار می‌کند؛ برای بقیه «ضبط صدای سشن» را روشن کن",
+                       @YES]];
+    }
+    // B بتاست و تاگلش پیش‌فرض خاموش، پس کارت باید بگوید چرا کار نمی‌کند. دو حالت جدا،
+    // چون درمانشان جداست: یکی تاگل است، یکی کلید.
+    if (!ZSettings.shared.enhanceEnabled) {
+        [n addObject:@[@"info.circle",
+                       @"B (بهبود پرامپت) بتاست و خاموش؛ از منوی زمزمه روشنش کن", @NO]];
+    } else if (!ZFinalPass.hasKey) {
+        [n addObject:@[@"exclamationmark.triangle",
+                       @"بهبود پرامپت روشن است ولی کلید جمینای نیست، پس B کاری نمی‌کند", @YES]];
     }
     if (!ZSettings.shared.internalHotkey) {
         [n addObject:@[@"exclamationmark.triangle",

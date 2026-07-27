@@ -69,6 +69,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     NSTextField *_chipLabel;
     NSButton *_btnClose, *_btnPause, *_btnCopy, *_btnTrash, *_btnInsert;
     NSButton *_btnLang, *_btnMode, *_btnPolish, *_btnFinal, *_btnRotate, *_btnFile;
+    NSButton *_btnEnhance;
     NSProgressIndicator *_spinner;    // جای نشان، وقتی کاری در جریان است
     NSArray<NSButton *> *_bar;    // ترتیب دکمه‌ها؛ یک منبع حقیقت برای چیدمان و پهنای متن
     NSMutableArray<NSTextField *> *_barCaps;   // حرف میان‌بر زیر هر دکمه، به همان ترتیب
@@ -185,6 +186,11 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
         _btnRotate = [self makeButton:@"arrow.2.squarepath" key:@"R"
                                  tip:@"چرخش بین نسخه‌های متن: نهایی، مو‌به‌مو، خام"
                               action:@selector(rotateTap)];
+        // بهبود پرامپت (بتا). آیکونش عمدا نه جادو است نه جرقه: آن دو مالِ «همین متن،
+        // تمیزتر»اند و این یکی متن را به چیز دیگری تبدیل می‌کند.
+        _btnEnhance = [self makeButton:@"curlybraces" key:@"B"
+                                   tip:@"بهبود پرامپت (بتا): همین متن، به یک پرامپت آماده برای ایجنت"
+                                action:@selector(enhanceTap)];
         _btnInsert = [self makeButton:@"text.insert" key:@"I" tip:@"درج سر کرسر همین اپ"
                                action:@selector(insertTap)];
         // رونویسی فایل: در هر دو حالتِ پنل‌دار پیداست، چون به سشن ربطی ندارد. راه سوم
@@ -195,11 +201,12 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
         _btnPolish.hidden = YES;
         _btnFinal.hidden = YES;
         _btnRotate.hidden = YES;
+        _btnEnhance.hidden = YES;
         _btnInsert.hidden = YES;
         // ترتیب چیدمان؛ layoutViews و textWidth هر دو از همین یک لیست می‌خوانند، پس
         // پیدا و ناپیدا شدن دکمه‌ها هیچ‌وقت با عدد هاردکد ناهمخوان نمی‌شود.
         _bar = @[_btnClose, _btnPause, _btnCopy, _btnTrash, _btnLang, _btnMode, _btnPolish,
-                 _btnFinal, _btnRotate, _btnInsert, _btnFile];
+                 _btnFinal, _btnEnhance, _btnRotate, _btnInsert, _btnFile];
 
         [self layoutViews];
         [self applyColors];
@@ -596,11 +603,16 @@ static NSString *ZClock(NSTimeInterval sec) {
     _btnTrash.toolTip = m.working ? @"لغو و پاک کردن صدا و متن (D)"
                       : m.mode == ZModeNote ? @"دور ریختن صدای ضبط‌شده تا اینجا (D)"
                       : @"دور ریختن هرچه هنوز درج نشده، و صدای ضبط‌شده (D)";
-    // پاس قاعده‌ای فقط در حالت جمع معنا دارد؛ پاس نهایی هر جا که روشن باشد و سشن زنده
-    // باشد. بعد از نشستنِ پاس دیگر نشان داده نمی‌شود: همان صدا دوباره همان جواب را
-    // می‌دهد و فقط پول و وقت خرج می‌کند.
+    // پاس قاعده‌ای فقط در حالت جمع معنا دارد؛ پاس نهایی هر جا که *شدنی* باشد و سشن
+    // زنده باشد، و شدنی بودن یعنی صدایی هم برای شنیدن هست (canFinal). بعد از نشستنِ
+    // پاس دیگر نشان داده نمی‌شود: همان صدا دوباره همان جواب را می‌دهد و فقط پول و
+    // وقت خرج می‌کند.
     _btnPolish.hidden = !collect || over;
-    _btnFinal.hidden = !ZSettings.shared.finalPassEnabled || over;
+    _btnFinal.hidden = !m.canFinal || over;
+    // بهبود پرامپت به صدا و به پایان سشن کاری ندارد، پس تنها شرطش تاگل است و اینکه
+    // کاری در جریان نباشد. برخلاف بقیه در **بازبینی هم** می‌ماند، چون همان‌جا
+    // بیشترین معنا را دارد: متن نهایی نشسته و حالا می‌شود پرامپتش کرد.
+    _btnEnhance.hidden = !ZSettings.shared.enhanceEnabled || m.working;
     _btnRotate.hidden = m.versions < 2;
     _btnInsert.hidden = (!editor && !m.waitingForTarget) || m.working;
 
@@ -726,6 +738,7 @@ static NSString *ZClock(NSTimeInterval sec) {
 - (void)polishTap { if (self.onPolishNow) self.onPolishNow(); }
 - (void)finalTap { if (self.onFinalPass) self.onFinalPass(); }
 - (void)rotateTap { if (self.onRotateText) self.onRotateText(); }
+- (void)enhanceTap { if (self.onEnhance) self.onEnhance(); }
 - (void)insertTap { if (self.onInsertAll) self.onInsertAll(); }
 - (void)fileTap { if (self.onFilePanel) self.onFilePanel(); }
 
@@ -1015,6 +1028,13 @@ static NSString *ZModeLabel(ZMode m) {
     NSInteger _versionAt;
     NSString *_rawSessionText;    // متنِ مسیر معمولی، پیش از پاس نهایی
     ZBatchJob *_fallbackJob;      // نگه داشته می‌شود، وگرنه وسط کار آزاد می‌شود
+
+    // ---------- بهبود پرامپت (بتا) ----------
+    // پرچمِ جدا، و **عمدا `_working` را قرض نمی‌گیرد**. دلیلش یک باگ واقعی است که با
+    // قرض گرفتنش ساخته می‌شد: `finish` وسط `_working` معنایش «لغوِ پاس نهایی» است و
+    // مسیر لغو `finishNow` صدا می‌زند، یعنی `Esc` وسط یک بهبودِ ساده کل سشن زنده را
+    // می‌بست. این کار به صدا و به پایان سشن هیچ ربطی ندارد، پس پرچمش هم نباید داشته باشد.
+    BOOL _enhancing;
 }
 
 - (instancetype)initWithEngine:(id<ZEngine>)engine panel:(ZPanel *)panel {
@@ -1070,6 +1090,7 @@ static NSString *ZModeLabel(ZMode m) {
     _panel.onPolishNow = ^{ [ws polishCollected]; };
     _panel.onFinalPass = ^{ [ws finalPassNow]; };
     _panel.onRotateText = ^{ [ws rotateText]; };
+    _panel.onEnhance = ^{ [ws enhancePrompt]; };
     if ([self editorMode:_mode]) [_panel clearEditor];
     [self applyModeChrome];
     // در حالت یادداشت درج زنده‌ای در کار نیست، پس نبودن اکسسبیلیتی هم مانعی نیست:
@@ -1107,6 +1128,13 @@ static NSString *ZModeLabel(ZMode m) {
 // دیسک بماند. ضبطِ ناخواسته بدترین پیش‌فرض ممکن است، پس خاموش شروع می‌شود.
 - (ZRecorder *)recorderForMode:(ZMode)m {
     return (m == ZModeNote || ZSettings.shared.recordSessions) ? _recorder : nil;
+}
+
+// آیا پاس نهایی روی این سشن شدنی است. قاعده‌اش در هدر و خالص است (ZFinalPassPossible)؛
+// اینجا فقط وضعیت همین سشن به آن داده می‌شود.
+- (BOOL)finalPassPossible {
+    return ZFinalPassPossible(_mode, ZSettings.shared.finalPassEnabled,
+                              ZSettings.shared.recordSessions, _recorder.url != nil);
 }
 
 // حالت‌هایی که متن در ادیتور خود پنل می‌نشیند، پس بازنویسی آزاد است و درج تا پایان
@@ -1281,6 +1309,12 @@ static NSString *ZModeLabel(ZMode m) {
 // خواسته‌ی صریح کاربر. اگر صدا بماند، اولین پاس نهایی همان حرف‌هایی را برمی‌گرداند که
 // کاربر همین حالا دور ریخت؛ آن دیگر «نجاتِ متن» نیست، غافلگیری است.
 - (void)dropPending {
+    // وسط بهبود پرامپت، سطل آشغال هم فقط همان را لغو می‌کند: این کار صدا و متنی
+    // نساخته که دور ریختنی باشد، و متن دیکته‌ی کاربر نباید قربانیِ یک لغو شود.
+    if (_enhancing) {
+        [self cancelEnhance];
+        return;
+    }
     // وسط پاس نهایی، سطل آشغال یعنی «ولش کن و پاکش کن»: هم کار می‌ایستد هم صدا می‌رود.
     if (_working) {
         [self cancelPass:YES];
@@ -1501,6 +1535,13 @@ static NSString *ZModeLabel(ZMode m) {
 // اصلی نباید آن‌قدر یخ بزند. مسیر خروج اپ عمدا از این معطلی رد نمی‌شود (finishNow):
 // آنجا اپ دارد بسته می‌شود و از دست دادن پاس مهم نیست، از دست دادن متن مهم است.
 - (void)finish {
+    // وسط بهبود پرامپت، Esc فقط همان را لغو می‌کند و **بس**: سشن (یا بازبینی) دست
+    // نمی‌خورد. پیش از هر دو شرط بعدی می‌آید، وگرنه در بازبینی به `closeReview`
+    // می‌افتاد و پنل زیر دستِ کاربر بسته می‌شد.
+    if (_enhancing) {
+        [self cancelEnhance];
+        return;
+    }
     // در بازبینی، Esc و دکمه‌ی بستن یک معنی دارند: پنل را ببند و سشن را واقعا تمام کن.
     if (_reviewing) {
         [self closeReview];
@@ -1629,6 +1670,17 @@ static NSString *ZModeLabel(ZMode m) {
         [_panel flash:@"پاس نهایی خاموش است؛ از منوی زمزمه روشنش کن"];
         return;
     }
+    // این حالت اصلا ضبط نمی‌کند، پس صدایی برای شنیدن وجود ندارد. **پیش از** بستن سشن
+    // می‌گوییم، نه بعدش: قبلا همین شرط بعد از `stop` موتور چک می‌شد، پس زدنِ دکمه سشن
+    // را تمام می‌کرد و در عوض هیچ پاسی نمی‌داد. بدترین شکلِ ممکن، چون کاربر یک
+    // پاراگراف حرف زده بود و دکمه را برای تمیز کردنش زده بود نه برای بستن.
+    if (![self finalPassPossible]) {
+        [_panel flash:@"صدای این سشن ضبط نمی‌شود؛ «ضبط صدای سشن» را از منوی زمزمه روشن کن"];
+        // در حالت کرسر پنلی نیست که پیام را نشان بدهد، پس لاگ تنها جای دیدنش است
+        ZLog(@"final: %@ ضبط نمی‌کند و صدایی روی دیسک نیست؛ سشن دست‌نخورده ماند",
+             ZModeSlug(_mode));
+        return;
+    }
     // ضبط را ببند تا فایل کامل شود، و همان لحظه سشن را هم به شکل معمولی تمام کن.
     if (!_finished) {
         _closing = YES;
@@ -1647,8 +1699,9 @@ static NSString *ZModeLabel(ZMode m) {
     }
     NSURL *audio = _recorder.url;
     if (!audio) {
-        // نه فایلی، نه صدایی: موتور رله‌ی کروم میکروفن ندارد، یا سشن یک ثانیه هم صدا
-        // نگرفت. متن سر جایش است و همان چیزی است که همیشه بود.
+        // ضبط *روشن* بود ولی یک بایت هم نیامد: موتور رله‌ی کروم میکروفن ندارد، یا سشن
+        // یک ثانیه هم صدا نگرفت. (حالتی که اصلا ضبط نمی‌کند بالاتر و پیش از بستن سشن
+        // جدا شد.) متن سر جایش است و همان چیزی است که همیشه بود.
         [_panel flash:@"صدایی ضبط نشده؛ پاس نهایی چیزی برای شنیدن ندارد"];
         [self finishNow];
         return;
@@ -1834,11 +1887,115 @@ static NSString *ZModeLabel(ZMode m) {
     [self finishNow];
 }
 
+// ---------- بهبود پرامپت (بتا) ----------
+
+// B یا دکمه‌ی نوار. با سه کارِ دیگرِ این پنل یک تفاوت بنیادی دارد: **سشن را نمی‌بندد و
+// ضبط را نمی‌ایستاند.** ورودی‌اش متن است نه صدا، پس وسط یک دیکته‌ی زنده هم بی‌ضرر است
+// و بعدش می‌شود ادامه داد.
+- (void)enhancePrompt {
+    if (_enhancing || _working) return;
+    if (!ZSettings.shared.enhanceEnabled) {
+        [_panel flash:@"بهبود پرامپت خاموش است؛ از منوی زمزمه روشنش کن"];
+        return;
+    }
+    NSString *raw = [self fullText];
+    if (!raw.length) {
+        [_panel flash:@"متنی برای بهبود نیست"];
+        return;
+    }
+    if (!ZFinalPass.hasKey) {
+        [_panel flash:@"کلید جمینای نیست؛ بهبود پرامپت اجرا نشد"];
+        ZLog(@"enhance: %@", ZFinalPass.missingKeyHint);
+        return;
+    }
+    _enhancing = YES;
+    _workingMsg = @"بهبود پرامپت…";
+    [self render];
+    ZLog(@"enhance: start on %lu chars (mode=%@)", (unsigned long)raw.length, ZModeSlug(_mode));
+    __weak typeof(self) ws = self;
+    [ZEnhance.shared runOnText:raw lang:ZSettings.shared.lang progress:^(NSString *msg) {
+        __strong typeof(ws) s = ws;
+        if (!s || !s->_enhancing) return;
+        s->_workingMsg = msg;
+        [s render];
+    } done:^(ZEnhanceResult *r) {
+        __strong typeof(ws) s = ws;
+        if (!s) return;
+        [s enhanceLanded:r draft:raw];
+    }];
+}
+
+// خروجی **فقط** به ادیتور و کلیپ‌بورد می‌رود. در زنده و کرسر ادیتوری نیست و متن هم از
+// قبل سر کرسر نشسته، پس آنجا تنها مقصد کلیپ‌بورد است: بازویرایشِ متنی که از دست ما
+// خارج شده ممنوع است، و همین قاعده در کل این فایل یکی است.
+- (void)enhanceLanded:(ZEnhanceResult *)r draft:(NSString *)draft {
+    if (!_enhancing) return;    // لغو شده؛ جوابِ دیررس نباید بنشیند
+    _enhancing = NO;
+    _workingMsg = nil;
+    if (r.cancelled) {
+        ZLog(@"enhance: نتیجه بعد از لغو رسید و دور ریخته شد");
+        [self render];
+        return;
+    }
+    // هیچ اتفاقی نیفتاد: متن قبلی سر جایش، یک پیام کوتاه. نصفه نشستن بدتر از نشستن نیست،
+    // بدتر از *نشدن* است: کاربر نمی‌فهمد چه چیزی از خواسته‌اش افتاده.
+    if (r.error.length || r.gated || !r.text.length) {
+        NSString *msg = r.gated ? @"پرامپت رد شد (ناقص یا پرحرف)؛ متن قبلی سر جایش است"
+                                : (r.error ?: @"پرامپتی نیامد؛ متن قبلی سر جایش است");
+        ZLog(@"enhance: failed — %@", r.gated ? r.summary : (r.error ?: @"?"));
+        [_panel flash:msg];
+        [self render];
+        return;
+    }
+    // دو نسخه، و همان `R` که از قبل بینشان می‌چرخد. کاربری که بتواند مقایسه کند به
+    // فیچر اعتماد می‌کند؛ کاربری که نتواند، نه.
+    NSMutableArray *vs = [NSMutableArray arrayWithObject:@[@"پرامپت", r.text]];
+    for (NSArray *v in _versions) {
+        if (![v[1] isEqualToString:r.text]) [vs addObject:v];
+    }
+    if (_versions.count == 0) [vs addObject:@[@"دیکته", draft]];
+    _versions = vs;
+    _versionAt = 0;
+    if ([self editorMode:_mode]) [_panel setEditorText:r.text];
+    [ZInjector copyFinal:r.text];
+    ZPlay(ZSoundPolish);
+    [_panel flash:[self editorMode:_mode]
+        ? [NSString stringWithFormat:@"پرامپت آماده شد · %@ ثانیه (R برای مقایسه)",
+           ZFaDigits([NSString stringWithFormat:@"%.0f", r.seconds])]
+        : @"پرامپت در کلیپ‌بورد است؛ به اپ مقصد تایپ نشد (R برای چرخش)"];
+    ZLog(@"enhance: landed, %lu chars, %@", (unsigned long)r.text.length, r.summary ?: @"?");
+    [self render];
+}
+
+// لغو: هیچ اتفاقی نیفتاد. سشن (یا بازبینی) دست‌نخورده می‌ماند و همین فرقِ اصلی‌اش با
+// لغو پاس نهایی است، چون آنجا سشن از قبل بسته شده بود.
+- (void)cancelEnhance {
+    if (!_enhancing) return;
+    [ZEnhance.shared cancel];
+    _enhancing = NO;
+    _workingMsg = nil;
+    ZPlay(ZSoundTrash);
+    [_panel flash:@"بهبود پرامپت لغو شد؛ متن سر جایش است"];
+    ZLog(@"enhance: cancelled by user");
+    [self render];
+}
+
 // چرخش بین نسخه‌ها. ویرایش‌های خودِ کاربر روی نسخه‌ی جاری نگه داشته می‌شوند: چرخیدن
 // برای *مقایسه* است و نباید کار کسی را بشوید.
 - (void)rotateText {
     if (_versions.count < 2) {
         [_panel flash:@"فقط یک نسخه از متن هست"];
+        return;
+    }
+    // در حالت‌های بی‌ادیتور (زنده و کرسر) نسخه‌ها فقط از راه بهبود پرامپت ساخته می‌شوند
+    // و جایی برای نشستن ندارند جز کلیپ‌بورد. پس اینجا چرخش یعنی چرخشِ کلیپ‌بورد، نه
+    // بازنویسیِ متنی که سر کرسر نشسته: آن متن از دست ما خارج است.
+    if (![self editorMode:_mode]) {
+        _versionAt = (_versionAt + 1) % (NSInteger)_versions.count;
+        [ZInjector copyFinal:_versions[_versionAt][1]];
+        ZPlay(ZSoundCopy);
+        [_panel flash:[NSString stringWithFormat:@"در کلیپ‌بورد: %@", _versions[_versionAt][0]]];
+        [self render];
         return;
     }
     NSMutableArray *vs = [_versions mutableCopy];
@@ -1894,11 +2051,18 @@ static NSString *ZModeLabel(ZMode m) {
     // ساعت فقط در حالت یادداشت و فقط تا وقتی ضبط ادامه دارد: در بازبینی، جای چیپ
     // مالِ نامِ نسخه است.
     m.elapsed = (_mode == ZModeNote && !_reviewing) ? _recorder.seconds : 0;
-    m.working = _working;
+    // یک پرچم برای پنل، دو پرچم در سشن: پنل فقط باید بداند «کاری در جریان است» تا
+    // چرخنده را روشن کند، ولی معنی `Esc` و `D` در آن دو کار یکی نیست، پس در سشن جدا
+    // می‌مانند. هیچ‌وقت هم‌زمان روشن نمی‌شوند: هر دو مسیر اول همدیگر را رد می‌کنند.
+    m.working = _working || _enhancing;
     m.workingMsg = _workingMsg;
     m.review = _reviewing;
     m.versions = (NSInteger)_versions.count;
     m.versionName = _versions.count ? _versions[_versionAt][0] : @"";
+    // دکمه شرط سخت‌تری از میان‌بر دارد و عمدا: در یادداشتِ بی‌تاگل، `N` باز هم کار
+    // می‌کند (مسیر مجانی تشخیص گفتار)، ولی دکمه‌ای که آنجا بود قبلا هم نبود و
+    // «تاگل خاموش یعنی رفتار امروز، عینا».
+    m.canFinal = ZSettings.shared.finalPassEnabled && [self finalPassPossible];
     // در حالت کرسر پنل پنهان است؛ رندر کردنش یعنی قد کشیدن و چیدن یک پنجره‌ی نادیده
     if (_mode == ZModeCursor) [_dot render:m];
     else [_panel render:m];

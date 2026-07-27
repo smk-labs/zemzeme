@@ -271,6 +271,32 @@ static NSString *ZKeyFromSecurityTool(void) {
     ZLog(@"final: لغو شد");
 }
 
+- (void)resetCancel {
+    [_keyLock lock];
+    _cancelled = NO;
+    [_keyLock unlock];
+}
+
+// ---------- انتقالِ قرضی ----------
+// یک تماسِ فقط‌متنی روی همین انتقال. مصرف‌کننده‌اش `ZEnhance` است و صدا لازم ندارد،
+// پس عمدا هیچ چیزِ صوتی در امضا نیست. کلید هم از همین‌جا خوانده می‌شود: بیرون رفتنِ
+// کلید از این فایل، همان قاعده‌ای است که نمی‌شکند.
+- (NSString *)askText:(NSString *)system parts:(NSArray<NSString *> *)texts
+                label:(NSString *)label thinking:(NSString *)thinking
+                usage:(NSMutableDictionary *)usage error:(NSString **)err {
+    NSString *key = [self key];
+    if (!key) {
+        if (err) *err = ZFinalPass.missingKeyHint;
+        return nil;
+    }
+    NSMutableArray *parts = [NSMutableArray arrayWithCapacity:texts.count];
+    for (NSString *t in texts) [parts addObject:@{@"type": @"text", @"text": t}];
+    return [self ask:system parts:parts label:label key:key thinking:thinking
+               usage:usage error:err];
+}
+
+- (NSString *)promptNamed:(NSString *)name { return [self prompt:name]; }
+
 // «Please retry in 57.4s» را خود سرور در پیام ۴۲۹ می‌گوید. حدس زدن به‌جایش یعنی یا
 // بی‌دلیل معطل شدن، یا دوباره خوردن به همان سقف.
 static NSTimeInterval ZRetryAfter(NSData *body, NSTimeInterval fallback) {
@@ -389,12 +415,16 @@ static NSString *ZDropPreamble(NSString *t) {
 }
 
 // ---------- یک تماس ----------
+// `thinking` پارامتر است نه پیش‌فرض، چون دو مصرف‌کننده دو جواب می‌خواهند: پاس نهایی
+// `minimal` (توکن فکر مثل خروجی پول می‌گیرد و کاربر منتظر متنِ خودش است) و پاس بهبود
+// پرامپت `low` (کاربر خودش دکمه را زده و منتظر یک کارِ فکری است).
 - (NSString *)ask:(NSString *)system parts:(NSArray *)parts label:(NSString *)label
-              key:(NSString *)key usage:(NSMutableDictionary *)usage error:(NSString **)err {
+              key:(NSString *)key thinking:(NSString *)thinking
+            usage:(NSMutableDictionary *)usage error:(NSString **)err {
     NSMutableDictionary *body = [@{@"model": ZGModel(),
                                    @"system_instruction": system,
                                    @"input": parts,
-                                   @"generation_config": @{@"thinking_level": ZGThinking()}} mutableCopy];
+                                   @"generation_config": @{@"thinking_level": thinking}} mutableCopy];
     NSError *jerr = nil;
     NSData *json = [NSJSONSerialization dataWithJSONObject:body options:0 error:&jerr];
     if (!json) {
@@ -539,9 +569,7 @@ static NSString *ZDropPreamble(NSString *t) {
     void (^say)(NSString *) = ^(NSString *m) {
         dispatch_async(dispatch_get_main_queue(), ^{ if (progress) progress(m); });
     };
-    [_keyLock lock];
-    _cancelled = NO;
-    [_keyLock unlock];
+    [self resetCancel];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         ZFinalPassResult *r = [self work:audio lang:lang say:say];
         dispatch_async(dispatch_get_main_queue(), ^{ done(r); });
@@ -581,7 +609,8 @@ static NSString *ZDropPreamble(NSString *t) {
     ZBailIfCancelled();
     NSString *verbatim = [self ask:pVerbatim
                              parts:@[@{@"type": @"text", @"text": @"فقط صدا."}, part]
-                             label:@"verbatim" key:key usage:usage error:&err];
+                             label:@"verbatim" key:key thinking:ZGThinking()
+                             usage:usage error:&err];
     if (!verbatim.length) {
         r.error = err ?: @"رونویسی نشد";
         return r;
@@ -602,7 +631,7 @@ static NSString *ZDropPreamble(NSString *t) {
                         @{@"type": @"text", @"text": [@"متن رونویسی مو‌به‌مو:\n\n"
                                                       stringByAppendingString:verbatim]}];
     NSString *polished = [self ask:pPolish parts:parts2 label:@"polish" key:key
-                             usage:usage error:&err];
+                          thinking:ZGThinking() usage:usage error:&err];
 
     // ---------- دروازه‌ی کامل بودن ----------
     if (polished.length) {
@@ -617,7 +646,7 @@ static NSString *ZDropPreamble(NSString *t) {
             NSString *strict = [self strictAddendum:c];
             NSArray *parts3 = [parts2 arrayByAddingObject:@{@"type": @"text", @"text": strict}];
             NSString *again = [self ask:pPolish parts:parts3 label:@"polish-strict" key:key
-                                  usage:usage error:&err];
+                               thinking:ZGThinking() usage:usage error:&err];
             ZCoverage *c2 = again.length ? [ZCoverage ofDraft:verbatim output:again] : nil;
             if (c2 && c2.passed) {
                 polished = again;

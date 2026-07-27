@@ -157,7 +157,11 @@ static NSString *ZClock(double sec) {
     NSView *_editorBox;       // قاب دورِ ادیتور، که متن «همین‌طور آن زیر» نیفتد
     NSTextField *_editorCap;
     NSButton *_btnAdd, *_btnStart, *_btnStop, *_btnRemove;
-    NSButton *_btnJoin, *_btnPolish, *_btnCopy, *_btnSave;
+    NSButton *_btnJoin, *_btnPolish, *_btnEnhance, *_btnCopy, *_btnSave;
+    // متنِ پیش از بهبود پرامپت. نال یعنی الان متنِ دیکته در ادیتور است، پرش یعنی
+    // پرامپت نشسته و همان دکمه این بار برمی‌گرداندش. جای میان‌برِ `R` را می‌گیرد: این
+    // پنجره میان‌بر ندارد، پس چرخش باید روی خودِ دکمه سوار شود.
+    NSString *_preEnhance;
     NSArray<NSButton *> *_bar;
     NSMutableArray<ZBatchRow *> *_rows;
     ZBatchJob *_job;
@@ -229,6 +233,10 @@ static NSString *ZClock(double sec) {
     _btnPolish = [self button:@"wand.and.stars"
                           tip:@"پاس نهایی: نیم‌فاصله، نقطه‌گذاری و املا روی متن یکجا"
                        action:@selector(tapPolish)];
+    // بهبود پرامپت (بتا): همان کار پنل شناور، روی متن یکجای همین پنجره.
+    _btnEnhance = [self button:@"curlybraces"
+                           tip:@"بهبود پرامپت (بتا): همین متن، به یک پرامپت آماده برای ایجنت"
+                        action:@selector(tapEnhance)];
     _btnCopy = [self button:@"doc.on.doc" tip:@"کپی متن یکجا" action:@selector(tapCopy)];
     _btnSave = [self button:@"square.and.arrow.down" tip:@"ذخیره‌ی متن یکجا در یک فایل"
                     action:@selector(tapSave)];
@@ -236,7 +244,7 @@ static NSString *ZClock(double sec) {
                            tip:@"تاریخچه: متن اجراهای قبلی را دوباره باز کن"
                         action:@selector(tapHistory)];
     _bar = @[_btnAdd, _btnStart, _btnStop, _btnRemove,
-             _btnJoin, _btnPolish, _btnCopy, _btnSave, _btnHistory];
+             _btnJoin, _btnPolish, _btnEnhance, _btnCopy, _btnSave, _btnHistory];
 
     // هم‌زمانی: پیش‌فرض ۲ می‌ماند. تولتیپ هشدار را می‌گوید، چون این عدد فقط سرعت نیست،
     // سهمِ کلید مشترک است.
@@ -285,6 +293,16 @@ static NSString *ZClock(double sec) {
     [self buildEditor];
     [self layoutViews];
     [self syncButtons];
+}
+
+// عوض کردن آیکونِ یک دکمه‌ی ساخته‌شده، با همان تنظیمِ اندازه و وزن. دکمه‌ای که دو کار
+// دارد باید دو چهره هم داشته باشد.
+- (void)setButton:(NSButton *)b symbol:(NSString *)symbol {
+    NSImage *img = [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:b.toolTip];
+    if (!img) ZLog(@"batchui: SF Symbol پیدا نشد: %@", symbol);
+    b.image = [img imageWithSymbolConfiguration:
+               [NSImageSymbolConfiguration configurationWithPointSize:13 weight:NSFontWeightMedium]]
+              ?: [NSImage new];
 }
 
 - (NSButton *)button:(NSString *)symbol tip:(NSString *)tip action:(SEL)action {
@@ -401,6 +419,8 @@ static NSString *ZClock(double sec) {
     CGFloat x = right - 24;
     for (NSUInteger i = 0; i < _bar.count; i++) {
         if (i == 4) x -= 14;    // مرز دو گروه
+        // دکمه‌ی پنهان جا نمی‌گیرد، وگرنه یک حفره‌ی خالی وسط نوار می‌ماند
+        if (_bar[i].hidden) continue;
         _bar[i].frame = NSMakeRect(x, top - 24, 24, 24);
         x -= kRowStep;
     }
@@ -721,6 +741,10 @@ static NSString *ZClock(double sec) {
 - (void)setEditorText:(NSString *)t {
     _editor.string = t ?: @"";
     _autoText = _editor.string;
+    // هر نوشتنِ تازه، برگشتِ بهبود پرامپت را باطل می‌کند. یک جا و نه هفت جا: چسباندن،
+    // پاس نهایی، تاریخچه و پایان کار همه از همین رد می‌شوند، و «متن دیکته را برگردان»
+    // که متنِ یک صفِ دیگر را برگرداند، بدترین شکلِ ممکن است.
+    _preEnhance = nil;
     [_editor scrollRangeToVisible:NSMakeRange(0, 0)];
     [self syncButtons];
 }
@@ -833,6 +857,59 @@ static NSString *ZGeminiMime(NSURL *url) {
         }];
     };
     next();
+}
+
+// ---------- بهبود پرامپت (بتا) ----------
+// یک دکمه، دو کار، و همان قاعده‌ی پنل شناور: متن دیکته همیشه می‌ماند. بار اول پرامپت
+// می‌سازد، بار دوم متن دیکته را برمی‌گرداند. اینجا میان‌بری نیست که مثل `R` بچرخد، پس
+// چرخش روی خودِ دکمه سوار شده و آیکون هم عوض می‌شود تا دروغ نگوید.
+- (void)tapEnhance {
+    if (_polishing) return;
+    if (_preEnhance) {
+        NSString *back = _preEnhance;
+        _preEnhance = nil;
+        [self setEditorText:back];
+        [self flash:@"متن دیکته برگشت"];
+        return;
+    }
+    NSString *raw = _editor.string;
+    if (!raw.length) {
+        [self flash:@"اول متنی بچسبان"];
+        return;
+    }
+    if (!ZFinalPass.hasKey) {
+        [self flash:@"کلید جمینای نیست؛ بهبود پرامپت اجرا نشد"];
+        ZLog(@"enhance: %@", ZFinalPass.missingKeyHint);
+        return;
+    }
+    // همان پرچمِ «کاری در جریان است» که پاس نهایی استفاده می‌کند، و عمدا: انتقالِ زیرین
+    // یکی است و یک تماس در هر لحظه بیشتر نمی‌پذیرد.
+    _polishing = YES;
+    [self syncButtons];
+    _status.stringValue = @"بهبود پرامپت…";
+    __weak typeof(self) ws = self;
+    [ZEnhance.shared runOnText:raw lang:ZSettings.shared.batchLang progress:^(NSString *msg) {
+        __strong typeof(ws) s = ws;
+        if (s) s->_status.stringValue = msg;
+    } done:^(ZEnhanceResult *r) {
+        __strong typeof(ws) s = ws;
+        if (!s) return;
+        s->_polishing = NO;
+        if (r.cancelled || r.error.length || r.gated || !r.text.length) {
+            [s flash:r.cancelled ? @"لغو شد؛ متن سر جایش است"
+                : r.gated ? @"پرامپت رد شد (ناقص یا پرحرف)؛ متن قبلی سر جایش است"
+                : (r.error ?: @"پرامپتی نیامد؛ متن قبلی سر جایش است")];
+            ZLog(@"enhance: batch failed — %@", r.gated ? r.summary : (r.error ?: @"?"));
+            [s syncButtons];
+            return;
+        }
+        [s setEditorText:r.text];
+        s->_preEnhance = raw;    // بعد از setEditorText، چون آن یکی صفرش می‌کند
+        ZPlay(ZSoundPolish);
+        [s flash:[NSString stringWithFormat:@"پرامپت آماده شد · %@ ثانیه (همین دکمه، متن دیکته را برمی‌گرداند)",
+                  ZFaDigits([NSString stringWithFormat:@"%.0f", r.seconds])]];
+        [s syncButtons];
+    }];
 }
 
 - (void)tapCopy {
@@ -963,6 +1040,14 @@ static NSString *ZGeminiMime(NSURL *url) {
     _btnRemove.enabled = _rows.count > 0;
     _btnJoin.enabled = anyText;
     _btnPolish.enabled = _editor.string.length > 0 && !_polishing;
+    // بتا و پیش‌فرض خاموش: تا تاگل روشن نشود، دکمه‌اش هم وجود ندارد. آیکونش می‌گوید
+    // الان کدام کار را می‌کند، وگرنه دکمه‌ای که دو کار دارد و یک چهره، دروغ می‌گوید.
+    _btnEnhance.hidden = !ZSettings.shared.enhanceEnabled;
+    _btnEnhance.enabled = _editor.string.length > 0 && !_polishing;
+    [self setButton:_btnEnhance symbol:_preEnhance ? @"arrow.uturn.backward" : @"curlybraces"];
+    _btnEnhance.toolTip = _preEnhance
+        ? @"برگشت به متن دیکته (پرامپت از دست نمی‌رود، دوباره همین دکمه)"
+        : @"بهبود پرامپت (بتا): همین متن، به یک پرامپت آماده برای ایجنت";
     _btnCopy.enabled = _editor.string.length > 0;
     _btnSave.enabled = _editor.string.length > 0;
     _btnHistory.enabled = YES;
@@ -970,6 +1055,7 @@ static NSString *ZGeminiMime(NSURL *url) {
     for (NSButton *b in _bar) {
         b.contentTintColor = b.enabled ? NSColor.secondaryLabelColor : NSColor.quaternaryLabelColor;
     }
+    [self layoutViews];    // پیدا و ناپیدا شدنِ دکمه، چیدمان نوار را عوض می‌کند
 }
 
 // پیام کوتاه روی خط وضعیت، بعد خودش می‌رود. همان قرارداد نوار شناور: زدن دکمه باید

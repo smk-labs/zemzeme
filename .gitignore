@@ -12,6 +12,7 @@ sessions/
 app.log
 log.txt
 polish.log
+enhance.log
 app/py/.venv/
 app/py/models/
 

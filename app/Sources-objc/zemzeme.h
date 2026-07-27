@@ -79,6 +79,10 @@ typedef NS_ENUM(NSInteger, ZMode) {
 // ضبطِ بی‌خواسته بدترین پیش‌فرض ممکن است. حالت یادداشت به این تاگل کاری ندارد: آنجا
 // ضبط تنها کاری است که انجام می‌شود.
 @property (nonatomic) BOOL recordSessions;
+// بهبود پرامپت (بتا): متنِ آماده را به یک پرامپت درست تبدیل می‌کند. پیش‌فرض خاموش،
+// و جدا از دو تاگل بالا: آن دو روی «متن چه شکلی دربیاید» کار می‌کنند و این یکی متن
+// را به چیز دیگری تبدیل می‌کند. تا وقتی خاموش است هیچ رفتاری عوض نمی‌شود.
+@property (nonatomic) BOOL enhanceEnabled;
 - (ZInsertMode)insertModeForBundleId:(NSString *)bundleId;
 - (void)setInsertMode:(ZInsertMode)m forBundleId:(NSString *)bundleId;   // استثنای یک اپ خاص
 - (useconds_t)typeDelayMicros;
@@ -429,12 +433,100 @@ id<ZEngine> ZMakeEngine(ZMode mode);
 // شود: بدنه‌ی درخواست چند مگابایت است و کسی که «کنسل» می‌زند منتظر تمام شدنش نیست.
 // `done` باز هم صدا زده می‌شود، با `cancelled = YES`.
 - (void)cancel;
+
+// ---------- انتقالِ قرضی ----------
+// کلید، تلاش دوباره، رفتار ۴۲۹، و پارس پاسخِ اندپوینتِ مستندنشده فقط در همین یک
+// فایل نشسته‌اند. مصرف‌کننده‌ی دومش (`ZEnhance`) صدا لازم ندارد و یک تماس متنی
+// می‌زند، پس این چهار متد همان انتقال را قرض می‌دهند و لایه‌ی دومی ساخته نمی‌شود.
+// یک تماس در هر لحظه، همان قاعده‌ی بالا: پرچم لغو و تسکِ در پرواز بین هر دو
+// مصرف‌کننده مشترک‌اند و فراخوان‌ها خودشان نگهبانند.
+//
+// `thinking` صریح است نه پیش‌فرض: پاس نهایی `minimal` می‌خواهد (توکن فکر مثل خروجی
+// پول می‌گیرد) و بهبود پرامپت `low`، چون کاربر خودش دکمه را زده و منتظر است.
+- (NSString *)askText:(NSString *)system parts:(NSArray<NSString *> *)texts
+                label:(NSString *)label thinking:(NSString *)thinking
+                usage:(NSMutableDictionary *)usage error:(NSString **)err;
+- (NSString *)promptNamed:(NSString *)name;   // نال یعنی فایل در بسته نیست
+- (BOOL)cancelled;      // بین دو مرحله پرسیده می‌شود، نه فقط اولش
+- (void)resetCancel;    // سر شروع هر کار تازه؛ وگرنه یک لغوِ کهنه کار بعدی را می‌کشد
 @end
+
+// آیا پاس نهایی روی یک سشن شدنی است. سه جا لازمش دارند (دکمه‌ی نوار، میان‌بر N، پانویس
+// کارت راهنما) و پیش از این هر کدام شرط خودش را داشت؛ همان واگرایی باعث شد دکمه دیده
+// شود ولی کار نکند. تابع خالص و در هدر است تا تست بی‌سشن و بی‌میکروفن بسنجدش
+// (`bash tools/finalgate_test.sh`).
+//
+//   · یادداشت همیشه صدا دارد و بی‌تاگل هم متن می‌دهد (مسیر مجانی تشخیص گفتار)، پس N
+//     آنجا همیشه کار می‌کند. دکمه‌ی نوار شرط سخت‌تری دارد و تاگل را هم می‌خواهد، چون
+//     «تاگل خاموش یعنی رفتار امروز، عینا».
+//   · سه حالت دیکته صدا فقط با تاگل جدای «ضبط صدای سشن» دارند، وگرنه هیچ بایتی روی
+//     دیسک نیست و پاس چیزی برای شنیدن ندارد.
+//   · haveAudio صدای مانده از یک استینتِ قبلی است: سشنی که در یادداشت شروع شده و با E
+//     به زنده رفته، صدا *دارد* هرچند حالت فعلی‌اش ضبط نمی‌کند. آن صدا باید شنیده شود.
+static inline BOOL ZFinalPassPossible(ZMode mode, BOOL finalPassOn,
+                                      BOOL recordSessions, BOOL haveAudio) {
+    if (!finalPassOn && mode != ZModeNote) return NO;
+    return mode == ZModeNote || recordSessions || haveAudio;
+}
 
 // zemzeme --finalpass <audio> [--lang fa-IR]
 // همان مسیر، بی‌میکروفن و بی‌رابط. بی این، تنها راهِ سنجیدنِ این خط لوله «سه دقیقه حرف
 // زدن و امیدوار بودن» بود. مثل --transcribe پیش از ساختن NSApplication برمی‌گردد.
 int ZFinalPassMain(NSArray<NSString *> *args);
+
+// ---------- بهبود پرامپت (بتا) ----------
+// متنی که با حرف زدن دیکته شده، به پرامپتی که بشود همان لحظه به یک ایجنت داد.
+// ورودی‌اش **متن آماده** است، نه صدا، پس تنها کارِ این خانواده است که به میکروفن و
+// به ضبط کاری ندارد و در هر چهار حالت و در پنل رونویسی فایل یکسان کار می‌کند.
+//
+// قاعده‌های سختی که این مسیر رعایت می‌کند:
+//   · **هیچ‌وقت خودکار نیست.** فقط با دکمه یا میان‌بر، و فقط روی متنی که از قبل
+//     آماده شده. هیچ‌وقت وسط سشن و هیچ‌وقت روی تکه‌های در جریان.
+//   · **متن اصلی همیشه می‌ماند.** خروجی یک نسخه‌ی تازه است، نه جایگزینِ متن دیکته؛
+//     `R` بین دو نسخه می‌چرخد تا مقایسه شدنی باشد.
+//   · **بازویرایش ممنوع.** خروجی هیچ‌وقت به اپ مقصد تایپ نمی‌شود، فقط ادیتور و
+//     کلیپ‌بورد. در زنده و کرسر متن از قبل سر کرسر نشسته و از دست ما خارج است.
+//   · خطا یا شبکه‌ی قطع یعنی **هیچ اتفاقی نیفتاد**: متن قبلی سر جایش، یک پیام کوتاه.
+// دروازه‌ی این مسیر (`enhgate.m`)، و عمدا جدا از `ZCoverage`: آن یکی بین «مو‌به‌مو» و
+// «تمیزتر» می‌نشیند و درصد پوششِ واژه معیارش است. اینجا کار *تبدیل* است، نه تمیزکاری،
+// و فیلر و جمله‌ی رهاشده باید بروند؛ پس پوشش معیار غلطی است. تحمل صفر مالِ چیزهایی
+// است که معنایشان در خودشان است: عدد، توکن لاتین، مسیر فایل. به‌علاوه‌ی یک سقف طول،
+// چون پرامپتِ پرحرف هم خرابِ کار است.
+@interface ZEnhGate : NSObject
++ (instancetype)ofDraft:(NSString *)draft output:(NSString *)out;
+@property (nonatomic, readonly) NSArray<NSString *> *lostNumbers, *lostLatin, *lostPaths;
+@property (nonatomic, readonly) NSUInteger draftWords, outWords, allowedWords;
+@property (nonatomic, readonly) BOOL tooLong;
+@property (nonatomic, readonly) BOOL passed;
+@property (nonatomic, readonly) NSString *summary;   // یک خط، برای لاگ و خط وضعیت
+@end
+
+@interface ZEnhanceResult : NSObject
+@property (nonatomic, copy) NSString *text;      // پرامپت؛ نال یعنی چیزی نباید عوض شود
+@property (nonatomic, copy) NSString *error;     // نال یعنی موفق
+@property (nonatomic) BOOL gated;                // دروازه بست؛ متن قبلی می‌ماند
+@property (nonatomic) BOOL cancelled;            // کاربر وسط کار زدش؛ خطا نیست
+@property (nonatomic) NSInteger inTokens, outTokens;
+@property (nonatomic) NSTimeInterval seconds;
+@property (nonatomic, copy) NSString *summary;   // یک خط سنجه، برای لاگ و خط وضعیت
+@end
+
+@interface ZEnhance : NSObject
++ (instancetype)shared;
+// همه‌ی کار روی نخ پس‌زمینه؛ progress و done هر دو روی نخ اصلی. lang فقط برای پیام
+// است: خودِ مدل زبان را از متن می‌فهمد و پرامپت هم همین را می‌گوید.
+// یک کار در هر لحظه، و نگهبانش فراخوان است (سشن با `_enhancing`، پنل فایل با
+// `_polishing`)، چون انتقالِ زیرین با پاس نهایی مشترک است.
+- (void)runOnText:(NSString *)text lang:(NSString *)lang
+         progress:(void (^)(NSString *msg))progress
+             done:(void (^)(ZEnhanceResult *r))done;
+- (void)cancel;    // `done` باز هم صدا زده می‌شود، با `cancelled = YES`
+@end
+
+// zemzeme --enhance <file|-> [--lang fa-IR]
+// همان مسیر، بی‌رابط: پرامپت روی stdout، مراحل و عددهای مصرف روی stderr. دلیل وجودش
+// ست طلایی است؛ بی این، تنها راهِ سنجیدنش «حرف زدن و امیدوار بودن» بود.
+int ZEnhanceMain(NSArray<NSString *> *args);
 
 // ---------- درج ----------
 // چطور ثابت شد که پاک کردن امن است. شمارنده‌ها همین را می‌شمارند و معیار پذیرش از
@@ -500,6 +592,7 @@ typedef NS_ENUM(NSInteger, ZWriteProof) {
 @property (nonatomic, copy) void (^onPolishNow)(void);      // P
 @property (nonatomic, copy) void (^onFinalPass)(void);      // N: پایان و پاس نهایی
 @property (nonatomic, copy) void (^onRotateText)(void);     // R: چرخش نسخه‌های متن
+@property (nonatomic, copy) void (^onEnhance)(void);        // B: بهبود پرامپت (بتا)
 // F: پنل رونویسی فایل. تنها میان‌بری که بی‌سشن هم کار می‌کند، چون به سشن ربطی ندارد
 @property (nonatomic, copy) void (^onFilePanel)(void);      // F
 @property (nonatomic) BOOL sessionActive;
@@ -653,6 +746,10 @@ typedef NS_ENUM(NSInteger, ZSinkResult) {
 @property (nonatomic) BOOL review;
 @property (nonatomic) NSInteger versions;        // چند نسخه‌ی متن برای چرخش هست
 @property (nonatomic, copy) NSString *versionName;
+// دکمه‌ی پاس نهایی فقط وقتی که واقعا شدنی است: تاگل روشن **و** صدایی برای شنیدن.
+// سه حالت دیکته بی تاگل «ضبط صدای سشن» هیچ بایتی روی دیسک نمی‌گذارند، و دکمه‌ای که
+// کار نمی‌کند دروغ است (همان قاعده‌ی دکمه‌های شنیدن در بازبینی).
+@property (nonatomic) BOOL canFinal;
 @end
 
 // رنگ وضعیت، یک منبع حقیقت: نشان روی پنل، نشانگر کنار کرسر و آیتم منوبار هر سه
@@ -718,6 +815,7 @@ int ZCaretProbeMain(NSArray<NSString *> *args);
 @property (nonatomic, copy) void (^onFilePanel)(void);  // باز کردن پنل رونویسی فایل
 @property (nonatomic, copy) void (^onFinalPass)(void);  // پایان سشن و پاس نهایی روی صدای همین سشن
 @property (nonatomic, copy) void (^onRotateText)(void); // چرخش بین نسخه‌های متن (نهایی، مو‌به‌مو، خام)
+@property (nonatomic, copy) void (^onEnhance)(void);   // بهبود پرامپت روی متنِ همین حالا (بتا)
 - (void)show;
 - (void)hide;
 - (void)render:(ZPanelModel *)m;
@@ -752,6 +850,10 @@ int ZCaretProbeMain(NSArray<NSString *> *args);
 // ادیتور و کلیپ‌بورد می‌رود، هیچ‌وقت به اپ مقصد: آنجا متن از قبل نشسته و بازویرایش ممنوع.
 - (void)finalPassNow;
 - (void)rotateText;       // چرخش ادیتور بین نهایی، مو‌به‌مو و خام، برای مقایسه
+// بهبود پرامپت روی متنِ همین حالا (بتا). سشن را نمی‌بندد و ضبط را نمی‌ایستاند: تنها
+// کارِ این خانواده است که به صدا کاری ندارد، پس وسط یک سشن زنده هم بی‌ضرر است.
+// خروجی یک نسخه‌ی تازه می‌شود (`R` بینشان می‌چرخد) و در حالت‌های بی‌ادیتور فقط کلیپ‌بورد.
+- (void)enhancePrompt;
 - (void)finish;           // ممکن است منتظر پاس پایانی بماند، بعد ببندد
 - (void)finishNow;        // بدون معطلی؛ مسیر خروج اپ از این می‌رود
 @end
