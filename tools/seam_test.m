@@ -25,6 +25,11 @@ static void ok(NSString *name, BOOL cond, NSString *detail) {
     if (!cond && detail.length) printf("      %s\n", detail.UTF8String);
 }
 
+static void eq(NSString *name, NSString *got, NSString *want) {
+    ok(name, [got isEqualToString:want],
+       [NSString stringWithFormat:@"want: «%@»\n      got:  «%@»", want, got]);
+}
+
 static void expect(NSString *name, NSString *got, NSString *want) {
     BOOL pass = want ? [got isEqualToString:want] : (got == nil);
     ok(name, pass, [NSString stringWithFormat:@"want: %@\n      got:  %@",
@@ -116,6 +121,59 @@ int main(void) {
         ZSeamMatch weak = ZSeamFind(@"یک دو سه چهار", @"پنج شش", ZStitchWords(2.0));
         ok(@"seam: an unrelated chunk is not a match at all", weak.dropWords == 0,
            [NSString stringWithFormat:@"drop=%lu score=%.2f", (unsigned long)weak.dropWords, weak.score]);
+
+
+        // ---------- راچتِ دُم: عقب‌گردِ interim نمایش را پاک نکند ----------
+        // رشته‌ها از سشن واقعی 03-09-19 همین دستگاه‌اند (رویدادهای ۱۰۵ تا ۱۰۸).
+
+        NSString *longI = @"خیلی خیلی ظاهر آراسته‌تر و زیباتری پیدا می‌کنه و بقیه بهش رغبت "
+            @"بیشتری پیدا می‌کنند و در جمع‌ها پذیرفته می‌شه و نهایتاً خیلی خیلی اتفاقات خوبی "
+            @"براش می‌افته اما فقط محدود به این نیست شونه کار پزشکی خیلی مهم";
+        NSString *rolled = @"خیلی خیلی ظاهر آراسته‌تر و زیباتری پیدا می‌کنه و بقیه بهش رغبت "
+            @"بیشتری پیدا می‌کنند و در جمع‌ها پذیرفته می‌شه و نهایتاً خیلی خیلی";
+        eq(@"ratchet: a rollback to a prefix keeps the long text",
+           ZInterimRatchet(longI, rolled), longI);
+        eq(@"ratchet: plain growth follows",
+           ZInterimRatchet(@"سلام حال", @"سلام حال شما"), @"سلام حال شما");
+        eq(@"ratchet: same-origin rewrite adopts the longer",
+           ZInterimRatchet(@"سلام حال شما چطوره", @"سلام حال شما چطور است امروز"),
+           @"سلام حال شما چطور است امروز");
+        eq(@"ratchet: sliding window joins at the tail",
+           ZInterimRatchet(@"یک دو سه چهار پنج", @"چهار پنج شش هفت"),
+           @"یک دو سه چهار پنج شش هفت");
+        {
+            // روی دنباله‌ی واقعی، نمایش هیچ‌وقت کوتاه نمی‌شود
+            NSArray *seq = @[rolled, longI, rolled,
+                             [longI stringByAppendingString:@" هم هست"], rolled];
+            NSString *best = @"";
+            BOOL monotone = YES;
+            for (NSString *cur in seq) {
+                NSString *next = ZInterimRatchet(best, cur);
+                if (next.length < best.length) monotone = NO;
+                best = next;
+            }
+            ok(@"ratchet: the real rollback sequence never shrinks on screen", monotone,
+               [NSString stringWithFormat:@"ended at: %@", best]);
+            ok(@"ratchet: and the medical words survive the whole sequence",
+               [best containsString:@"پزشکی"], best);
+        }
+
+        // ---------- دمِ پوشش‌داده‌نشده: متنِ قطعیِ کوتاه‌تر از دُمِ در دست ----------
+        eq(@"uncovered: a final covering a prefix leaves the tail",
+           ZUncoveredTail(longI, rolled),
+           @"اتفاقات خوبی براش می‌افته اما فقط محدود به این نیست شونه کار پزشکی خیلی مهم");
+        eq(@"uncovered: a final covering everything leaves nothing",
+           ZUncoveredTail(rolled, longI), @"");
+        eq(@"uncovered: an unrelated final claims nothing",
+           ZUncoveredTail(@"یک دو سه چهار پنج شش هفت هشت", @"باران برف آفتاب ابر مه رعد طوفان"),
+           @"");
+        // «چطوره» در برابر «چطور است»: هم‌ترازی یک توکنِ لبِ مرز را نگه می‌دارد.
+        // عمدی است: خطای این تابع باید به سمتِ تکرار بیفتد نه گم شدن، و «است»ِ
+        // اضافه همان سمتِ امن است.
+        eq(@"uncovered: wording drift keeps the boundary token (dup side, by rule)",
+           ZUncoveredTail(@"سلام حال شما چطور است امروز هوا خوب است",
+                          @"سلام حال شما چطوره"),
+           @"است امروز هوا خوب است");
 
         printf("\n%s  (%d failed)\n", gFail ? "FAILED" : "all seam tests passed", gFail);
         return gFail ? 1 : 0;

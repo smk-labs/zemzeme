@@ -157,6 +157,10 @@
     _draining = nil;
     if (was) [_tx endDrain];
     if (was) [self salvageFrom:_stream];
+    // هرچه بعد از نجات هنوز خاکستری مانده (دُمی که هیچ متنِ قطعی‌ای پوشش نداد)
+    // همین‌جا قطعی می‌شود. در حالت زنده که دُم رندر نمی‌شود، بی این یک خط، آن متن
+    // بی‌هیچ ردی گم می‌شد.
+    if (was) [_tx sealPending];
     [_stream cancel];
     [_draining cancel];
     _stream = nil;
@@ -854,7 +858,8 @@ typedef NS_ENUM(NSInteger, ZRelayPing) {
         s->_lastPageSeen = NSDate.date;
         if ([kind isEqualToString:@"interim"]) {
             NSString *t = [obj[@"text"] isKindOfClass:NSString.class] ? obj[@"text"] : @"";
-            s->_pending = [t copy];
+            // همان راچتِ موتور اصلی: عقب‌گردِ interim نمایش را پاک نکند
+            s->_pending = ZInterimRatchet(s->_pending, t);
             [s emit];
             [s.delegate engineLevel:0.4f];
         } else if ([kind isEqualToString:@"final"]) {

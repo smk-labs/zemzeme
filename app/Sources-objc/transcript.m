@@ -14,6 +14,8 @@
 @implementation ZTranscript {
     NSMutableString *_committed;
     NSString *_carry;                          // متن معلقِ سشنِ در حال تخلیه
+    NSString *_drainCommitted;                 // متنِ قطعی‌ای که همین تخلیه تا حالا داده
+    NSString *_carryShown;                     // carry منهای آنچه تخلیه پوشانده؛ برای نمایش
     NSMutableArray<NSDictionary *> *_after;    // قطعی‌های سشن تازه، منتظر پایان تخلیه
     NSString *_interim;
     BOOL _draining;
@@ -30,6 +32,8 @@
         _after = [NSMutableArray array];
         _interim = @"";
         _carry = @"";
+        _drainCommitted = @"";
+        _carryShown = @"";
         _weldWords = ZStitchWords(kZRotateOverlapSec);
     }
     return self;
@@ -39,7 +43,7 @@
 - (BOOL)draining { return _draining; }
 
 - (NSString *)pending {
-    NSMutableString *p = [NSMutableString stringWithString:_carry ?: @""];
+    NSMutableString *p = [NSMutableString stringWithString:_carryShown ?: @""];
     for (NSDictionary *d in _after) [p setString:ZJoinText(p, d[@"text"])];
     return ZJoinText(p, _interim);
 }
@@ -83,8 +87,13 @@
 }
 
 - (void)setInterim:(NSString *)interim {
-    _interim = [(interim ?: @"") copy];
-    ZEventLogWrite(@{@"k": @"interim", @"text": _interim});
+    NSString *cur = [(interim ?: @"") copy];
+    ZEventLogWrite(@{@"k": @"interim", @"text": cur});
+    // نمای دُم یک‌طرفه است: عقب‌گردِ interim نگه داشته می‌شود، نه اجرا. اندازه‌گیری
+    // روی سشن واقعی 03-09-19 همین دستگاه: interim هفت بار عقب نشست (۲۰۴ به ۱۳۲،
+    // ۱۸۵ به ۱۲۸، …) و هر بار متنِ خاکستری جلوی چشم کاربر پاک می‌شد و او نمی‌دانست
+    // برمی‌گردد یا نه. فقط متنِ قطعی حق دارد جای دُم را بگیرد.
+    _interim = ZInterimRatchet(_interim, cur);
 }
 
 // یک تکه‌ی قطعی از سشنِ زنده. وسط تخلیه نوبتش بعد از تخلیه است (وگرنه حرفِ بعدی
@@ -94,7 +103,11 @@
     ZEventLogWrite(@{@"k": @"final", @"text": text ?: @"", @"weld": @(weld)});
     NSString *t = [(text ?: @"") stringByTrimmingCharactersInSet:
                    NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    _interim = @"";
+    // متنِ قطعی دُم را مصرف می‌کند، ولی فقط تا جایی که واقعا پوشانده. اگر دُمِ
+    // نگه‌داشته از متنِ قطعی درازتر است (interim عقب‌گرد کرده بود و ما نگهش
+    // داشتیم)، باقی‌مانده خاکستری می‌ماند: یا تشخیصِ بعدی پوششش می‌دهد و همین‌جا
+    // مصرف می‌شود، یا سرِ بستنِ سشن قطعی می‌شود. بی‌صدا دور نمی‌رود.
+    _interim = t.length ? ZUncoveredTail(_interim, t) : _interim;
     if (!t.length) return;
     if (_draining) [_after addObject:@{@"text": t, @"weld": @(weld)}];
     else [self commit:t weld:weld];
@@ -109,7 +122,12 @@
     if (_draining) [self endDrain];    // تخلیه‌ی قبلی هنوز باز بود؛ اول تسویه‌اش کن
     _draining = YES;
     _carryWeld = weld;
-    _carry = [ZJoinText(carry, @"") copy];
+    // carry موتور (نجات‌گرفته از بلندترین interim) با دُمِ نگه‌داشته‌ی خودمان یکی
+    // می‌شود؛ هرکدام کامل‌تر بود همان می‌ماند. بی این، لحظه‌ی چرخش خودش یک عقب‌گرد
+    // می‌شد: نمایش از دفترِ ما پرتر بود و carry جایش می‌نشست.
+    _carry = [ZInterimRatchet(_interim, carry) copy];
+    _carryShown = _carry;
+    _drainCommitted = @"";
     _interim = @"";
 }
 
@@ -120,10 +138,17 @@
 // تکرار دارد، نه بقیه‌اش.
 - (void)drainFinal:(NSString *)text {
     ZEventLogWrite(@{@"k": @"drainfinal", @"text": text ?: @""});
-    _carry = @"";
     BOOL weld = _carryWeld;
     _carryWeld = NO;
     [self commit:text weld:weld];
+    // carry یک‌جا دور ریخته نمی‌شود؛ فقط آن بخشی می‌رود که این متنِ قطعی واقعا
+    // پوشانده. باگِ واقعیِ سشن 03-09-19: interim تا «شونه کار پزشکی خیلی مهم» رفته
+    // بود و carry آن را داشت، ولی متنِ قطعیِ تخلیه کوتاه‌تر بود و carry با آمدنش
+    // یک‌جا نال می‌شد؛ کلمه‌های پزشکی، که در دستِ خودمان بودند، بی‌صدا گم شدند.
+    // اگر همان استریم بی‌هیچ متنی می‌مرد، کل carry را قطعی می‌کردیم؛ حالا که متنی
+    // داده که *کمتر* را می‌پوشاند، منطقی نیست بیشتر دور بریزیم.
+    _drainCommitted = ZJoinText(_drainCommitted, text);
+    _carryShown = ZUncoveredTail(_carry, _drainCommitted);
 }
 
 // تخلیه بسته شد. متن معلقی که جوابی برایش نیامد خودش قطعی می‌شود (بی این، همان چند
@@ -131,16 +156,30 @@
 // متن از قبل داخل pending دیده می‌شد، دیفِ روی صفحه صفر است و کاربر تکانی نمی‌بیند.
 - (void)endDrain {
     ZEventLogWrite(@{@"k": @"drainend"});
-    if (_carry.length) {
-        ZLog(@"transcript: drain gave nothing, carrying %lu chars", (unsigned long)_carry.length);
-        [self commit:_carry weld:_carryWeld];
+    if (_carryShown.length) {
+        ZLog(@"transcript: drain left %lu chars uncovered, keeping them",
+             (unsigned long)_carryShown.length);
+        [self commit:_carryShown weld:_carryWeld];
     }
     _carry = @"";
+    _carryShown = @"";
+    _drainCommitted = @"";
     _carryWeld = NO;
     _draining = NO;
     NSArray *held = [_after copy];
     [_after removeAllObjects];
     for (NSDictionary *d in held) [self commit:d[@"text"] weld:[d[@"weld"] boolValue]];
+}
+
+// پایان سشن: هرچه هنوز خاکستری است قطعی می‌شود. دُمی که هیچ متنِ قطعی‌ای پوشش
+// نداد (عقب‌گردی که هرگز جبران نشد) اینجا می‌نشیند، نه در سطل آشغال.
+- (void)sealPending {
+    [self endDrain];
+    if (_interim.length) {
+        ZLog(@"transcript: sealing %lu grey chars at session end", (unsigned long)_interim.length);
+        [self commit:_interim weld:NO];
+        _interim = @"";
+    }
 }
 
 // انصراف: فقط دُم. رونوشتِ قطعی دست نمی‌خورد و کوتاه کردنش کارِ مصرف‌کننده است، آن هم
@@ -149,6 +188,9 @@
     ZEventLogWrite(@{@"k": @"drop"});
     _interim = @"";
     _carry = @"";
+    _carryShown = @"";
+    _drainCommitted = @"";
+    _carryWeld = NO;
     [_after removeAllObjects];
     _draining = NO;
 }

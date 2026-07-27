@@ -182,6 +182,95 @@ ZSeamMatch ZSeamFind(NSString *a, NSString *b, NSUInteger maxWords) {
     return bestJ ? (ZSeamMatch){bestJ, bestScore} : none;
 }
 
+// ---------- دُمِ نمایشی: هیچ‌وقت جلوی چشم آب نمی‌رود ----------
+// interim گوگل دو جور عقب می‌نشیند و هر دو در ضبط‌های واقعی همین دستگاه هست:
+// عقب‌گرد (دُمِ ناپایدار را دور می‌ریزد و پیشوندِ کوتاه‌تر را دوباره می‌فرستد) و
+// پنجره‌ی لغزان (پیشوندِ تثبیت‌شده را می‌اندازد و فقط دمِ تازه را می‌دهد). روی صفحه
+// هر دو یک شکل بودند: متنِ خاکستری یک‌دفعه پاک می‌شد و کاربر نمی‌دانست برمی‌گردد.
+NSString *ZInterimRatchet(NSString *best, NSString *cur) {
+    NSCharacterSet *ws = NSCharacterSet.whitespaceAndNewlineCharacterSet;
+    best = [(best ?: @"") stringByTrimmingCharactersInSet:ws];
+    cur = [(cur ?: @"") stringByTrimmingCharactersInSet:ws];
+    if (!best.length) return cur;
+    if (!cur.length) return best;
+    if ([best containsString:cur]) return best;   // عقب‌گرد به پیشوند: نگهش دار
+    if ([cur containsString:best]) return cur;    // رشد عادی
+
+    NSArray *A = [best componentsSeparatedByString:@" "];
+    NSArray *B = [cur componentsSeparatedByString:@" "];
+    // هر دو از یک لحظه شروع شده‌اند؟ (سرشان فازی یکی است) پس بازنویسیِ همان بازه
+    // است و بلندتر نمای کامل‌تر است. کوتاه‌تر را نگیر: همان عقب‌گرد است.
+    NSUInteger probe = MIN((NSUInteger)3, MIN(A.count, B.count));
+    double sum = 0, strongest = 0;
+    for (NSUInteger i = 0; i < probe; i++) {
+        double s = ZSeamTokenSim(ZSeamNorm(A[i]), ZSeamNorm(B[i]));
+        sum += s;
+        if (s > strongest) strongest = s;
+    }
+    if (probe && sum / probe >= kZSeamMeanSim && strongest >= kZSeamStrongSim) {
+        return B.count >= A.count ? cur : best;
+    }
+    // پنجره‌ی لغزان: سرِ cur به دمِ best می‌چسبد؟ همان هم‌ترازیِ فازیِ جوش.
+    ZSeamMatch m = ZSeamFind(best, cur, 16);
+    if (m.dropWords >= B.count) return best;
+    if (m.dropWords) {
+        NSArray *rest = [B subarrayWithRange:NSMakeRange(m.dropWords, B.count - m.dropWords)];
+        return [best stringByAppendingFormat:@" %@", [rest componentsJoinedByString:@" "]];
+    }
+    // هیچ نسبتی پیدا نشد. در تردید هر دو می‌مانند: تکرارِ گذرا در متنِ خاکستری بهتر
+    // از حرفی است که جلوی چشم آب می‌شود؛ متنِ قطعیِ بعدی به هر حال جایش را می‌گیرد.
+    return [NSString stringWithFormat:@"%@ %@", best, cur];
+}
+
+// covered را به‌عنوان پیشوندِ فازیِ whole هم‌تراز می‌کند (هر دو از یک لحظه‌ی صوتی
+// شروع شده‌اند) و باقی‌مانده‌ی whole را می‌دهد. هم‌ترازی نامطمئن یعنی خالی: آنجا
+// حکمِ متنِ قطعی بی‌رقیب است و ما چیزی برای ادعا نداریم.
+NSString *ZUncoveredTail(NSString *whole, NSString *covered) {
+    NSCharacterSet *ws = NSCharacterSet.whitespaceAndNewlineCharacterSet;
+    whole = [(whole ?: @"") stringByTrimmingCharactersInSet:ws];
+    covered = [(covered ?: @"") stringByTrimmingCharactersInSet:ws];
+    if (!whole.length) return @"";
+    if (!covered.length) return whole;
+    NSArray *A = [whole componentsSeparatedByString:@" "];
+    NSArray *B = [covered componentsSeparatedByString:@" "];
+    if (B.count + 8 > A.count && [covered containsString:whole]) return @"";
+    if (A.count > 60 || B.count > 60) {
+        // بزرگ‌تر از این یعنی پوشش تقریبا قطعی است؛ هزینه‌ی DP را نمی‌دهیم
+        return B.count >= A.count ? @"" : whole;
+    }
+    NSUInteger n = A.count, m = B.count;
+    NSMutableArray *nA = [NSMutableArray arrayWithCapacity:n];
+    NSMutableArray *nB = [NSMutableArray arrayWithCapacity:m];
+    for (NSString *t in A) [nA addObject:ZSeamNorm(t)];
+    for (NSString *t in B) [nB addObject:ZSeamNorm(t)];
+    double C[61][61];
+    C[0][0] = 0;
+    for (NSUInteger i = 1; i <= n; i++) C[i][0] = (double)i;
+    for (NSUInteger j = 1; j <= m; j++) C[0][j] = (double)j;
+    for (NSUInteger i = 1; i <= n; i++) {
+        for (NSUInteger j = 1; j <= m; j++) {
+            double sub = C[i - 1][j - 1] + (1.0 - ZSeamTokenSim(nA[i - 1], nB[j - 1]));
+            double del = C[i - 1][j] + 1.0;
+            double ins = C[i][j - 1] + 1.0;
+            C[i][j] = MIN(sub, MIN(del, ins));
+        }
+    }
+    // پایانِ آزاد در whole: پوشش تا هر جای آن می‌تواند تمام شود. سر تساوی، iِ بزرگ‌تر
+    // یعنی دمِ کوتاه‌تر، یعنی کمترین ادعا.
+    NSUInteger bestI = 0;
+    double bestCost = 1e9;
+    for (NSUInteger i = 0; i <= n; i++) {
+        if (C[i][m] <= bestCost) {
+            bestCost = C[i][m];
+            bestI = i;
+        }
+    }
+    double score = 1.0 - bestCost / (double)MAX(m, MAX(bestI, (NSUInteger)1));
+    if (score < 0.60 || bestI >= n) return @"";
+    NSArray *rest = [A subarrayWithRange:NSMakeRange(bestI, n - bestI)];
+    return [rest componentsJoinedByString:@" "];
+}
+
 NSString *ZStitchOverlapMax(NSString *a, NSString *b, NSUInteger maxWords) {
     if (!a.length) return b;
     if (!b.length) return a;
