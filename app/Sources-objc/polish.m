@@ -53,6 +53,21 @@ static const NSTimeInterval kPolishFailsafe = 0.40;
     [[s dataTaskWithURL:[NSURL URLWithString:[kPolishBase stringByAppendingString:@"/alive"]]
       completionHandler:^(NSData *d, NSURLResponse *resp, NSError *e) {
         ok = [resp isKindOfClass:NSHTTPURLResponse.class] && ((NSHTTPURLResponse *)resp).statusCode == 200;
+        // هویت، نه فقط زنده‌بودن. باگ واقعی: یک دیمنِ کهنه از مسیر قدیمیِ پروژه (که
+        // دیگر روی دیسک هم نبود) پورت را نگه داشته بود. «کسی جواب می‌دهد؟» بله بود،
+        // پس هیچ‌وقت عوضش نکردیم، و آن نسخه terms.txt نداشت: تاگل واژه‌های لاتین روشن
+        // بود و بی‌صدا هیچ کاری نمی‌کرد، چون نقشه‌ی خالی هیچ چیز را عوض نمی‌کند.
+        // همان قرارداد serve.py روی پورت ۱۷۶۳۵. جواب با root ناهمخوان یعنی غریبه.
+        if (ok && d.length) {
+            NSDictionary *o = [NSJSONSerialization JSONObjectWithData:d options:0 error:nil];
+            NSString *root = [o isKindOfClass:NSDictionary.class] ? o[@"root"] : nil;
+            NSString *mine = ZRes().path;
+            if (![root isKindOfClass:NSString.class] || ![root isEqualToString:mine]) {
+                ZLog(@"polish: پورت ۱۷۶۳۶ دست دیمن دیگری است (root=%@، مال ما %@)؛ "
+                     @"آن را ببند تا نسخه‌ی همراه اپ بالا بیاید", root ?: @"?", mine);
+                ok = NO;
+            }
+        }
         dispatch_semaphore_signal(sem);
     }] resume];
     dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)));
@@ -61,16 +76,20 @@ static const NSTimeInterval kPolishFailsafe = 0.40;
 }
 
 - (void)spawnDaemon {
-    NSString *py = [ZRoot() URLByAppendingPathComponent:@"app/py/.venv/bin/python3"].path;
-    NSString *script = [ZRoot() URLByAppendingPathComponent:@"app/py/polish.py"].path;
+    // اسکریپت همراه اپ می‌آید، ولی venv و مدل‌ها (~۵۰۰ مگ) بیرون بسته می‌مانند
+    NSString *py = [ZSupport() URLByAppendingPathComponent:@"py/.venv/bin/python3"].path;
+    NSString *script = [ZRes() URLByAppendingPathComponent:@"polish.py"].path;
     if (![NSFileManager.defaultManager isExecutableFileAtPath:py]) {
         ZLog(@"polish: venv نیست (%@)؛ یک بار bash app/py/setup.sh را اجرا کن", py);
         return;
     }
+    NSMutableDictionary *env = [NSProcessInfo.processInfo.environment mutableCopy];
+    env[@"ZEMZEME_MODELS"] = [ZSupport() URLByAppendingPathComponent:@"py/models"].path;
     NSTask *p = [NSTask new];
     p.executableURL = [NSURL fileURLWithPath:py];
     p.arguments = @[script];
-    p.currentDirectoryURL = ZRoot();
+    p.environment = env;
+    p.currentDirectoryURL = ZSupport();
     p.standardOutput = NSFileHandle.fileHandleWithNullDevice;
     p.standardError = NSFileHandle.fileHandleWithNullDevice;
     NSError *e = nil;
@@ -106,7 +125,9 @@ static const NSTimeInterval kPolishFailsafe = 0.40;
     NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:
         [NSURL URLWithString:[kPolishBase stringByAppendingString:@"/polish"]]];
     req.HTTPMethod = @"POST";
-    req.HTTPBody = [NSJSONSerialization dataWithJSONObject:@{@"text": raw, @"lang": ZSettings.shared.lang}
+    req.HTTPBody = [NSJSONSerialization dataWithJSONObject:@{@"text": raw,
+                                                             @"lang": ZSettings.shared.lang,
+                                                             @"terms": @(ZSettings.shared.latinTerms)}
                                                    options:0 error:nil];
     __block BOOL called = NO;    // هر دو مسیر روی نخ اصلی؛ قفل لازم نیست
     __weak typeof(self) ws = self;
@@ -138,6 +159,43 @@ static const NSTimeInterval kPolishFailsafe = 0.40;
                    dispatch_get_main_queue(), ^{ finish(raw, @"failsafe"); });
 }
 
+// مسیر دسته‌ای: همگام، با سقف ۸ ثانیه. اینجا کسی منتظر تایپ نیست، پس تایم‌اوت تند
+// مسیر زنده معنا ندارد؛ در عوض اگر دیمن بالا نیامده باشد همان خام برمی‌گردد و اجرا
+// به‌خاطر ویرایش شکست نمی‌خورد.
+- (NSString *)polishSync:(NSString *)raw lang:(NSString *)lang {
+    if (!raw.length || [lang hasPrefix:@"en"] || ![ZPolish hasPersian:raw]) return raw;
+    NSDate *t0 = NSDate.date;
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:
+        [NSURL URLWithString:[kPolishBase stringByAppendingString:@"/polish"]]];
+    req.HTTPMethod = @"POST";
+    req.HTTPBody = [NSJSONSerialization dataWithJSONObject:@{@"text": raw, @"lang": lang,
+                                                             @"terms": @(ZSettings.shared.latinTerms)}
+                                                   options:0 error:nil];
+    req.timeoutInterval = 8;
+    __block NSString *out = nil;
+    __block NSString *outcome = @"empty";
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    [[NSURLSession.sharedSession dataTaskWithRequest:req
+                                  completionHandler:^(NSData *d, NSURLResponse *r, NSError *e) {
+        if (!e && d.length) {
+            NSDictionary *obj = [NSJSONSerialization JSONObjectWithData:d options:0 error:nil];
+            NSString *t = [obj isKindOfClass:NSDictionary.class] &&
+                          [obj[@"text"] isKindOfClass:NSString.class] ? obj[@"text"] : nil;
+            if (t.length) {
+                out = t;
+                outcome = @"ok";
+            }
+        } else if (e) {
+            outcome = e.code == NSURLErrorTimedOut ? @"timeout" : @"down";
+        }
+        dispatch_semaphore_signal(sem);
+    }] resume];
+    dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(9 * NSEC_PER_SEC)));
+    [self log:[@"batch-" stringByAppendingString:outcome]
+           ms:(int)([NSDate.date timeIntervalSinceDate:t0] * 1000) raw:raw out:out ?: raw];
+    return out ?: raw;
+}
+
 // جفت قبل/بعد هر تکه، کنار app.log؛ فایل در .gitignore است
 - (void)log:(NSString *)outcome ms:(int)ms raw:(NSString *)raw out:(NSString *)out {
     static NSDateFormatter *df;
@@ -149,7 +207,7 @@ static const NSTimeInterval kPolishFailsafe = 0.40;
     NSString *entry = [NSString stringWithFormat:@"%@ %@ %dms\n< %@\n> %@\n",
                        [df stringFromDate:NSDate.date], outcome, ms, raw, out];
     NSData *d = [entry dataUsingEncoding:NSUTF8StringEncoding];
-    NSString *path = [ZRoot() URLByAppendingPathComponent:@"polish.log"].path;
+    NSString *path = [ZSupport() URLByAppendingPathComponent:@"polish.log"].path;
     [_logLock lock];
     NSFileHandle *h = [NSFileHandle fileHandleForWritingAtPath:path];
     if (!h) {

@@ -1,0 +1,8 @@
+{"k": "note", "text": "row 1: «جمع» was halved at the cut and both halves fell (sessions/app-2026-07-25-20-37-43)"}
+{"k": "overlap", "sec": 2.0}
+{"k": "interim", "text": "نه حالتی که"}
+{"k": "final", "text": "نه حالتی که جمع", "weld": false}
+{"k": "rotate", "carry": ""}
+{"k": "drainend"}
+{"k": "final", "text": "جمع می‌کنه در پنل در حالت جمع کن", "weld": true}
+{"k": "expect", "text": "نه حالتی که جمع می‌کنه در پنل در حالت جمع کن"}

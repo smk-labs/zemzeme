@@ -4,24 +4,42 @@
 
 // ---------- مسیرها ----------
 
-NSURL *ZRoot(void) {
-    static NSURL *root;
+// دو ریشه جدا، و هیچ مسیر هاردکدی: خواندنی‌ها داخل بسته، نوشتنی‌ها در
+// Application Support. پس بسته هرجا بنشیند (مثلا /Applications) کار می‌کند و
+// پوشه پروژه هم فقط پوشه پروژه می‌ماند.
+
+NSURL *ZRes(void) {
+    static NSURL *res;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        // exe: dictate/Zemzeme.app/Contents/MacOS/zemzeme یا dictate/app/.build/zemzeme
-        NSURL *u = [NSURL fileURLWithPath:NSProcessInfo.processInfo.arguments[0]].URLByResolvingSymlinksInPath;
-        for (int i = 0; i < 4; i++) u = u.URLByDeletingLastPathComponent;
-        if ([NSFileManager.defaultManager fileExistsAtPath:[u URLByAppendingPathComponent:@"serve.py"].path]) {
-            root = u;
-        } else {
-            root = [NSURL fileURLWithPath:[NSHomeDirectory() stringByAppendingPathComponent:@"Projects/hobby/mem/dictate"]];
+        NSURL *b = NSBundle.mainBundle.resourceURL;
+        if ([NSFileManager.defaultManager fileExistsAtPath:[b URLByAppendingPathComponent:@"serve.py"].path]) {
+            res = b;
+            return;
         }
+        // حالت توسعه: باینری خام app/.build/zemzeme، اسکریپت‌ها سه پله بالاتر
+        NSURL *u = [NSURL fileURLWithPath:NSProcessInfo.processInfo.arguments[0]].URLByResolvingSymlinksInPath;
+        for (int i = 0; i < 3; i++) u = u.URLByDeletingLastPathComponent;
+        res = u;
     });
-    return root;
+    return res;
+}
+
+NSURL *ZSupport(void) {
+    static NSURL *dir;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSURL *base = [NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory
+                                                          inDomains:NSUserDomainMask].firstObject;
+        dir = [base URLByAppendingPathComponent:@"Zemzeme"];
+        [NSFileManager.defaultManager createDirectoryAtURL:dir
+                              withIntermediateDirectories:YES attributes:nil error:nil];
+    });
+    return dir;
 }
 
 NSURL *ZSessionsDir(void) {
-    return [ZRoot() URLByAppendingPathComponent:@"sessions"];
+    return [ZSupport() URLByAppendingPathComponent:@"sessions"];
 }
 
 // ---------- لاگ ----------
@@ -42,7 +60,7 @@ void ZLog(NSString *fmt, ...) {
     NSString *line = [NSString stringWithFormat:@"%@ %@\n", [df stringFromDate:NSDate.date], msg];
     NSData *d = [line dataUsingEncoding:NSUTF8StringEncoding];
     [lock lock];
-    NSString *path = [ZRoot() URLByAppendingPathComponent:@"app.log"].path;
+    NSString *path = [ZSupport() URLByAppendingPathComponent:@"app.log"].path;
     NSFileHandle *h = [NSFileHandle fileHandleForWritingAtPath:path];
     if (!h) {
         [NSFileManager.defaultManager createFileAtPath:path contents:d attributes:nil];
@@ -55,6 +73,43 @@ void ZLog(NSString *fmt, ...) {
     }
     [lock unlock];
     fprintf(stderr, "%s", line.UTF8String);
+}
+
+// ---------- صدای کارها ----------
+// نمونه‌ها کش می‌شوند چون ساختن NSSound هر بار از دیسک می‌خواند و روی مسیر کلید
+// تاخیر می‌دهد. قبل از هر پخش stop، وگرنه فشار دادن سریع دو دکمه صدای اول را
+// نصفه رها می‌کند و پخش دوم بی‌صدا می‌ماند.
+void ZPlay(ZSound s) {
+    if (!ZSettings.shared.soundsEnabled) return;
+    static NSDictionary<NSNumber *, NSString *> *names;
+    static NSMutableDictionary<NSString *, NSSound *> *cache;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        names = @{@(ZSoundStart):  @"Bottle",    // روشن شدن
+                  @(ZSoundPause):  @"Tink",      // کوتاه و خنثی
+                  @(ZSoundResume): @"Pop",
+                  @(ZSoundFinish): @"Glass",     // تمام شد و نشست
+                  @(ZSoundInsert): @"Morse",     // درج، ولی هنوز بازیم
+                  @(ZSoundTrash):  @"Basso",     // دور ریختن، عمدا ناخوشایند
+                  @(ZSoundCopy):   @"Purr",
+                  @(ZSoundMode):   @"Submarine",
+                  @(ZSoundLang):   @"Frog",
+                  @(ZSoundPolish): @"Hero"};    // پاس نشست
+        cache = [NSMutableDictionary dictionary];
+    });
+    NSString *n = names[@(s)];
+    if (!n) return;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NSSound *snd = cache[n];
+        if (!snd) {
+            snd = [NSSound soundNamed:n];
+            if (!snd) return;
+            cache[n] = snd;
+        }
+        snd.volume = 0.35f;
+        if (snd.isPlaying) [snd stop];
+        [snd play];
+    });
 }
 
 NSString *ZTimestampId(void) {
@@ -124,8 +179,15 @@ NSFont *ZFont(CGFloat size, BOOL medium) {
 }
 - (void)setInsertMode:(ZInsertMode)m { [self.d setInteger:m forKey:@"insertMode"]; }
 
-- (BOOL)collectMode { return [self.d boolForKey:@"collect"]; }
-- (void)setCollectMode:(BOOL)v { [self.d setBool:v forKey:@"collect"]; }
+// کلید همان «collect» قدیمی است و عمدا عوض نشده: مقدار BOOL ذخیره‌شده‌ی نسخه‌های
+// قبل با integerForKey دقیقا ۰ و ۱ خوانده می‌شود، یعنی همان ZModeLive و ZModeCollect،
+// پس انتخاب کاربر قدیمی بدون هیچ کد مهاجرتی سر جایش می‌ماند. مقدار بیرون از بازه
+// (کلید دستکاری‌شده) به زنده برمی‌گردد، نه به حالتی که کاربر نمی‌شناسد.
+- (ZMode)mode {
+    NSInteger v = [self.d integerForKey:@"collect"];
+    return (v >= ZModeLive && v <= ZModeCursor) ? (ZMode)v : ZModeLive;
+}
+- (void)setMode:(ZMode)v { [self.d setInteger:v forKey:@"collect"]; }
 
 - (BOOL)internalHotkey { return [self.d boolForKey:@"internalHotkey"]; }
 - (void)setInternalHotkey:(BOOL)v { [self.d setBool:v forKey:@"internalHotkey"]; }
@@ -136,12 +198,43 @@ NSFont *ZFont(CGFloat size, BOOL medium) {
 }
 - (void)setPolishEnabled:(BOOL)v { [self.d setBool:v forKey:@"polish"]; }
 
+// پیش‌فرض خاموش: تصمیم اولیه این بود که وام‌واژه دست نخورد، پس برگرداندنش باید
+// انتخاب صریح کاربر باشد نه رفتار پیش‌فرض.
+- (BOOL)latinTerms { return [self.d boolForKey:@"latinTerms"]; }
+- (void)setLatinTerms:(BOOL)v { [self.d setBool:v forKey:@"latinTerms"]; }
+
+- (BOOL)soundsEnabled {
+    NSObject *o = [self.d objectForKey:@"sounds"];
+    return o ? [self.d boolForKey:@"sounds"] : YES;    // پیش‌فرض روشن
+}
+- (void)setSoundsEnabled:(BOOL)v { [self.d setBool:v forKey:@"sounds"]; }
+
+// زبان پیش‌فرض رونویسی فایل، عمدا جدا از lang دیکته‌ی زنده: کسی که همیشه فارسی
+// دیکته می‌کند ممکن است پادکست انگلیسی رونویسی کند، و عوض کردن یکی نباید آن یکی
+// را بچرخاند.
+- (NSString *)batchLang { return [self.d stringForKey:@"batchLang"] ?: @"fa-IR"; }
+- (void)setBatchLang:(NSString *)v { [self.d setObject:v forKey:@"batchLang"]; }
+
+- (BOOL)upstreamFLAC {
+    NSObject *o = [self.d objectForKey:@"upstreamFLAC"];
+    return o ? [self.d boolForKey:@"upstreamFLAC"] : YES;    // پیش‌فرض روشن
+}
+- (void)setUpstreamFLAC:(BOOL)v { [self.d setBool:v forKey:@"upstreamFLAC"]; }
+
 - (ZInsertMode)insertModeForBundleId:(NSString *)bundleId {
-    // استثنای هر اپ؛ Windows App پیش‌فرض پیست می‌گیرد چون فوروارد یونیکد مصنوعی در RDP نامطمئن است
-    NSDictionary *def = @{@"com.microsoft.rdc.macos": @(ZInsertPaste)};
-    NSDictionary *perApp = [self.d dictionaryForKey:@"perApp"] ?: def;
+    // استثنای هر اپ؛ Windows App پیش‌فرض پیست می‌گیرد چون فوروارد یونیکد مصنوعی در RDP نامطمئن است.
+    // ادغام، نه جایگزینی: اولین چیزی که روزی در perApp نوشته شود نباید این پیش‌فرض را ببلعد.
+    NSMutableDictionary *perApp = [@{kZRDPBundleId: @(ZInsertPaste)} mutableCopy];
+    [perApp addEntriesFromDictionary:[self.d dictionaryForKey:@"perApp"] ?: @{}];
     NSNumber *n = bundleId ? perApp[bundleId] : nil;
     return n ? n.integerValue : self.insertMode;
+}
+
+- (void)setInsertMode:(ZInsertMode)m forBundleId:(NSString *)bundleId {
+    if (!bundleId.length) return;
+    NSMutableDictionary *perApp = [[self.d dictionaryForKey:@"perApp"] mutableCopy] ?: [NSMutableDictionary dictionary];
+    perApp[bundleId] = @(m);
+    [self.d setObject:perApp forKey:@"perApp"];
 }
 
 - (useconds_t)typeDelayMicros {

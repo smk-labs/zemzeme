@@ -17,10 +17,33 @@
 
     NSLock *_feedLock;
     ZGoogleStream *_feedTarget;
-    NSMutableData *_preroll;
+    NSMutableData *_replay;      // صدای بعد از آخرین نتیجه؛ سر هر ری‌استارت دوباره پخش می‌شود
+    // حلقه‌ی دم: همیشه آخرین kZRotateOverlapSec ثانیه صدا، مستقل از اینکه نتیجه آمده یا نه.
+    // چرا جدا از _replay: آن یکی سر *هر* فریمِ نتیجه خالی می‌شود و فریم interim چند بار
+    // در ثانیه می‌آید، پس در گفتار عادی همیشه حدود ۰٫۱ تا ۰٫۵ ثانیه است، نه ۱۲ ثانیه.
+    // سقف ۱۲ ثانیه‌اش فقط وقتی پر می‌شود که گوگل لال شده باشد. اندازه‌گیری روی لاگ
+    // واقعی: از ۵ چرخش، هم‌پوشانی ۰٫۰۰ و ۰٫۱۰ و ۰٫۳۱ و ۰٫۵۰ و ۲٫۰۰ ثانیه شد، و همان
+    // چرخش‌های کوتاه دوباره حرف اول کلمه را خوردند («برای» شد «رای»، «که» شد «ه»).
+    NSMutableData *_tailAudio;
     BOOL _voiceInCycle;
 
     NSDate *_lastEventAt;
+    NSDate *_lastResultAt;       // آخرین فریمِ نتیجه‌دار، نه هر فریمی
+    NSTimeInterval _voiceSinceResult;   // جمع ثانیه‌های صدای واقعی از آخرین نتیجه
+    NSDate *_prevLevelAt;        // برای اندازه‌گیری همان جمع
+    NSDate *_stallGraceUntil;    // تا این لحظه استریمِ تازه متهم به گیر کردن نمی‌شود
+
+    // رونوشت. کلِ منطقِ «متن چه شکلی درمی‌آید» آنجاست، نه اینجا: موتور فقط می‌گوید
+    // چه شنید و کِی چرخید. همین جدایی است که بازپخشِ بی‌میکروفن را ممکن می‌کند.
+    ZTranscript *_tx;
+    BOOL _drainGotFinal;
+    NSDate *_lastVoiceAt;        // آخرین لحظه‌ای که واقعا صدا بود؛ برای بریدن در سکوت
+    // جوش به خودِ استریم بسته است، نه به «استریمِ فعلی». باگ واقعی: استریمی که با
+    // هم‌پوشانی شروع شده بود، تا متن قطعی‌اش برسد معمولا خودش چرخیده و در حال تخلیه
+    // بود، و مسیر تخلیه جوش نمی‌زد؛ پس همان چند کلمه دو بار می‌نشستند.
+    __weak ZGoogleStream *_overlapStream;   // با هم‌پوشانی باز شد و هنوز متن قطعی نداده
+    NSTimeInterval _streamPrerollSec;       // صدای کهنه‌ای که این استریم با آن شروع شد
+    BOOL _rotating;                         // openStream بعدی از مسیر چرخش می‌آید، نه ری‌استارت
     NSInteger _endsSinceResult;
     BOOL _gotResultThisCycle;
     NSString *_lastInterim;
@@ -33,44 +56,30 @@
     NSDate *_lastChunkAt;        // واچ‌داگ میکروفن مرده
     NSInteger _micRetries;
     BOOL _paused;
+
+    NSDate *_lastRateLogAt;              // برای لاگ دوره‌ای نرخ آپلود
+    unsigned long long _lastRateLogBytes;
 }
 
 @synthesize delegate;
 @synthesize paused = _paused;
 
-// ادغام دو interim با هم‌پوشانی توکنی: گوگل گاهی پیشوند تثبیت‌شده را از interim های
-// بعدی می‌اندازد؛ موقع نجات، بلندترین نسخه با دم فعلی ادغام می‌شود که کلمه‌ای گم نشود.
-static NSString *ZMergeInterim(NSString *best, NSString *cur) {
-    best = [best stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    cur = [cur stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    if (!best.length) return cur;
-    if (!cur.length) return best;
-    if ([best containsString:cur]) return best;
-    NSArray *a = [best componentsSeparatedByString:@" "];
-    NSArray *b = [cur componentsSeparatedByString:@" "];
-    NSUInteger maxK = MIN(a.count, b.count);
-    for (NSUInteger k = maxK; k > 0; k--) {
-        NSArray *tailA = [a subarrayWithRange:NSMakeRange(a.count - k, k)];
-        NSArray *headB = [b subarrayWithRange:NSMakeRange(0, k)];
-        if ([tailA isEqualToArray:headB]) {
-            NSArray *rest = [b subarrayWithRange:NSMakeRange(k, b.count - k)];
-            return rest.count
-                ? [best stringByAppendingFormat:@" %@", [rest componentsJoinedByString:@" "]]
-                : best;
-        }
-    }
-    return [NSString stringWithFormat:@"%@ %@", best, cur];
-}
+// ZMergeInterim و ZStitchOverlapMax هر دو به seam.m رفتند: سه مصرف‌کننده داشتند
+// (چرخشِ مسیر زنده، درزِ رونویسی فایل، نجاتِ interim) و تعریفشان لای موتور و لای
+// مسیر دسته‌ای پخش بود. حالا یک فایلِ بی‌وابستگی دارند که تست تنهایی کامپایلش می‌کند.
 
 - (instancetype)init {
     if ((self = [super init])) {
         _mic = [ZMic new];
         _feedLock = [NSLock new];
-        _preroll = [NSMutableData data];
+        _replay = [NSMutableData data];
+        _tailAudio = [NSMutableData data];
+        _tx = [ZTranscript new];
         _lastInterim = @"";
         _salvageBest = @"";
         _lang = @"fa-IR";
         _lastLevelAt = NSDate.distantPast;
+        _voiceSinceResult = 0;
     }
     return self;
 }
@@ -101,7 +110,7 @@ static NSString *ZMergeInterim(NSString *best, NSString *cur) {
     if ([l isEqualToString:_lang]) return;
     _lang = [l copy];
     if (!_running) return;
-    [self salvage];
+    [self salvageFrom:_stream];
     _endsSinceResult = 0;
     [_stream cancel];    // مسیر close با زبان جدید ری‌استارت می‌کند
 }
@@ -110,7 +119,7 @@ static NSString *ZMergeInterim(NSString *best, NSString *cur) {
 - (void)pause {
     if (!_running || _paused) return;
     _paused = YES;
-    [self salvage];
+    [self salvageFrom:_stream];
     [_stream cancel];    // مسیر close با گارد paused ری‌استارت نمی‌کند
     [self state:ZEnginePaused msg:@""];
     ZLog(@"engine: paused");
@@ -121,6 +130,11 @@ static NSString *ZMergeInterim(NSString *best, NSString *cur) {
     _paused = NO;
     _endsSinceResult = 0;
     _lastChunkAt = NSDate.date;
+    // صدای پیش از مکث دیگر همسایه‌ی صدای تازه نیست؛ هم‌پوشانی از آن یعنی چسباندن دو
+    // تکه‌ی بی‌ربط به هم
+    [_feedLock lock];
+    _tailAudio.length = 0;
+    [_feedLock unlock];
     [self state:ZEngineConnecting msg:@""];
     [self openStream];
     ZLog(@"engine: resumed");
@@ -130,18 +144,67 @@ static NSString *ZMergeInterim(NSString *best, NSString *cur) {
     BOOL was = _running;
     _running = NO;
     _paused = NO;
-    if (was) [self salvage];
+    // بستن وسط تخلیه: سشن قدیمی هنوز متن قطعی‌اش را نداده و چند خط پایین‌تر cancel
+    // می‌شود؛ بعدش مسیر close آن را «غریبه» می‌بیند (چون _draining نال شده) و متنش
+    // بی‌صدا دور ریخته می‌شود. همان بیمه‌ای که handleClose دارد، اینجا هم لازم است.
+    // چرا حالا بیشتر پیش می‌آید: چرخش منتظر سکوت می‌ماند، و سکوت یعنی حرفت تمام شده،
+    // یعنی دقیقا همان لحظه‌ای که دستت می‌رود سراغ Esc. آخرین چند کلمه قربانی می‌شد.
+    // ترتیب مهم است: carry مال لحظه‌ی چرخش است، پس از salvage (که متن تازه‌تر
+    // استریم فعلی است) قدیمی‌تر است و باید اول برود.
+    // تخلیه دیگر در جریان نیست: متن معلقش و هرچه منتظر نوبت بود همین حالا قطعی
+    // می‌شوند. بستن وسط تخلیه بی این، آخرین چند کلمه را می‌خورد، و از وقتی چرخش
+    // منتظر سکوت می‌ماند دقیقا همان لحظه‌ای است که دست می‌رود سراغ Esc.
+    _draining = nil;
+    if (was) [_tx endDrain];
+    if (was) [self salvageFrom:_stream];
+    // هرچه بعد از نجات هنوز خاکستری مانده (دُمی که هیچ متنِ قطعی‌ای پوشش نداد)
+    // همین‌جا قطعی می‌شود. در حالت زنده که دُم رندر نمی‌شود، بی این یک خط، آن متن
+    // بی‌هیچ ردی گم می‌شد.
+    if (was) [_tx sealPending];
     [_stream cancel];
     [_draining cancel];
     _stream = nil;
     _draining = nil;
     [_feedLock lock];
     _feedTarget = nil;
-    _preroll.length = 0;
+    _replay.length = 0;
+    _tailAudio.length = 0;
     [_feedLock unlock];
+    _overlapStream = nil;
     [self stopMicAndTimers];
+    [self emit];
     [self state:ZEngineIdle msg:@""];
     if (was) ZLog(@"engine: stopped by user");
+}
+
+// انصراف. سه چیز باید همزمان برود، وگرنه حرف‌ها از یکی از راه‌ها برمی‌گردند:
+// متن خاکستری، صدای بازپخش، و خودِ سشن‌های در جریان که همان صدا را دارند و متن
+// قطعی‌شان را می‌فرستند. سشن تازه از همین لحظه شروع می‌کند، پس شنیدن قطع نمی‌شود.
+- (void)dropPending {
+    if (!_running) return;
+    _lastInterim = @"";
+    _salvageBest = @"";
+    _drainGotFinal = YES;      // بیمه‌ی چرخش هم لازم نیست؛ کاربر همین را نمی‌خواهد
+    // رونوشتِ قطعی دست نمی‌خورد. کوتاه کردنش کارِ مصرف‌کننده است و فقط تا جایی که
+    // واقعا درج شده؛ موتور حق ندارد متنی را که تحویل داده پس بگیرد.
+    [_tx dropPending];
+    [self emit];
+    [_feedLock lock];
+    _feedTarget = nil;
+    _replay.length = 0;
+    _tailAudio.length = 0;     // «دور بریز» یعنی صدای هم‌پوشان هم نباید برگردد
+    _voiceSinceResult = 0;
+    [_feedLock unlock];
+    _overlapStream = nil;      // صدای هم‌پوشان هم رفت، جوشی در کار نیست
+    // نال کردن قبل از cancel: مسیر close این‌ها را «غریبه» می‌بیند، پس نه salvage
+    // می‌کند نه ری‌استارت، و متن قطعیِ دیررسشان هم دور ریخته می‌شود.
+    ZGoogleStream *old = _stream, *dr = _draining;
+    _stream = nil;
+    _draining = nil;
+    [old cancel];
+    [dr cancel];
+    ZLog(@"engine: dropped pending text and audio");
+    if (!_paused) [self openStream];
 }
 
 - (void)startMicAndStream {
@@ -152,20 +215,23 @@ static NSString *ZMergeInterim(NSString *best, NSString *cur) {
         s->_lastChunkAt = NSDate.date;
         s->_micRetries = 0;
         if (s->_paused) return;    // در مکث، صدا دور ریخته می‌شود (بافر هم نه)
+        // هر تکه هم به استریم می‌رود هم در بافر بازپخش می‌ماند تا اولین نتیجه برسد.
+        // قبلا فقط صدای «هنوز روی سیم نرفته» نگه داشته می‌شد، که موقع گیر کردن سرور
+        // همیشه خالی بود (سیم سالم بود، سرور جواب نمی‌داد)، پس همان حرف‌ها گم می‌شدند.
         [s->_feedLock lock];
-        ZGoogleStream *t = s->_feedTarget;
-        if (t) {
-            [s->_feedLock unlock];
-            [t feed:pcm];
-        } else {
-            [s->_preroll appendData:pcm];
-            NSUInteger cap = 32000 * 10;    // سقف ۱۰ ثانیه
-            if (s->_preroll.length > cap) {
-                [s->_preroll replaceBytesInRange:NSMakeRange(0, s->_preroll.length - cap)
-                                       withBytes:NULL length:0];
-            }
-            [s->_feedLock unlock];
+        [s->_replay appendData:pcm];
+        if (s->_replay.length > kZReplayCapBytes) {
+            [s->_replay replaceBytesInRange:NSMakeRange(0, s->_replay.length - kZReplayCapBytes)
+                                  withBytes:NULL length:0];
         }
+        [s->_tailAudio appendData:pcm];
+        if (s->_tailAudio.length > kZOverlapCapBytes) {
+            [s->_tailAudio replaceBytesInRange:NSMakeRange(0, s->_tailAudio.length - kZOverlapCapBytes)
+                                     withBytes:NULL length:0];
+        }
+        ZGoogleStream *t = s->_feedTarget;
+        [s->_feedLock unlock];
+        if (t) [t feed:pcm];
     };
     _mic.onLevel = ^(float rms) {
         __strong typeof(ws) s = ws;
@@ -173,8 +239,17 @@ static NSString *ZMergeInterim(NSString *best, NSString *cur) {
         if (rms > 0.07f) {
             [s->_feedLock lock];
             s->_voiceInCycle = YES;
+            // جمع زمان صدای واقعی. سقف ۰٫۵ ثانیه روی هر گام، که بعد از یک وقفه‌ی
+            // طولانی یک‌باره پر نشود و مکث را صدا حساب نکند.
+            NSDate *n = NSDate.date;
+            NSTimeInterval step = s->_prevLevelAt ? [n timeIntervalSinceDate:s->_prevLevelAt] : 0;
+            s->_voiceSinceResult += MIN(MAX(step, 0), 0.5);
+            s->_lastVoiceAt = n;    // چرخش می‌خواهد بداند همین حالا وسط کلمه‌ایم یا نه
             [s->_feedLock unlock];
         }
+        [s->_feedLock lock];
+        s->_prevLevelAt = NSDate.date;
+        [s->_feedLock unlock];
         NSDate *now = NSDate.date;
         if ([now timeIntervalSinceDate:s->_lastLevelAt] > 0.1) {
             s->_lastLevelAt = now;
@@ -206,6 +281,7 @@ static NSString *ZMergeInterim(NSString *best, NSString *cur) {
     _stream = s;
     _streamStartedAt = NSDate.date;
     _lastEventAt = NSDate.date;
+    _lastResultAt = NSDate.date;
     _gotResultThisCycle = NO;
     __weak typeof(self) ws = self;
     __weak ZGoogleStream *wstream = s;
@@ -219,17 +295,44 @@ static NSString *ZMergeInterim(NSString *best, NSString *cur) {
     [_feedLock lock];
     _feedTarget = s;
     _voiceInCycle = NO;
-    NSData *pre = _preroll.length ? [_preroll copy] : nil;
-    _preroll.length = 0;
+    // بازپخش: هرچه بعد از آخرین نتیجه گفته شده دوباره از اول به استریم تازه می‌رود.
+    // پاک نمی‌شود، چون اگر این استریم هم بی‌نتیجه بمیرد باید باز هم دستمان باشد؛
+    // پاک شدنش فقط سر رسیدن نتیجه است، پس نه چیزی گم می‌شود نه تکراری درج می‌شود.
+    NSData *pre = _replay.length ? [_replay copy] : nil;
     [_feedLock unlock];
     if (pre) [s feed:pre];
-    ZLog(@"engine: stream open pair=%@ lang=%@ preroll=%luB", s.pair, _lang, (unsigned long)(pre.length));
+    // هر استریمی که با صدای کهنه شروع شود اولین متن قطعی‌اش تکرار دارد، چه چرخش باشد
+    // چه ری‌استارتِ بعد از مرگ (آنجا هم متنِ همان صدا با salvage تحویل شده). پنجره از
+    // روی طول واقعی همین بازپخش حساب می‌شود، پس هم ۲ ثانیه‌ی چرخش را می‌پوشاند هم
+    // ۱۲ ثانیه‌ی یک گیرِ طولانی، بی‌آنکه هیچ‌کدام پنجره‌ی دیگری را گشاد کند.
+    _streamPrerollSec = pre.length / 32000.0;
+    // جوش فقط برای بازپخشِ چرخش. در مسیر ری‌استارت بعد از مرگ، صدای بازپخش‌شده اصلا
+    // تشخیص داده *نشده* بود (کل دلیل نگه داشتنش همین است)، پس هم‌پوشانیِ متنی وجود
+    // ندارد و پنجره‌ای به عرض همان بازپخش (۸ ثانیه یعنی ۳۲ کلمه) می‌توانست ۳۲ کلمه‌ی
+    // کاملا تازه را با یک تطبیق الکی ببلعد. آنجا متنِ معلق را salvage جدا داده است.
+    _overlapStream = (pre.length && _rotating) ? s : nil;
+    _tx.weldWords = ZStitchWords(kZRotateOverlapSec);
+    _rotating = NO;
+    // استریمی که با بازپخش شروع می‌شود اول باید همان صدای کهنه را بالا بفرستد و
+    // بشنود؛ در آن فاصله نتیجه‌ای نمی‌آید و این «گیر کردن» نیست. بدون این مهلت،
+    // خودِ بازپخش باعث تشخیص گیرِ بعدی می‌شد و حلقه هر دور بدتر می‌شد.
+    _stallGraceUntil = [NSDate dateWithTimeIntervalSinceNow:pre.length / 32000.0 + 2.0];
+    _lastRateLogAt = NSDate.date;
+    _lastRateLogBytes = 0;
+    ZLog(@"engine: stream open pair=%@ lang=%@ engine=google codec=%@ preroll=%luB",
+         s.pair, _lang, s.codecName, (unsigned long)(pre.length));
 }
 
 - (void)handleEvent:(ZSpeechEvent *)ev from:(ZGoogleStream *)s {
     if (!s) return;
     if (s == _draining) {
-        for (NSString *f in ev.finals) [self deliverFinal:f];
+        // متن قطعیِ سشنِ قدیمی جای متن معلقش را می‌گیرد. جوش لازم ندارد: این ادامه‌ی
+        // همان تشخیص است، نه یک تشخیصِ دوم از همان صدا.
+        for (NSString *f in ev.finals) {
+            _drainGotFinal = YES;
+            [_tx drainFinal:f];
+        }
+        if (ev.finals.count) [self emit];
         return;
     }
     if (s != _stream) return;
@@ -240,38 +343,80 @@ static NSString *ZMergeInterim(NSString *best, NSString *cur) {
     if (ev.finals.count || ev.interim.length) {
         _gotResultThisCycle = YES;
         _endsSinceResult = 0;
+        _lastResultAt = NSDate.date;
+        // گوگل تا همین لحظه شنیده و جواب داده؛ بازپخش این صدا از این به بعد فقط
+        // متن تکراری می‌سازد. (تاخیر ~۳۰۰ms نتیجه یعنی همین‌قدر صدا بی‌بیمه می‌ماند،
+        // که هزینه‌اش از ریسک دوباره‌درج شدن یک جمله کمتر است.)
+        [_feedLock lock];
+        _replay.length = 0;
+        _voiceSinceResult = 0;
+        [_feedLock unlock];
     }
     for (NSString *f in ev.finals) {
         _lastInterim = @"";
         _salvageBest = @"";
-        [self deliverFinal:f];
+        [self deliverFinal:f weld:[self takeWeldFor:s]];
     }
     // باگ‌فیکس حذف متن: فریم بدون result (endpointer/status) دیگر interim را پاک نمی‌کند؛
     // فقط فریم‌های نتیجه‌دار حق دست زدن به متن خاکستری دارند.
     if (ev.hasResults && (ev.finals.count || ![ev.interim isEqualToString:_lastInterim])) {
         _lastInterim = [ev.interim copy];
         if (_lastInterim.length > _salvageBest.length) _salvageBest = [_lastInterim copy];
-        [self.delegate engineInterim:_lastInterim];
+        [_tx setInterim:_lastInterim];
+        // اینجا یک بار «پل تخلیه» گذاشته شد (نمایش = معلقِ قدیمی + interim تازه) که
+        // جمله‌ی خاکستری سر چرخش آب نشود. در پنل بی‌خطر بود، در حالت کرسر فاجعه:
+        // آنجا «نمایش» یعنی تایپ واقعی، پس آن رشته‌ی بلند سر کرسر تایپ می‌شد و یک
+        // ثانیه بعد که تخلیه تمام می‌شد با یک مشت Backspace پاک. متن گم نمی‌شد ولی
+        // کاربر می‌دید جمله‌اش کوبیده می‌شود. برداشته شد: مصرف‌کننده‌ای که پاک کردنش
+        // گران است نباید قربانی زیباییِ مصرف‌کننده‌ای شود که پاک کردنش مجانی است.
+        [self emit];
     }
-    if (ev.finals.count && [NSDate.date timeIntervalSinceDate:_streamStartedAt] > 240) {
-        [self rotate];    // چرخش فرصت‌طلبانه سر مرز یک نتیجه قطعی
+    // مرز یک متن قطعی بهترین جای چرخش است: هیچ متن معلقی در کار نیست. ولی «متن قطعی»
+    // یعنی گوگل یک پاره را بست، نه اینکه کاربر ساکت شد؛ وسط جمله هم می‌آید. پس شرط
+    // دوم لازم است: همین حالا صدایی نباشد. اگر پیوسته حرف می‌زند، سقف‌های tick می‌بُرند
+    // و هم‌پوشانی درز را می‌پوشاند.
+    if (ev.finals.count && [self audioAge] > kZRotateAtFinalSec && [self quietNow]) {
+        [self rotate];
     }
+}
+
+// عمر استریم به «ثانیه‌ی صدایی که خورده» است، نه ساعت دیوار. بودجه‌ی سرور همان است:
+// استریمی که با ۸ ثانیه بازپخش باز شود فقط ~۱۶ ثانیه حرف تازه جا دارد، و اگر ساعت
+// دیوار بشماریم ۲۲ ثانیه بعد هنوز خودمان را زیر سقف می‌بینیم در حالی که ۳۰ ثانیه صدا
+// داده‌ایم و سرور مرده. یک بار همین اتفاق افتاد و گیر کردن جای چرخش را گرفت.
+- (NSTimeInterval)audioAge {
+    return [NSDate.date timeIntervalSinceDate:_streamStartedAt] + _streamPrerollSec;
+}
+
+// همین حالا وسط کلمه‌ایم یا نه. تنها معیارِ در دسترسِ درست: آخرین باری که میکروفن
+// صدای واقعی دید (همان آستانه‌ای که _voiceInCycle از آن می‌خواند).
+- (BOOL)quietNow {
+    [_feedLock lock];
+    NSDate *v = _lastVoiceAt;
+    [_feedLock unlock];
+    return !v || [NSDate.date timeIntervalSinceDate:v] > kZRotateQuietSec;
 }
 
 - (void)handleClose:(NSString *)reason from:(ZGoogleStream *)s {
     if (s && s == _draining) {
         _draining = nil;
+        [_tx endDrain];    // متن معلقِ بی‌جواب و هرچه منتظر نوبت بود، همین‌جا می‌نشیند
+        [self emit];
         ZLog(@"engine: drained pair=%@ (%@)", s.pair, reason);
         return;
     }
     if (!s || s != _stream) return;
+    // حمل صدای سیم‌نرفته لازم نبود و برداشته شد: _replay از آن کامل‌تر است، چون صدای
+    // روی‌سیم‌رفته‌ی بی‌جواب را هم دارد و همان بود که گم می‌شد.
     [_feedLock lock];
     if (_feedTarget == s) _feedTarget = nil;
     BOOL hadVoice = _voiceInCycle;
+    NSUInteger replayBytes = _replay.length;
     [_feedLock unlock];
     _stream = nil;
-    ZLog(@"engine: closed pair=%@ reason=%@ result=%d voice=%d", s.pair, reason, _gotResultThisCycle, hadVoice);
-    [self salvage];
+    ZLog(@"engine: closed pair=%@ reason=%@ result=%d voice=%d replay=%.1fs",
+         s.pair, reason, _gotResultThisCycle, hadVoice, replayBytes / 32000.0);
+    [self salvageFrom:s];
     if (!_running || _paused) return;
     if (hadVoice && !_gotResultThisCycle) _endsSinceResult++;
     [self scheduleRestart];
@@ -279,14 +424,18 @@ static NSString *ZMergeInterim(NSString *best, NSString *cur) {
 
 // متن خاکستری معلق را قبل از هر مرگ/ری‌استارت قطعی کن که هیچ‌وقت گم نشود.
 // بلندترین interim این پاره هم با دم فعلی ادغام می‌شود (پنجره لغزان گوگل کلمه نخورد).
-- (void)salvage {
+- (void)salvageFrom:(ZGoogleStream *)s {
     NSString *t = ZMergeInterim(_salvageBest, _lastInterim);
     _lastInterim = @"";
     _salvageBest = @"";
-    [self.delegate engineInterim:@""];
+    // «چیزی برای تحویل ندارم» یعنی همین، نه «هرچه روی صفحه است را پاک کن». این بند
+    // حالا ساختاری است، نه یک احتیاط: نجات فقط می‌تواند رونوشت را رشد بدهد، و راهی
+    // برای کوتاه کردنش ندارد. سر یک طوفان قطعیِ TLS (۱۲ بار بسته شدن در ۴ ثانیه)
+    // نسخه‌ی قدیمی دوازده بار پشت هم «پاک کن» می‌فرستاد و جمله می‌رفت.
+    // پاک کردنِ عمدی فقط کار dropPending است.
     if (!t.length) return;
     ZLog(@"engine: salvaged %lu chars", (unsigned long)t.length);
-    [self deliverFinal:t];
+    [self deliverFinal:t weld:[self takeWeldFor:s]];
 }
 
 - (void)scheduleRestart {
@@ -330,23 +479,95 @@ static NSString *ZMergeInterim(NSString *best, NSString *cur) {
         }
     }
     if (!_stream) return;
-    NSTimeInterval quiet = [NSDate.date timeIntervalSinceDate:_lastEventAt];
-    NSTimeInterval age = [NSDate.date timeIntervalSinceDate:_streamStartedAt];
+    // هر ~۵ ثانیه نرخ واقعی آپلود را لاگ کن که کاهش حجم دیده شود (روی همین تایمر ۲ ثانیه‌ای).
+    NSDate *rnow = NSDate.date;
+    NSTimeInterval sinceRateLog = [rnow timeIntervalSinceDate:_lastRateLogAt];
+    if (sinceRateLog >= 5.0) {
+        unsigned long long cur = _stream.bytesFed;
+        double kbps = sinceRateLog > 0 ? ((double)(cur - _lastRateLogBytes) / 1024.0) / sinceRateLog : 0;
+        ZLog(@"engine: upstream ~%.1f KB/s (codec=%@)", kbps, _stream.codecName);
+        _lastRateLogAt = rnow;
+        _lastRateLogBytes = cur;
+    }
+    NSDate *now = NSDate.date;
+    NSTimeInterval quiet = [now timeIntervalSinceDate:_lastEventAt];
+    // گیر کردن واقعی: سرور زنده است و فریم می‌فرستد، ولی دیگر متنی نمی‌دهد. واچ‌داگ
+    // «سکوت رویداد» این را هیچ‌وقت نمی‌دید، چون فریم endpointer/status حساب رویداد
+    // می‌شد و تایمر را تازه می‌کرد؛ کاربر مجبور بود دستی مکث و ادامه بزند. حالا
+    // معیار درست است: دارد حرف می‌زند ولی نتیجه‌ای نمی‌آید.
+    [_feedLock lock];
+    NSTimeInterval voiced = _voiceSinceResult;
+    [_feedLock unlock];
+    NSTimeInterval sinceResult = [now timeIntervalSinceDate:_lastResultAt];
+    BOOL graced = _stallGraceUntil && [now compare:_stallGraceUntil] == NSOrderedAscending;
+    if (!graced && voiced > kZStallVoiceSec && sinceResult > kZStallSec) {
+        ZLog(@"engine: stalled %.0fs (voice %.1fs) with no result, recycling pair=%@",
+             sinceResult, voiced, _stream.pair);
+        // مسیر close خودش salvage می‌کند و آن درست است: salvage متنی را می‌گیرد که
+        // تا آخرین نتیجه تشخیص داده شده بود، و بازپخش صدای بعد از همان نتیجه است.
+        // مرزشان یکی است، پس نه کلمه‌ای گم می‌شود نه دو بار درج می‌شود.
+        [_stream cancel];
+        return;
+    }
     if (quiet > 12) {
         ZLog(@"engine: watchdog quiet %.0fs, recycling pair=%@", quiet, _stream.pair);
-        [self salvage];
+        [self salvageFrom:_stream];
         [_stream cancel];    // مسیر close ری‌استارت را می‌برد
         return;
     }
-    if (age > 285) [self rotate];    // چرخش اجباری قبل از سقف سرور
+    // چرخش اجباری قبل از سقف ~۳۰ ثانیه‌ای صدای سرور. این مسیر عادی است، نه استثنا:
+    // اگر همیشه قبل از سقف عوض کنیم، هیچ‌وقت به گیر کردن و بازپخش نمی‌رسیم.
+    // اول در اولین سکوت بعد از kZRotateSec؛ اگر پیوسته حرف می‌زند، سر سقف سخت.
+    NSTimeInterval audio = [self audioAge];
+    if (audio > kZRotateSec && [self quietNow]) {
+        [self rotate];
+    } else if (audio > kZRotateHardSec) {
+        ZLog(@"engine: hard rotate at %.0fs of audio, no silence found", audio);
+        [self rotate];
+    }
 }
 
+// چرخش نرم: برعکس مسیر گیر کردن، اینجا آپلود سالم تمام می‌شود، پس سرور همه‌ی صدای
+// کاملی را که گرفته تشخیص می‌دهد. ولی «همه‌ی صدا» شامل نصفِ کلمه‌ی سر درز نیست: هجای
+// ناقصِ آخر را دور می‌ریزد. برای همین به جای خالی کردن بازپخش، آخرین چند ثانیه‌اش را
+// نگه می‌داریم تا استریم تازه همان کلمه را از اولش بشنود. تکرارِ حاصل مشکل نیست،
+// جوشِ متنی (ZTranscript) برش می‌دارد؛ گم شدنِ کلمه مشکل بود.
 - (void)rotate {
     if (!_running || !_stream) return;
     ZGoogleStream *old = _stream;
-    ZLog(@"engine: rotate pair=%@ age=%.0fs", old.pair, [NSDate.date timeIntervalSinceDate:_streamStartedAt]);
-    [_draining cancel];
+    ZLog(@"engine: rotate pair=%@ age=%.0fs audio=%.0fs", old.pair,
+         [NSDate.date timeIntervalSinceDate:_streamStartedAt], [self audioAge]);
+    _rotating = YES;
+    // تخلیه‌ی قبلی هنوز تمام نشده؟ اول تسویه‌اش کن. صرفِ cancel یعنی مسیر close
+    // آن استریم را غریبه ببیند و متن معلقش دور برود.
+    if (_draining) {
+        ZGoogleStream *prev = _draining;
+        _draining = nil;
+        [_tx endDrain];
+        [prev cancel];
+    }
     _draining = old;
+    _drainGotFinal = NO;
+    // متن معلقِ این لحظه می‌رود در carry، و carry جزئی از pending است، پس **روی صفحه
+    // سر جایش می‌ماند**. قبلا اینجا از نمایش غیب می‌شد و اولین interim کوتاهِ سشن تازه
+    // جایش می‌نشست: در گفتار بی‌وقفه یعنی دویست نویسه می‌رفت و پنج نویسه می‌آمد، همان
+    // «یک‌دفعه نصف بیشتر متن پرید». دفترِ salvage پاک می‌شود که همان حرف‌ها دو بار نروند.
+    // پرچمِ جوش مالِ همین استریم است. در گفتار بی‌وقفه سشن پیش از دادن متن قطعی
+    // می‌چرخد، پس اولین متنش از مسیر تخلیه می‌رسد و بی این پرچم جوش نمی‌خورد.
+    [_tx beginDrainWithCarry:ZMergeInterim(_salvageBest, _lastInterim)
+                        weld:[self takeWeldFor:old]];
+    _lastInterim = @"";
+    _salvageBest = @"";
+    [_feedLock lock];
+    // هم‌پوشانی از حلقه‌ی دم می‌آید، نه از _replay: آن یکی سر هر فریمِ نتیجه خالی شده و
+    // معمولا چند صدم ثانیه بیشتر ندارد. هرکدام بلندتر بود همان می‌ماند، پس صدای
+    // بی‌جوابِ یک گیرِ طولانی هم قربانیِ سقفِ دو ثانیه‌ای نمی‌شود.
+    if (_tailAudio.length > _replay.length) [_replay setData:_tailAudio];
+    NSUInteger overlapBytes = _replay.length;
+    _voiceSinceResult = 0;
+    [_feedLock unlock];
+    ZLog(@"engine: rotate overlap %.2fs", overlapBytes / 32000.0);
+    [self emit];    // ترکیب pending عوض شد (interim به carry منتقل شد)، متن همان است
     [old finishUpload];
     __weak typeof(self) ws = self;
     __weak ZGoogleStream *wold = old;
@@ -354,17 +575,33 @@ static NSString *ZMergeInterim(NSString *best, NSString *cur) {
         __strong typeof(ws) s = ws;
         __strong ZGoogleStream *o = wold;
         if (s && o && s->_draining == o) {
+            // فقط cancel. نال کردن _draining اینجا یعنی وقتی handleClose آسنکرون
+            // برسد این استریم را «غریبه» ببیند و متن معلقش بی‌صدا دور
+            // ریخته شود. مسیر close خودش نال می‌کند و carry را هم می‌نشاند.
+            ZLog(@"engine: drain timed out, cancelling pair=%@", o.pair);
             [o cancel];
-            s->_draining = nil;
         }
     });
     [self openStream];
 }
 
-- (void)deliverFinal:(NSString *)text {
-    NSString *t = [text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    if (!t.length) return;
-    [self.delegate engineFinal:t];
+// ---------- پل به رونوشت ----------
+
+- (void)emit {
+    [self.delegate engineDidUpdateCommitted:_tx.committed pending:_tx.pending];
+}
+
+// آیا این استریم همان است که با هم‌پوشانی باز شد و هنوز اولین متن قطعی‌اش نیامده؟
+// فقط همان یک تکه تکرار دارد.
+- (BOOL)takeWeldFor:(ZGoogleStream *)s {
+    if (!s || s != _overlapStream) return NO;
+    _overlapStream = nil;
+    return YES;
+}
+
+- (void)deliverFinal:(NSString *)text weld:(BOOL)weld {
+    [_tx addFinal:text weld:weld];
+    [self emit];
 }
 
 - (void)stopMicAndTimers {
@@ -400,6 +637,8 @@ static NSString *const kRelayBase = @"http://127.0.0.1:17635";
     BOOL _running;
     BOOL _paused;
     NSURLSession *_session;
+    NSMutableString *_committed;   // همان قرارداد رونوشت، برای موتور فال‌بک
+    NSString *_pending;
     NSURLSessionDataTask *_sseTask;
     NSMutableData *_sseBuf;
     NSTimer *_hbTimer;
@@ -412,6 +651,8 @@ static NSString *const kRelayBase = @"http://127.0.0.1:17635";
 - (instancetype)init {
     if ((self = [super init])) {
         _sseBuf = [NSMutableData data];
+        _committed = [NSMutableString string];
+        _pending = @"";
         _lastPageSeen = NSDate.distantPast;
         _lang = @"fa-IR";
     }
@@ -444,6 +685,17 @@ static NSString *const kRelayBase = @"http://127.0.0.1:17635";
     [self.delegate engineState:ZEngineConnecting message:@""];
 }
 
+// انصراف در موتور فال‌بک: خودِ صفحه کروم متن معلق را نگه داشته، پس تشخیصش stop و
+// start می‌شود که آن متن آنجا هم دور برود، نه فقط روی پنل.
+- (void)dropPending {
+    if (!_running) return;
+    _pending = @"";
+    [self emit];
+    [self cmd:@{@"kind": @"cmd", @"cmd": @"stop"}];
+    if (!_paused) [self cmd:@{@"kind": @"cmd", @"cmd": @"start"}];
+    ZLog(@"relay: dropped pending text");
+}
+
 - (void)stop {
     _running = NO;
     _paused = NO;
@@ -457,27 +709,53 @@ static NSString *const kRelayBase = @"http://127.0.0.1:17635";
     [self.delegate engineState:ZEngineIdle message:@""];
 }
 
-+ (BOOL)ping {
-    __block BOOL ok = NO;
+// ۲۰۰ خالی هویت نیست: /alive باید root همین نسخه را برگرداند، وگرنه یک پروسه
+// جامانده (نسخه قدیمی یا چک‌اوت دیگر) جای سرور ما جواب می‌دهد، GET / از پوشه غلط
+// می‌آید و spawn تازه هم چون bind نمی‌شود بی‌صدا می‌میرد.
+typedef NS_ENUM(NSInteger, ZRelayPing) {
+    ZRelayDown,      // جوابی نیامد: پورت آزاد است، spawn مجاز
+    ZRelayOurs,      // سرور خودمان: root همخوان
+    ZRelayForeign,   // پورت دست دیگری است: spawn بی‌فایده، تعارض را گزارش کن
+};
+
++ (ZRelayPing)ping:(NSString **)pidOut {
+    __block ZRelayPing result = ZRelayDown;
+    __block NSString *pid = nil;
     dispatch_semaphore_t sem = dispatch_semaphore_create(0);
     NSURLSessionConfiguration *cfg = NSURLSessionConfiguration.ephemeralSessionConfiguration;
     cfg.timeoutIntervalForRequest = 1;
     NSURLSession *s = [NSURLSession sessionWithConfiguration:cfg];
     [[s dataTaskWithURL:[NSURL URLWithString:[kRelayBase stringByAppendingString:@"/alive"]]
       completionHandler:^(NSData *d, NSURLResponse *resp, NSError *e) {
-        ok = [resp isKindOfClass:NSHTTPURLResponse.class] && ((NSHTTPURLResponse *)resp).statusCode == 200;
+        if ([resp isKindOfClass:NSHTTPURLResponse.class]) {
+            NSDictionary *obj = d ? [NSJSONSerialization JSONObjectWithData:d options:0 error:nil] : nil;
+            NSString *root = [obj isKindOfClass:NSDictionary.class] &&
+                             [obj[@"root"] isKindOfClass:NSString.class] ? obj[@"root"] : nil;
+            id p = [obj isKindOfClass:NSDictionary.class] ? obj[@"pid"] : nil;
+            if ([p isKindOfClass:NSNumber.class] || [p isKindOfClass:NSString.class]) pid = [p description];
+            BOOL ours = ((NSHTTPURLResponse *)resp).statusCode == 200 && root &&
+                        ([root isEqualToString:ZRes().path] ||
+                         [root isEqualToString:ZRes().URLByResolvingSymlinksInPath.path]);
+            result = ours ? ZRelayOurs : ZRelayForeign;
+            if (!ours) ZLog(@"relay: 17635 answered but not ours (status=%ld root=%@ pid=%@)",
+                            (long)((NSHTTPURLResponse *)resp).statusCode, root, pid);
+        }
         dispatch_semaphore_signal(sem);
     }] resume];
     dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)));
     [s invalidateAndCancel];
-    return ok;
+    if (pidOut) *pidOut = pid;
+    return result;
 }
 
 + (void)spawnServer {
     NSTask *p = [NSTask new];
     p.executableURL = [NSURL fileURLWithPath:@"/usr/bin/env"];
-    p.arguments = @[@"python3", [ZRoot() URLByAppendingPathComponent:@"serve.py"].path];
-    p.currentDirectoryURL = ZRoot();
+    p.arguments = @[@"python3", [ZRes() URLByAppendingPathComponent:@"serve.py"].path];
+    NSMutableDictionary *env = [NSProcessInfo.processInfo.environment mutableCopy];
+    env[@"ZEMZEME_DATA"] = ZSupport().path;   // صفحه از بسته می‌آید، داده بیرون می‌نشیند
+    p.environment = env;
+    p.currentDirectoryURL = ZSupport();
     p.standardOutput = NSFileHandle.fileHandleWithNullDevice;
     p.standardError = NSFileHandle.fileHandleWithNullDevice;
     NSError *e = nil;
@@ -489,7 +767,8 @@ static NSString *const kRelayBase = @"http://127.0.0.1:17635";
 }
 
 + (void)openPage {
-    if (![self ping]) [self spawnServer];
+    // فقط وقتی پورت واقعا آزاد است spawn کن؛ روی پورت اشغال، بچه فقط می‌میرد
+    if ([self ping:NULL] == ZRelayDown) [self spawnServer];
     NSTask *p = [NSTask new];
     p.executableURL = [NSURL fileURLWithPath:@"/usr/bin/open"];
     p.arguments = @[@"-g", @"-na", @"Google Chrome", @"--args",
@@ -500,8 +779,23 @@ static NSString *const kRelayBase = @"http://127.0.0.1:17635";
 - (void)ensureServer:(NSInteger)attempt {
     __weak typeof(self) ws = self;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-        if ([ZChromeRelayEngine ping]) {
+        NSString *pid = nil;
+        ZRelayPing st = [ZChromeRelayEngine ping:&pid];
+        if (st == ZRelayOurs) {
             dispatch_async(dispatch_get_main_queue(), ^{ [ws serverReady]; });
+            return;
+        }
+        if (st == ZRelayForeign) {
+            // پورت دست پروسه دیگری است (معمولا سرور جامانده از نسخه قبل).
+            // spawn تازه bind نمی‌شود و بی‌صدا می‌میرد؛ به جای دور باطل، رک بگو.
+            NSString *msg = pid.length
+                ? [NSString stringWithFormat:@"پورت ۱۷۶۳۵ دست یک سرور دیگر است؛ در ترمینال ببندش: kill %@", pid]
+                : @"پورت ۱۷۶۳۵ دست پروسه دیگری است؛ در ترمینال: lsof -i :17635";
+            dispatch_async(dispatch_get_main_queue(), ^{
+                __strong typeof(ws) s = ws;
+                if (!s || !s->_running) return;
+                [s.delegate engineState:ZEngineGaveUp message:msg];
+            });
             return;
         }
         if (attempt == 0) [ZChromeRelayEngine spawnServer];
@@ -564,11 +858,17 @@ static NSString *const kRelayBase = @"http://127.0.0.1:17635";
         s->_lastPageSeen = NSDate.date;
         if ([kind isEqualToString:@"interim"]) {
             NSString *t = [obj[@"text"] isKindOfClass:NSString.class] ? obj[@"text"] : @"";
-            [s.delegate engineInterim:t];
+            // همان راچتِ موتور اصلی: عقب‌گردِ interim نمایش را پاک نکند
+            s->_pending = ZInterimRatchet(s->_pending, t);
+            [s emit];
             [s.delegate engineLevel:0.4f];
         } else if ([kind isEqualToString:@"final"]) {
             NSString *t = [obj[@"text"] isKindOfClass:NSString.class] ? obj[@"text"] : @"";
-            if (t.length) [s.delegate engineFinal:t];
+            if (t.length) {
+                [s->_committed setString:ZJoinText(s->_committed, t)];
+                s->_pending = @"";
+                [s emit];
+            }
         } else if ([kind isEqualToString:@"state"]) {
             NSString *st = [obj[@"state"] isKindOfClass:NSString.class] ? obj[@"state"] : @"";
             if ([st isEqualToString:@"listening"]) {
@@ -586,6 +886,10 @@ static NSString *const kRelayBase = @"http://127.0.0.1:17635";
             }
         }
     });
+}
+
+- (void)emit {
+    [self.delegate engineDidUpdateCommitted:_committed pending:_pending];
 }
 
 - (void)cmd:(NSDictionary *)obj {

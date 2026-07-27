@@ -1,0 +1,7 @@
+{"k": "note", "text": "target left the front: text waits in the ledger, then lands in one go"}
+{"k": "final", "text": "جمله‌ی اول", "weld": false}
+{"k": "away"}
+{"k": "final", "text": "جمله‌ی دوم", "weld": false}
+{"k": "final", "text": "جمله‌ی سوم", "weld": false}
+{"k": "back"}
+{"k": "expect", "text": "جمله‌ی اول جمله‌ی دوم جمله‌ی سوم"}

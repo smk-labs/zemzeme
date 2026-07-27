@@ -2,16 +2,23 @@
 """Static server for the dictation page + POST /paste:
 copies text to clipboard, closes the frontmost (dictation) window with Cmd+W,
 then pastes with Cmd+V into the app that regains focus."""
+import errno
+import http.client
 import http.server
 import json
+import os
 import queue
 import subprocess
+import sys
 import threading
 import time
-import os
 
-ROOT = os.path.dirname(os.path.abspath(__file__))
-SESSIONS = os.path.join(ROOT, "sessions")
+# realpath نه abspath: این مسیر هویت سرور است (در /alive برمی‌گردد و اپ با آن
+# «سرور خودمان» را از پروسه جامانده تشخیص می‌دهد)، پس باید بدون سیم‌لینک و پایدار باشد
+ROOT = os.path.dirname(os.path.realpath(__file__))   # صفحه از همین‌جا سرو می‌شود
+# بسته اپ خواندنی است، پس داده جای دیگری می‌نشیند؛ اپ مسیر را با ZEMZEME_DATA می‌دهد
+DATA = os.environ.get("ZEMZEME_DATA") or ROOT
+SESSIONS = os.path.join(DATA, "sessions")
 os.makedirs(SESSIONS, exist_ok=True)
 PORT = 17635
 
@@ -65,7 +72,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                         CLIENTS.discard(q)
                     return
         elif self.path.startswith("/alive"):
-            body = json.dumps({"age": time.time() - LAST_LIVE["t"]}).encode()
+            # هویت، نه فقط زنده‌بودن: root و pid می‌گویند «کدام» سرور جواب می‌دهد.
+            # اپ (engines.m) فقط جواب با root همخوان را سرور خودش می‌داند.
+            body = json.dumps({"age": time.time() - LAST_LIVE["t"],
+                               "root": ROOT, "pid": os.getpid()}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -87,7 +97,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         elif self.path == "/log":
             length = int(self.headers.get("Content-Length", 0))
             line = self.rfile.read(length).decode("utf-8", "replace")
-            with open(os.path.join(ROOT, "log.txt"), "a") as f:
+            with open(os.path.join(DATA, "log.txt"), "a") as f:
                 f.write(time.strftime("%H:%M:%S ") + line + "\n")
             self.send_response(200)
             self.end_headers()
@@ -115,4 +125,24 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
 
 
-http.server.ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
+# bind شکست‌خورده باید بلند بمیرد، نه بی‌صدا: پورت گرفته یعنی یک نسخه دیگر (معمولا
+# جامانده از سشن قبل) دارد جواب می‌دهد و این پروسه هیچ کاره است. از /alive خودش
+# می‌پرسیم کیست تا پیام، مقصر را با pid و مسیر نام ببرد.
+try:
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+except OSError as e:
+    if e.errno != errno.EADDRINUSE:
+        sys.exit(f"zemzeme serve.py: bind 127.0.0.1:{PORT} failed: {e}")
+    who = ""
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", PORT, timeout=1)
+        conn.request("GET", "/alive")
+        info = json.loads(conn.getresponse().read())
+        if info.get("root") == ROOT:
+            sys.exit(f"zemzeme serve.py: already running for {ROOT} "
+                     f"(pid {info.get('pid', '?')})")
+        who = f" by pid {info.get('pid', '?')} serving {info.get('root', 'unknown root')}"
+    except Exception:
+        pass  # صاحب پورت HTTP نیست یا /alive ندارد؛ پیام عمومی کافی است
+    sys.exit(f"zemzeme serve.py: port {PORT} is taken{who}; free it (lsof -i :{PORT})")
+server.serve_forever()

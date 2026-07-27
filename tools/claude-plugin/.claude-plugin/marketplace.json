@@ -1,0 +1,16 @@
+{
+  "name": "zemzeme-local",
+  "owner": {
+    "name": "Seyed M. Keramati"
+  },
+  "metadata": {
+    "description": "Local marketplace living inside the zemzeme repo. Holds the transcribe plugin."
+  },
+  "plugins": [
+    {
+      "name": "transcribe",
+      "source": "./",
+      "description": "Transcribe audio and video files to text with the local Zemzeme backend."
+    }
+  ]
+}

@@ -1,0 +1,83 @@
+# نقشه‌ی وام‌واژه‌های فنی: املای فارسی که گوگل می‌نویسد ← لاتین.
+# فقط وقتی تاگل «واژه‌های لاتین» روشن باشد اعمال می‌شود.
+#
+# قاعده‌ی این فایل: فقط واژه‌ای بیاید که در فارسی هیچ معنای دیگری ندارد.
+# «پست» (post) نیامده چون پستِ فارسی هم هست. «مرج» نیامده چون مرغزار هم هست.
+# «تیم» نیامده چون خودش فارسی شده. اگر واژه‌ای دوپهلوست، نیاور.
+# قالب هر خط: فارسی<tab>لاتین
+
+کامیت	commit
+کامیت‌ها	commits
+پول‌ریکوئست	pull request
+پول ریکوئست	pull request
+ریپازیتوری	repository
+ریپو	repo
+برنچ	branch
+برنچ‌ها	branches
+ریبیس	rebase
+دیپلوی	deploy
+دیپلویمنت	deployment
+رول‌بک	rollback
+پایپ‌لاین	pipeline
+پایپ لاین	pipeline
+بیلد	build
+دیباگ	debug
+لاگ	log
+لاگ‌ها	logs
+اندپوینت	endpoint
+اندپوینت‌ها	endpoints
+ای‌پی‌آی	API
+بک‌اند	backend
+بک اند	backend
+فرانت‌اند	frontend
+فرانت اند	frontend
+دیتابیس	database
+کوئری	query
+کوئری‌ها	queries
+ایندکس	index
+کش	cache
+تایم‌اوت	timeout
+ریکوئست	request
+ریسپانس	response
+توکن	token
+پیلود	payload
+وبهوک	webhook
+وب‌هوک	webhook
+کانفیگ	config
+اسکریپت	script
+فانکشن	function
+پارامتر	parameter
+آرگومان	argument
+کامپوننت	component
+پراپ	prop
+استیت	state
+رندر	render
+لایبرری	library
+فریمورک	framework
+پکیج	package
+دیپندنسی	dependency
+ورژن	version
+ریلیز	release
+پچ	patch
+فیچر	feature
+باگ	bug
+ایشو	issue
+تسک	task
+اسپرینت	sprint
+بکلاگ	backlog
+ددلاین	deadline
+میتینگ	meeting
+اسلک	Slack
+نوشن	Notion
+فیگما	Figma
+گیت‌هاب	GitHub
+گیت لب	GitLab
+گیت‌لب	GitLab
+داکر	Docker
+کوبرنتیز	Kubernetes
+کوبرنتیس	Kubernetes
+پایتون	Python
+جاوااسکریپت	JavaScript
+تایپ‌اسکریپت	TypeScript
+ری‌اکت	React
+سوئیفت	Swift

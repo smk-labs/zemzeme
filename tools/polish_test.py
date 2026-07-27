@@ -9,6 +9,7 @@
 #            گزارش‌شده)، پاسِ دوباره no-op باشد (ایدمپوتنت)، علامت چسبیده به علامت نباشد
 #   soft   — انتظار نقطه‌گذاری؛ رد شدنش فقط WARN است نه FAIL
 import json
+import os
 import re
 import statistics
 import subprocess
@@ -100,11 +101,13 @@ def alive(timeout=1.5):
 def ensure_daemon():
     st = alive()
     if st is None:
-        py = ROOT / "app/py/.venv/bin/python3"
-        script = ROOT / "app/py/polish.py"
+        support = Path.home() / "Library/Application Support/Zemzeme"
+        py = support / "py/.venv/bin/python3"
+        script = ROOT / "app/py/polish.py"   # تست همیشه سورس را می‌سنجد، نه نسخه بسته
         if not py.exists():
             sys.exit("venv نیست؛ اول: bash app/py/setup.sh")
-        subprocess.Popen([str(py), str(script)], cwd=ROOT,
+        env = {**os.environ, "ZEMZEME_MODELS": str(support / "py/models")}
+        subprocess.Popen([str(py), str(script)], cwd=ROOT, env=env,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     t0 = time.time()
     while time.time() - t0 < 180:
