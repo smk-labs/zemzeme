@@ -60,6 +60,9 @@ static NSString *ZGThinking(void) {
     NSString *_key;
     BOOL _keyChecked;    // یک بار پرسیده شد؛ «نبود» هم جواب است و دوباره پرسیده نمی‌شود
     NSLock *_keyLock;    // کلید، و حالتِ لغو و تسکِ در پرواز: هر سه زیر همین یک قفل
+    // ...و این یکی فقط دور خودِ *پرسش*. جدا از `_keyLock` و عمدا: آن قفل نباید در طول
+    // یک پرسشِ چندثانیه‌ای گرفته بماند (لغو و تسکِ در پرواز هم زیر همان‌اند).
+    NSLock *_fetchLock;
     NSLock *_logLock;
     BOOL _cancelled;
     NSURLSessionTask *_liveTask;
@@ -76,6 +79,7 @@ static NSString *ZGThinking(void) {
 - (instancetype)init {
     if ((self = [super init])) {
         _keyLock = [NSLock new];
+        _fetchLock = [NSLock new];
         _logLock = [NSLock new];
     }
     return self;
@@ -131,12 +135,30 @@ static NSString *ZKeyFromSecurityTool(void) {
 }
 
 // ممکن است Keychain پنجره‌ی اجازه باز کند و بلوکه شود، پس هیچ‌وقت روی نخ اصلی نه.
+//
+// و **تک‌پرواز**: در هر لحظه فقط یک پرسش در جریان است. باگ واقعی و دیدنی بود، چون
+// خروجی‌اش پنجره‌ی اجازه‌ی مک است نه یک خط لاگ. `_keyChecked` فقط *بعد* از تمام شدنِ
+// پرسش ست می‌شود و قفل در طول خودِ پرسش باز بود، پس دو فراخوانِ نزدیک به هم هر دو
+// «هنوز پرسیده نشده» می‌دیدند و هر دو می‌پرسیدند: دو دیالوگ روی هم برای یک کلید.
+// و فراخوان کم نیست: `hasKey` روی نخ اصلی هر بار که جواب نداشته باشد یک `prefetchKey`
+// می‌اندازد، و منو و کارت راهنما و شروع سشن و دو در تازه‌ی بهبود پرامپت همه صدایش
+// می‌زنند. باز کردن منو دو بار پشت هم کافی بود.
 - (NSString *)key {
     [_keyLock lock];
     NSString *k = _key;
     BOOL checked = _keyChecked;
     [_keyLock unlock];
     if (k.length || checked) return k.length ? k : nil;
+    [_fetchLock lock];
+    // نفر دوم پشت در ایستاده بود؛ حالا که نوبتش شده جواب از قبل آماده است
+    [_keyLock lock];
+    k = _key;
+    checked = _keyChecked;
+    [_keyLock unlock];
+    if (k.length || checked) {
+        [_fetchLock unlock];
+        return k.length ? k : nil;
+    }
     k = NSProcessInfo.processInfo.environment[@"GEMINI_API_KEY"];
     k = [k stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (!k.length) k = ZKeyFromKeychain();
@@ -145,6 +167,7 @@ static NSString *ZKeyFromSecurityTool(void) {
     _keyChecked = YES;
     if (k.length) _key = [k copy];
     [_keyLock unlock];
+    [_fetchLock unlock];
     return k.length ? k : nil;
 }
 

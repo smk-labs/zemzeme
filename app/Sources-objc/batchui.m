@@ -162,6 +162,7 @@ static NSString *ZClock(double sec) {
     // پرامپت نشسته و همان دکمه این بار برمی‌گرداندش. جای میان‌برِ `R` را می‌گیرد: این
     // پنجره میان‌بر ندارد، پس چرخش باید روی خودِ دکمه سوار شود.
     NSString *_preEnhance;
+    NSString *_enhanced;      // خودِ پرامپت، تا چرخش بی‌تماسِ تازه در هر دو جهت کار کند
     NSArray<NSButton *> *_bar;
     NSMutableArray<ZBatchRow *> *_rows;
     ZBatchJob *_job;
@@ -741,10 +742,11 @@ static NSString *ZClock(double sec) {
 - (void)setEditorText:(NSString *)t {
     _editor.string = t ?: @"";
     _autoText = _editor.string;
-    // هر نوشتنِ تازه، برگشتِ بهبود پرامپت را باطل می‌کند. یک جا و نه هفت جا: چسباندن،
+    // هر نوشتنِ تازه، چرخشِ بهبود پرامپت را باطل می‌کند. یک جا و نه هفت جا: چسباندن،
     // پاس نهایی، تاریخچه و پایان کار همه از همین رد می‌شوند، و «متن دیکته را برگردان»
     // که متنِ یک صفِ دیگر را برگرداند، بدترین شکلِ ممکن است.
     _preEnhance = nil;
+    _enhanced = nil;
     [_editor scrollRangeToVisible:NSMakeRange(0, 0)];
     [self syncButtons];
 }
@@ -860,17 +862,27 @@ static NSString *ZGeminiMime(NSURL *url) {
 }
 
 // ---------- بهبود پرامپت (بتا) ----------
-// یک دکمه، دو کار، و همان قاعده‌ی پنل شناور: متن دیکته همیشه می‌ماند. بار اول پرامپت
-// می‌سازد، بار دوم متن دیکته را برمی‌گرداند. اینجا میان‌بری نیست که مثل `R` بچرخد، پس
-// چرخش روی خودِ دکمه سوار شده و آیکون هم عوض می‌شود تا دروغ نگوید.
+// یک دکمه، دو کار، و همان قاعده‌ی پنل شناور: متن دیکته همیشه می‌ماند. اینجا میان‌بری
+// نیست که مثل `R` بچرخد، پس چرخش روی خودِ دکمه سوار شده و آیکون هم عوض می‌شود.
+//
+// و **واقعا** می‌چرخد، در هر دو جهت. نسخه‌ی اول فقط `_preEnhance` را نگه می‌داشت: بار
+// دوم متن دیکته برمی‌گشت و پرامپت دور ریخته می‌شد، پس بار سوم مدل را دوباره صدا
+// می‌زد. یعنی هم تولتیپ («پرامپت از دست نمی‌رود») دروغ بود، هم هر رفت‌وبرگشت یک
+// درخواست از سهم می‌خورد. دو رشته نگه داشتن ارزان‌تر از یک تماس شبکه است.
 - (void)tapEnhance {
     if (_polishing) return;
-    if (_preEnhance) {
-        NSString *back = _preEnhance;
-        _preEnhance = nil;
-        [self setEditorText:back];
-        [self flash:@"متن دیکته برگشت"];
-        return;
+    if (_preEnhance || _enhanced) {
+        BOOL showingPrompt = _enhanced && [_editor.string isEqualToString:_enhanced];
+        NSString *to = showingPrompt ? _preEnhance : _enhanced;
+        if (to.length) {
+            NSString *keepPre = _preEnhance, *keepOut = _enhanced;
+            [self setEditorText:to];    // این هر دو را صفر می‌کند، پس بعدش برشان می‌گردانیم
+            _preEnhance = keepPre;
+            _enhanced = keepOut;
+            [self syncButtons];
+            [self flash:showingPrompt ? @"متن دیکته" : @"پرامپت"];
+            return;
+        }
     }
     NSString *raw = _editor.string;
     if (!raw.length) {
@@ -904,7 +916,8 @@ static NSString *ZGeminiMime(NSURL *url) {
             return;
         }
         [s setEditorText:r.text];
-        s->_preEnhance = raw;    // بعد از setEditorText، چون آن یکی صفرش می‌کند
+        s->_preEnhance = raw;    // بعد از setEditorText، چون آن یکی صفرشان می‌کند
+        s->_enhanced = r.text;
         ZPlay(ZSoundPolish);
         [s flash:[NSString stringWithFormat:@"پرامپت آماده شد · %@ ثانیه (همین دکمه، متن دیکته را برمی‌گرداند)",
                   ZFaDigits([NSString stringWithFormat:@"%.0f", r.seconds])]];
@@ -1044,10 +1057,12 @@ static NSString *ZGeminiMime(NSURL *url) {
     // الان کدام کار را می‌کند، وگرنه دکمه‌ای که دو کار دارد و یک چهره، دروغ می‌گوید.
     _btnEnhance.hidden = !ZSettings.shared.enhanceEnabled;
     _btnEnhance.enabled = _editor.string.length > 0 && !_polishing;
-    [self setButton:_btnEnhance symbol:_preEnhance ? @"arrow.uturn.backward" : @"curlybraces"];
-    _btnEnhance.toolTip = _preEnhance
-        ? @"برگشت به متن دیکته (پرامپت از دست نمی‌رود، دوباره همین دکمه)"
-        : @"بهبود پرامپت (بتا): همین متن، به یک پرامپت آماده برای ایجنت";
+    BOOL showingPrompt = _enhanced.length && [_editor.string isEqualToString:_enhanced];
+    [self setButton:_btnEnhance symbol:_preEnhance ? @"arrow.2.squarepath" : @"curlybraces"];
+    _btnEnhance.toolTip = !_preEnhance
+        ? @"بهبود پرامپت (بتا): همین متن، به یک پرامپت آماده برای ایجنت"
+        : showingPrompt ? @"نمایش متن دیکته (بی تماس تازه؛ همین دکمه برمی‌گرداند)"
+                        : @"نمایش پرامپت (بی تماس تازه)";
     _btnCopy.enabled = _editor.string.length > 0;
     _btnSave.enabled = _editor.string.length > 0;
     _btnHistory.enabled = YES;

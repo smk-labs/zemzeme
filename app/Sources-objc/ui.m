@@ -621,13 +621,16 @@ static NSString *ZClock(NSTimeInterval sec) {
 
     // چیپ: سه معنی، هیچ‌وقت هم‌زمان. نسخه‌ی متن در بازبینی، ساعتِ ضبط در یادداشت،
     // شمارِ صف در تسمه‌نقاله.
+    // صف اول از همه، و فقط در حالت‌های بی‌ادیتور: آن عدد یعنی «متنی هست که هنوز درج
+    // نشده» و کارِ کاربر را عوض می‌کند، ولی نامِ نسخه فقط خبر می‌دهد. پیش از این نامِ
+    // نسخه مقدم بود و در حالت زنده، اولین بهبود پرامپت شمارِ صف را از روی نوار برمی‌داشت.
     NSString *chip = @"";
-    if (m.versions > 1 && m.versionName.length) {
+    if (!editor && m.queued > 0) {
+        chip = [ZFaDigits([NSString stringWithFormat:@"%ld", (long)m.queued]) stringByAppendingString:@" در صف"];
+    } else if (m.versions > 1 && m.versionName.length) {
         chip = m.versionName;
     } else if (m.elapsed > 0) {
         chip = ZClock(m.elapsed);
-    } else if (!editor && m.queued > 0) {
-        chip = [ZFaDigits([NSString stringWithFormat:@"%ld", (long)m.queued]) stringByAppendingString:@" در صف"];
     }
     _chipBg.toolTip = (m.waitingForTarget && m.targetName.length)
         ? [NSString stringWithFormat:@"برگرد به %@ تا درج ادامه پیدا کند، یا Command راست و I بزن که همینجا درج شود", m.targetName]
@@ -1595,6 +1598,15 @@ static NSString *ZModeLabel(ZMode m) {
     if (_finished) return;
     _finished = YES;
     _finishing = NO;
+    // بهبود پرامپتِ در پرواز همین‌جا می‌میرد. مسیر خروجِ اپ مستقیم به اینجا می‌آید، و
+    // یک آپلودِ رهاشده نه فقط بی‌مصرف است: جوابش که برسد `copyFinal` می‌زند و کپیِ
+    // بیمه‌ی همین پایین را بی‌صدا عوض می‌کند. متن را می‌بازیم، نه پرامپت را.
+    if (_enhancing) {
+        _enhancing = NO;
+        _workingMsg = nil;
+        [ZEnhance.shared cancel];
+        ZLog(@"enhance: سشن بسته شد، کارِ در پرواز لغو شد");
+    }
     // مسیر خروجِ اپ مستقیم به اینجا می‌آید و از finish رد نمی‌شود، پس بستن و تخلیه
     // اینجا هم لازم است. stop دو بار صدا خوردن بی‌ضرر است.
     _closing = YES;
@@ -1620,8 +1632,17 @@ static NSString *ZModeLabel(ZMode m) {
         // درج یک کلیک دورتر است.
         [self injectText:[[_panel editorText] stringByAppendingString:@" "]];
     }
-    // بیمه: کل متن سشن، یک بار، ماندگار در کلیپ‌بورد؛ پشتِ صف درج که با پیست مسابقه نگیرد
+    // بیمه: کل متن سشن، یک بار، ماندگار در کلیپ‌بورد؛ پشتِ صف درج که با پیست مسابقه نگیرد.
+    //
+    // ...مگر در حالت‌های بی‌ادیتور که کاربر خودش نسخه‌ای انتخاب کرده باشد. آنجا کلیپ‌بورد
+    // تنها مقصدِ بهبود پرامپت است، و این بیمه رویش می‌نوشت: `B` می‌زدی، پرامپت در
+    // کلیپ‌بورد می‌نشست، `Esc` می‌زدی و همان لحظه متن دیکته جایش را می‌گرفت. یعنی تنها
+    // خروجیِ فیچر، سرِ بستنِ سشن بی‌صدا پاک می‌شد. انتخاب کاربر مقدم است.
     NSString *full = [self fullText];
+    if (![self editorMode:_mode] && _versions.count && _versionAt < (NSInteger)_versions.count) {
+        NSString *chosen = _versions[_versionAt][1];
+        if (chosen.length) full = chosen;
+    }
     if (full.length) [_injector copyFinalAfterPending:full];
     ZPlay(ZSoundFinish);
     ZLog(@"session: finished, %lu chars, audio %.0fs, ledger %@",
@@ -1932,7 +1953,10 @@ static NSString *ZModeLabel(ZMode m) {
 // قبل سر کرسر نشسته، پس آنجا تنها مقصد کلیپ‌بورد است: بازویرایشِ متنی که از دست ما
 // خارج شده ممنوع است، و همین قاعده در کل این فایل یکی است.
 - (void)enhanceLanded:(ZEnhanceResult *)r draft:(NSString *)draft {
-    if (!_enhancing) return;    // لغو شده؛ جوابِ دیررس نباید بنشیند
+    // لغو شده، یا سشن در این فاصله واقعا بسته شده (مسیر خروج اپ مستقیم `finishNow`
+    // می‌زند). نشاندنِ جوابِ دیررس آنجا فقط یک پنل مرده را دست نمی‌زند: `copyFinal`
+    // کپیِ بیمه‌ی پایانِ سشن را هم بی‌صدا عوض می‌کند. همان گاردی که پاس نهایی دارد.
+    if (!_enhancing || _finished) return;
     _enhancing = NO;
     _workingMsg = nil;
     if (r.cancelled) {
@@ -1952,7 +1976,19 @@ static NSString *ZModeLabel(ZMode m) {
     }
     // دو نسخه، و همان `R` که از قبل بینشان می‌چرخد. کاربری که بتواند مقایسه کند به
     // فیچر اعتماد می‌کند؛ کاربری که نتواند، نه.
+    //
+    // اول ویرایش‌های خودِ کاربر روی نسخه‌ی جاری می‌نشیند، دقیقا مثل `rotateText`. بی
+    // این، یک باگِ ساکت داشتیم که «متن اصلی همیشه می‌ماند» را می‌شکست: پاس نهایی متن
+    // را می‌داد، کاربر در ادیتور ویرایشش می‌کرد، بعد `B` می‌زد، و از آن به بعد `R`
+    // نسخه‌ی *پیش از ویرایش* را نشان می‌داد. آنچه فرستادیم (`draft`) همان متنِ ویرایش‌شده
+    // بود، پس همان باید در فهرست بنشیند.
     NSMutableArray *vs = [NSMutableArray arrayWithObject:@[@"پرامپت", r.text]];
+    if (_versions.count && _versionAt < (NSInteger)_versions.count) {
+        NSArray *cur = _versions[_versionAt];
+        NSMutableArray *kept = [_versions mutableCopy];
+        if (![cur[1] isEqualToString:draft]) kept[_versionAt] = @[cur[0], draft];
+        _versions = kept;
+    }
     for (NSArray *v in _versions) {
         if (![v[1] isEqualToString:r.text]) [vs addObject:v];
     }
