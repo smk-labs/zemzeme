@@ -503,7 +503,7 @@ static NSString *ZDropPreamble(NSString *t) {
             [raw subdataWithRange:NSMakeRange(0, MIN((NSUInteger)600, raw.length))]
                                              encoding:NSUTF8StringEncoding];
         if (err) *err = ZHumanError(label, st, raw);
-        ZLog(@"final: %@ HTTP %ld در %.1f ثانیه — %@", label, (long)st, dt, msg ?: @"?");
+        ZLog(@"final: %@ HTTP %ld در %.1f ثانیه: %@", label, (long)st, dt, msg ?: @"?");
         return nil;
     }
     id doc = [NSJSONSerialization JSONObjectWithData:raw options:0 error:nil];
@@ -706,7 +706,7 @@ static NSString *ZDropPreamble(NSString *t) {
         ZCoverage *c = [ZCoverage ofDraft:verbatim output:polished];
         r.coverage = c;
         if (!c.passed) {
-            ZLog(@"final: دروازه بست — %@", c.summary);
+            ZLog(@"final: دروازه بست: %@", c.summary);
             say(@"بررسی کامل بودن: یک بار دیگر…");
             // تلاش دوم با پرامپت سخت‌گیرتر، و صریحا با فهرست همان چیزی که افتاد.
             // یک پرامپتِ کلیِ «سخت‌گیرتر» را اندازه گرفتیم و کم اثر بود؛ نام بردنِ خودِ

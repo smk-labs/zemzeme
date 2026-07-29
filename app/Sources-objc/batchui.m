@@ -65,7 +65,7 @@ typedef NS_ENUM(NSInteger, ZRowState) {
 
 // زمان به دقیقه:ثانیه با رقم فارسی. خط تیره یعنی هنوز طولش را نخوانده‌ایم.
 static NSString *ZClock(double sec) {
-    if (!(sec > 0)) return @"—";
+    if (!(sec > 0)) return @"-";
     int s = (int)round(sec);
     return ZFaDigits([NSString stringWithFormat:@"%d:%02d", s / 60, s % 60]);
 }
@@ -919,7 +919,7 @@ static NSString *ZGeminiMime(NSURL *url) {
             [s flash:r.cancelled ? @"لغو شد؛ متن سر جایش است"
                 : r.gated ? @"پرامپت رد شد (ناقص یا پرحرف)؛ متن قبلی سر جایش است"
                 : (r.error ?: @"پرامپتی نیامد؛ متن قبلی سر جایش است")];
-            ZLog(@"enhance: batch failed — %@", r.gated ? r.summary : (r.error ?: @"?"));
+            ZLog(@"enhance: batch failed: %@", r.gated ? r.summary : (r.error ?: @"?"));
             [s syncButtons];
             return;
         }

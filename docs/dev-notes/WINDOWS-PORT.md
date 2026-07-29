@@ -1,4 +1,4 @@
-# Windows port — plan, parked
+# Windows port: plan, parked
 
 Written 2026-07-24 from a full read of this repo. **No code has been written. This is a decision record, not a task list in progress.** Pick it up whenever; nothing here expires except the risk note at the bottom.
 
@@ -35,15 +35,15 @@ New code lives in `app/win/`. The macOS tree is not touched.
 
 ## Phases
 
-**Phase 0 — prove the wire (~350 lines).** Protobuf frame parser, the up/down stream pair, and a `--selftest` that replays a recorded raw audio file. No UI, no mic. This goes first because the single biggest risk in the whole project is the corporate network, and half an hour of work settles it. If phase 0 fails, nothing else is worth writing.
+**Phase 0, prove the wire (~350 lines).** Protobuf frame parser, the up/down stream pair, and a `--selftest` that replays a recorded raw audio file. No UI, no mic. This goes first because the single biggest risk in the whole project is the corporate network, and half an hour of work settles it. If phase 0 fails, nothing else is worth writing.
 
-**Phase 1 — usable every day (~1,200 lines).** Mic capture, the Google engine with all its watchdogs and the five-minute session rotation, the hotkey, direct typing, a minimal bar, and Esc to finish with the transcript copied to the clipboard.
+**Phase 1, usable every day (~1,200 lines).** Mic capture, the Google engine with all its watchdogs and the five-minute session rotation, the hotkey, direct typing, a minimal bar, and Esc to finish with the transcript copied to the clipboard.
 
-**Phase 2 — parity (~700 lines).** Paste mode with automatic RDP detection, the injection queue that resumes when you switch back to the target app, pause and retry, the full tray menu, collect mode.
+**Phase 2, parity (~700 lines).** Paste mode with automatic RDP detection, the injection queue that resumes when you switch back to the target app, pause and retry, the full tray menu, collect mode.
 
-**Phase 3 — Persian polish (~200 lines of glue).** Run `polish.py` on this machine's Python 3.12, spawn the daemon from the app, run the existing golden tests.
+**Phase 3, Persian polish (~200 lines of glue).** Run `polish.py` on this machine's Python 3.12, spawn the daemon from the app, run the existing golden tests.
 
-**Phase 4 — fallback engine (~400 lines).** The browser relay. On Windows, Edge is always installed and could stand in for Chrome, but its engine is Azure, so Persian quality needs its own test before trusting it. Plus the stress test.
+**Phase 4, fallback engine (~400 lines).** The browser relay. On Windows, Edge is always installed and could stand in for Chrome, but its engine is Azure, so Persian quality needs its own test before trusting it. Plus the stress test.
 
 ## Risks
 

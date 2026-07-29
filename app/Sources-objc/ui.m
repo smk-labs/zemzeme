@@ -1774,7 +1774,7 @@ static NSString *ZModeLabel(ZMode m) {
     _workingMsg = nil;
     _pass = r;
     if (r.error.length || !r.text.length) {
-        ZLog(@"final: failed — %@", r.error ?: @"متنی نیامد");
+        ZLog(@"final: failed: %@", r.error ?: @"متنی نیامد");
         // در یادداشت هیچ متنِ دیگری وجود ندارد، پس شکستِ پاس یعنی بن‌بست؛ همان‌جا
         // می‌افتیم روی تشخیص گفتار گوگل. در سه حالت دیگر متنِ مسیر معمولی از قبل سر
         // جایش است و دوباره شنیدنِ همان صدا فقط وقت و سهم خرج می‌کند.
@@ -1874,7 +1874,7 @@ static NSString *ZModeLabel(ZMode m) {
             s->_working = NO;
             s->_workingMsg = nil;
             s->_statusText = @"نه پاس نهایی شد نه تشخیص گفتار؛ صدا در پوشه‌ی سشن‌ها هست";
-            ZLog(@"note: fallback also failed — %@", err.localizedDescription ?: @"متنی نیامد");
+            ZLog(@"note: fallback also failed: %@", err.localizedDescription ?: @"متنی نیامد");
             [s->_panel flash:@"متنی نیامد؛ خودِ صدا در پوشه‌ی سشن‌ها ماند"];
             [s finishNow];
             return;
@@ -1969,7 +1969,7 @@ static NSString *ZModeLabel(ZMode m) {
     if (r.error.length || r.gated || !r.text.length) {
         NSString *msg = r.gated ? @"پرامپت رد شد (ناقص یا پرحرف)؛ متن قبلی سر جایش است"
                                 : (r.error ?: @"پرامپتی نیامد؛ متن قبلی سر جایش است");
-        ZLog(@"enhance: failed — %@", r.gated ? r.summary : (r.error ?: @"?"));
+        ZLog(@"enhance: failed: %@", r.gated ? r.summary : (r.error ?: @"?"));
         [_panel flash:msg];
         [self render];
         return;

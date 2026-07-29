@@ -130,7 +130,7 @@ static NSString *ZEnhThinking(void) {
     // ---------- دروازه ----------
     ZEnhGate *g = [ZEnhGate ofDraft:raw output:out];
     if (!g.passed) {
-        ZLog(@"enhance: دروازه بست — %@", g.summary);
+        ZLog(@"enhance: دروازه بست: %@", g.summary);
         say(@"بررسی کامل بودن: یک بار دیگر…");
         NSArray *parts2 = [parts arrayByAddingObject:[self strictAddendum:g]];
         NSString *again = [ZFinalPass.shared askText:system parts:parts2 label:@"enhance-strict"

@@ -298,7 +298,7 @@ def load_pipeline():
     try:
         PIPE = Pipeline()
         READY.set()
-    except Exception as e:  # noqa: BLE001 — دیمن بدون مدل هم باید passthrough بماند
+    except Exception as e:  # noqa: BLE001 (دیمن بدون مدل هم باید passthrough بماند)
         BOOT_ERR[0] = f"{type(e).__name__}: {e}"
         sys.stderr.write(f"polish: load failed: {BOOT_ERR[0]}\n")
 
@@ -361,7 +361,7 @@ class Handler(BaseHTTPRequestHandler):
                 out, ops = PIPE.mechanical(text, terms=terms), []
             else:
                 out, ops = PIPE.polish(text, terms=terms)
-        except Exception:  # noqa: BLE001 — هر خطایی یعنی همان متن خام برگردد
+        except Exception:  # noqa: BLE001 (هر خطایی یعنی همان متن خام برگردد)
             out, ops = text, []
         self._send(200, {"text": out, "ready": True,
                          "ms": int((time.time() - t0) * 1000), "spell": ops})

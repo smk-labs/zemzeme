@@ -56,7 +56,7 @@ def content(words):
 
 
 def sentences(src):
-    """The fixture is one numbered sentence per 'item N.' — split on it."""
+    """The fixture is one numbered sentence per 'item N.', split on it."""
     parts = re.split(r"item\s+(\d+)\s*\.", src)
     out = []
     for i in range(1, len(parts) - 1, 2):

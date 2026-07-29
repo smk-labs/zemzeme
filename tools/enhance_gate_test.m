@@ -23,12 +23,12 @@ static void ok(BOOL cond, NSString *what) {
 
 static void pass(NSString *name, NSString *draft, NSString *out) {
     ZEnhGate *g = [ZEnhGate ofDraft:draft output:out];
-    ok(g.passed, [NSString stringWithFormat:@"%@ باید قبول شود — %@", name, g.summary]);
+    ok(g.passed, [NSString stringWithFormat:@"%@ باید قبول شود: %@", name, g.summary]);
 }
 
 static void reject(NSString *name, NSString *draft, NSString *out) {
     ZEnhGate *g = [ZEnhGate ofDraft:draft output:out];
-    ok(!g.passed, [NSString stringWithFormat:@"%@ باید رد شود — %@", name, g.summary]);
+    ok(!g.passed, [NSString stringWithFormat:@"%@ باید رد شود: %@", name, g.summary]);
 }
 
 // یک پرامپتِ ساختاردارِ نمونه، برای تستِ سقف طول. کوتاه‌تر از سقف در همه‌ی کیس‌ها.

@@ -19,12 +19,12 @@ static void ok(BOOL cond, NSString *what) {
 
 static void pass(NSString *name, NSString *draft, NSString *out) {
     ZCoverage *c = [ZCoverage ofDraft:draft output:out];
-    ok(c.passed, [NSString stringWithFormat:@"%@ باید قبول شود — %@", name, c.summary]);
+    ok(c.passed, [NSString stringWithFormat:@"%@ باید قبول شود: %@", name, c.summary]);
 }
 
 static void reject(NSString *name, NSString *draft, NSString *out) {
     ZCoverage *c = [ZCoverage ofDraft:draft output:out];
-    ok(!c.passed, [NSString stringWithFormat:@"%@ باید رد شود — %@", name, c.summary]);
+    ok(!c.passed, [NSString stringWithFormat:@"%@ باید رد شود: %@", name, c.summary]);
 }
 
 int main(void) {
