@@ -108,7 +108,8 @@ static NSString *const kCSAutosave = @"ZemzemeCheatSheet";
     [n addObject:@[@"info.circle", @"جز H و F، بقیه‌ی حرف‌ها فقط در حین سشن کار می‌کنند", @NO]];
     if (ZSettings.shared.finalPassEnabled && !ZFinalPass.hasKey) {
         [n addObject:@[@"exclamationmark.triangle",
-                       @"پاس نهایی روشن است ولی کلید جمینای نیست، پس N کاری نمی‌کند", @YES]];
+                       @"پاس نهایی روشن است ولی کلید جمینای نیست، پس N کاری نمی‌کند؛ از منو «کلید Gemini…» را بزن",
+                       @YES]];
     } else if (ZSettings.shared.finalPassEnabled && !ZSettings.shared.recordSessions) {
         // دو شرط جدا برای یک کار: N بی صدا چیزی برای شنیدن ندارد. کاربری که تاگل پاس
         // نهایی را روشن کرده حق دارد بداند چرا در زنده دکمه‌اش را نمی‌بیند.
@@ -123,7 +124,8 @@ static NSString *const kCSAutosave = @"ZemzemeCheatSheet";
                        @"B (بهبود پرامپت) بتاست و خاموش؛ از منوی زمزمه روشنش کن", @NO]];
     } else if (!ZFinalPass.hasKey) {
         [n addObject:@[@"exclamationmark.triangle",
-                       @"بهبود پرامپت روشن است ولی کلید جمینای نیست، پس B کاری نمی‌کند", @YES]];
+                       @"بهبود پرامپت روشن است ولی کلید جمینای نیست، پس B کاری نمی‌کند؛ از منو «کلید Gemini…» را بزن",
+                       @YES]];
     }
     if (!ZSettings.shared.internalHotkey) {
         [n addObject:@[@"exclamationmark.triangle",

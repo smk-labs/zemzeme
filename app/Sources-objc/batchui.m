@@ -1377,7 +1377,7 @@ static NSDictionary<NSString *, NSString *> *ZBatchHistoryIndex(void) {
                        @[@"یادداشت-صوتی.amr", @95.0, @(ZRowStopped), @""]];
     for (NSArray *sp in specs) {
         ZBatchRow *r = [ZBatchRow new];
-        r.url = [NSURL fileURLWithPath:[@"/Users/seyed/Downloads"
+        r.url = [NSURL fileURLWithPath:[[NSHomeDirectory() stringByAppendingPathComponent:@"Downloads"]
                                         stringByAppendingPathComponent:sp[0]]];
         r.duration = [sp[1] doubleValue];
         r.state = (ZRowState)[sp[2] integerValue];

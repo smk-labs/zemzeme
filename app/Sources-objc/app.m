@@ -177,6 +177,7 @@ int ZSelfTest(NSString *file, NSString *lang) {
         me->_statusItem.button.image = ZMarkImage(18, me->_menubarTint);
     }];
 
+    [self showFirstRunWelcomeIfNeeded];
     [self watchAccessibility];
     // دیمن پاس از همین حالا گرم شود که تکه اول اولین سشن سرد نخورد
     if (ZSettings.shared.polishEnabled) [ZPolish.shared prepare];
@@ -186,6 +187,27 @@ int ZSelfTest(NSString *file, NSString *lang) {
     ZLog(@"app: launched res=%@ data=%@ ax=%d polish=%d",
          ZRes().path, ZSupport().path,
          [ZInjector accessibilityOK], ZSettings.shared.polishEnabled);
+}
+
+// یک‌بار در عمر نصب، نه در عمر پروسه: کلید همان کلید معمولی دیفالتز است، پس ری‌استارت
+// بی‌شمار همان یک بار می‌ماند. قبل از پنجره‌ی اجازه‌ی اکسسبیلیتی، تا کاربر بداند
+// آن پنجره‌ی بعدی چیست و چرا لازم است، نه اینکه یک پنجره‌ی ناشناس مک را ببیند.
+- (void)showFirstRunWelcomeIfNeeded {
+    static NSString *const kWelcomeKey = @"welcomeShown_v1";
+    if ([NSUserDefaults.standardUserDefaults boolForKey:kWelcomeKey]) return;
+    [NSUserDefaults.standardUserDefaults setBool:YES forKey:kWelcomeKey];
+    NSAlert *a = [NSAlert new];
+    a.messageText = @"به زمزمه خوش آمدی";
+    a.informativeText =
+        @"دیکته: دابل‌تپ Command راست، حرف بزن، Esc یعنی تمام؛ متن سرِ کرسر می‌نشیند.\n\n"
+         "الان یک پنجره‌ی اجازه‌ی Accessibility از مک می‌بینی؛ اجازه بده تا زمزمه بتواند "
+         "متن را جای کرسر بنویسد. میکروفن هم سرِ اولین دیکته پرسیده می‌شود.\n\n"
+         "«پاس نهایی» و «بهبود پرامپت» اختیاری‌اند و یک کلید رایگان از Google AI Studio "
+         "می‌خواهند؛ هر وقت خواستی، از منوی زمزمه «کلید Gemini…» را بزن.\n\n"
+         "راهنمای کامل میان‌برها: Command راست + H.";
+    [a addButtonWithTitle:@"باشه"];
+    [a addButtonWithTitle:@"راهنمای میان‌برها"];
+    if ([a runModal] == NSAlertSecondButtonReturn) [ZCheatSheet toggle];
 }
 
 // اجازه اکسسبیلیتی معمولا بعد از لانچ می‌رسد: کاربر می‌رود در تنظیمات تیک می‌زند.
@@ -357,6 +379,13 @@ int ZSelfTest(NSString *file, NSString *lang) {
     // تولتیپش همین را می‌گوید. تا کلید ست نشده باشد، ردیف خودش خبر می‌دهد: روشن بودنش
     // بی‌کلید فقط یک پیام خطا در پایان هر سشن است.
     BOOL hasKey = ZFinalPass.hasKey;
+    // کلید Gemini: یک شیت کوچک به‌جای ترمینال. بالای هر دو ردیفی می‌نشیند که به آن
+    // نیاز دارند، چون کلید مشترک است (همان `ZFinalPass`، همان `zemzeme-gemini`).
+    NSMenuItem *key = [self icon:[self item:menu title:hasKey ? @"کلید Gemini (تنظیم‌شده)" : @"کلید Gemini…"
+                                     action:@selector(menuSetKey) key:@""]
+                           symbol:@"key.fill"];
+    key.toolTip = @"کلید رایگان از Google AI Studio؛ فقط در Keychain همین دستگاه ذخیره می‌شود. "
+                   "لازمِ «پاس نهایی» و «بهبود پرامپت»؛ بدون آن دو، اصلا لازم نیست.";
     NSMenuItem *fin = [self icon:[self item:menu title:hasKey ? @"پاس نهایی با هوش مصنوعی"
                                                               : @"پاس نهایی با هوش مصنوعی (کلید نیست)"
                                      action:@selector(menuToggleFinalPass) key:@""]
@@ -537,6 +566,49 @@ int ZSelfTest(NSString *file, NSString *lang) {
     if (ZSettings.shared.polishEnabled) [ZPolish.shared prepare];
 }
 - (void)menuToggleLatinTerms { ZSettings.shared.latinTerms = !ZSettings.shared.latinTerms; }
+// شیتِ کلید: جای دستورِ ترمینال. سه دکمه‌ی همیشگی به‌علاوه‌ی «پاک کردن» وقتی کلیدی
+// از قبل هست. جواب دکمه‌ها با شیء خودشان مقایسه می‌شود، نه با عددِ ثابت NSAlert، چون
+// ترتیب دکمه‌ها این‌جا شرطی است (کلید بود/نبود) و اندیس‌شان جابه‌جا می‌شود.
+- (void)menuSetKey {
+    BOOL had = ZFinalPass.hasKey;
+    NSAlert *a = [NSAlert new];
+    a.messageText = @"کلید Gemini";
+    a.informativeText =
+        @"«پاس نهایی» و «بهبود پرامپت» یک کلید رایگان از Google AI Studio می‌خواهند "
+         "(سهم رایگان: ۲۰ درخواست در روز). کلید فقط روی همین دستگاه، در Keychain، "
+         "می‌ماند؛ نه در ریپو، نه روی هیچ سروری از طرف زمزمه.\n\n"
+         "پیش از گرفتن کلید، بخش «داده و حریم خصوصی» در README را بخوان: در سهم "
+         "رایگان گوگل ممکن است از صدا و متن برای بهبود مدل‌هایش استفاده کند.";
+    NSSecureTextField *field = [[NSSecureTextField alloc] initWithFrame:NSMakeRect(0, 0, 300, 24)];
+    field.placeholderString = had ? @"کلید تازه، جای قبلی می‌نشیند" : @"کلید را اینجا بچسبان";
+    a.accessoryView = field;
+    NSButton *save = [a addButtonWithTitle:@"ذخیره"];
+    NSButton *get = [a addButtonWithTitle:@"دریافت کلید رایگان"];
+    NSButton *clear = had ? [a addButtonWithTitle:@"پاک کردن کلید"] : nil;
+    [a addButtonWithTitle:@"لغو"];
+    a.window.initialFirstResponder = field;
+    NSModalResponse resp = [a runModal];
+    if (resp == [a.buttons indexOfObject:save] + NSAlertFirstButtonReturn) {
+        NSError *err = nil;
+        if ([ZFinalPass saveKey:field.stringValue error:&err]) {
+            NSAlert *ok = [NSAlert new];
+            ok.messageText = @"کلید ذخیره شد";
+            [ok runModal];
+        } else {
+            NSAlert *e = [NSAlert new];
+            e.alertStyle = NSAlertStyleWarning;
+            e.messageText = @"ذخیره نشد";
+            e.informativeText = err.localizedDescription ?: @"خطای نامشخص";
+            [e runModal];
+        }
+    } else if (resp == [a.buttons indexOfObject:get] + NSAlertFirstButtonReturn) {
+        [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@"https://aistudio.google.com/apikey"]];
+        [self menuSetKey];    // برگشت به همین شیت، چون کاربر رفت کلید بگیرد و برمی‌گردد بچسباند
+    } else if (clear && resp == [a.buttons indexOfObject:clear] + NSAlertFirstButtonReturn) {
+        [ZFinalPass clearKey];
+    }
+}
+
 - (void)menuToggleFinalPass {
     ZSettings.shared.finalPassEnabled = !ZSettings.shared.finalPassEnabled;
     if (!ZSettings.shared.finalPassEnabled) return;

@@ -453,6 +453,10 @@ extern NSString *const ZPassOwnerEnhance;    // «بهبود پرامپت»
 // اجرا می‌شد. هشدار فقط با این تابع.
 + (BOOL)keyKnownMissing;
 + (NSString *)missingKeyHint;
+// نوشتن از خودِ اپ (منو، «کلید Gemini…»): چون سازنده‌ی آیتم همین پروسه است، خواندنِ
+// بعدی هم از همین پروسه هیچ پنجره‌ی اجازه‌ای باز نمی‌کند؛ دیگر نیازی به ترمینال نیست.
++ (BOOL)saveKey:(NSString *)key error:(NSError **)err;
++ (void)clearKey;
 - (void)prefetchKey;    // یک بار، آسنکرون: پرسش Keychain نباید سر Esc معطلی بسازد
 // همه‌ی کار روی نخ پس‌زمینه؛ progress و done هر دو روی نخ اصلی. lang فقط برای پاس
 // مکانیکی به کار می‌آید: خودِ مدل چندزبانه است و پرامپت زبان را از صدا می‌فهمد.

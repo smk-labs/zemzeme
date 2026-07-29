@@ -198,13 +198,62 @@ static NSString *ZKeyFromSecurityTool(void) {
 }
 
 + (NSString *)missingKeyHint {
-    // `-T` اتفاقی نیست و از یک آزار واقعی آمد: آیتمی که بی آن ساخته شود هیچ اپِ مورد
-    // اعتمادی ندارد (`applications: <null>`)، پس مک سرِ **هر پروسه** اجازه می‌پرسد و
-    // «Always Allow» هم نمی‌چسبد. با `-T` یک بار برای همیشه تمام می‌شود، چون شرطِ
-    // ذخیره‌شده «شناسه + گواهیِ ثابتِ بیلد» است و از هر بیلد تازه جان سالم می‌برد.
-    return @"کلید جمینای پیدا نشد. یک بار در ترمینال بزن: "
+    // مسیر اصلی حالا داخل خود اپ است: منوی زمزمه، «کلید Gemini…» (کلیدسنج پایین همین
+    // فایل). ترمینال فقط برای کسی می‌ماند که با دست می‌خواهد Keychain را دستکاری کند؛
+    // `-T` آنجا هنوز لازم است چون سازنده‌ی آیتم آنجا `security` است نه خودِ اپ.
+    return @"کلید جمینای پیدا نشد. از منوی زمزمه «کلید Gemini…» را بزن، یا در ترمینال: "
             "security add-generic-password -a \"$USER\" -s zemzeme-gemini "
             "-T /Applications/Zemzeme.app -T /usr/bin/security -w";
+}
+
+// ---------- نوشتن (از منو، «کلید Gemini…») ----------
+// همان سرویس، همان کلاس، پس همان آیتمی که ZKeyFromKeychain بالا می‌خواند. تفاوتش با
+// راه ترمینالی: سازنده‌ی این آیتم خودِ همین پروسه است، و مک از سازنده‌ی یک آیتم برای
+// خواندنِ بعدیِ همان آیتم هیچ‌وقت اجازه نمی‌پرسد. یعنی `-T` اینجا لازم نیست؛ آن فقط
+// برای وقتی بود که سازنده یک ابزار دیگر (`security`) باشد.
++ (BOOL)saveKey:(NSString *)key error:(NSError **)err {
+    NSString *k = [key stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (!k.length) {
+        if (err) *err = [NSError errorWithDomain:@"Zemzeme" code:1
+            userInfo:@{NSLocalizedDescriptionKey: @"کلید خالی است"}];
+        return NO;
+    }
+    NSData *d = [k dataUsingEncoding:NSUTF8StringEncoding];
+    NSDictionary *q = @{(id)kSecClass: (id)kSecClassGenericPassword,
+                        (id)kSecAttrService: kKeychainService};
+    // اول به‌روزرسانی: اگر آیتمِ قدیمی (حتی ساخته‌شده با `security -T`) موجود باشد،
+    // همان جایگزین می‌شود، نه یک آیتم دوم با ACL دیگر.
+    OSStatus st = SecItemUpdate((__bridge CFDictionaryRef)q,
+                                (__bridge CFDictionaryRef)@{(id)kSecValueData: d});
+    if (st == errSecItemNotFound) {
+        NSMutableDictionary *add = [q mutableCopy];
+        add[(id)kSecAttrAccount] = NSUserName();
+        add[(id)kSecValueData] = d;
+        st = SecItemAdd((__bridge CFDictionaryRef)add, NULL);
+    }
+    if (st != errSecSuccess) {
+        ZLog(@"final: نوشتنِ کلید در Keychain رد شد (OSStatus %d)", (int)st);
+        if (err) *err = [NSError errorWithDomain:@"Zemzeme" code:st userInfo:@{
+            NSLocalizedDescriptionKey: [NSString stringWithFormat:@"Keychain کلید را نپذیرفت (کد %d)", (int)st]}];
+        return NO;
+    }
+    ZFinalPass *s = ZFinalPass.shared;
+    [s->_keyLock lock];
+    s->_key = [k copy];
+    s->_keyChecked = YES;
+    [s->_keyLock unlock];
+    return YES;
+}
+
++ (void)clearKey {
+    NSDictionary *q = @{(id)kSecClass: (id)kSecClassGenericPassword,
+                        (id)kSecAttrService: kKeychainService};
+    SecItemDelete((__bridge CFDictionaryRef)q);
+    ZFinalPass *s = ZFinalPass.shared;
+    [s->_keyLock lock];
+    s->_key = nil;
+    s->_keyChecked = NO;
+    [s->_keyLock unlock];
 }
 
 // ---------- پرامپت‌ها ----------
