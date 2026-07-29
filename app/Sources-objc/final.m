@@ -59,14 +59,13 @@ static NSString *ZGThinking(void) {
 @implementation ZFinalPass {
     NSString *_key;
     BOOL _keyChecked;    // یک بار پرسیده شد؛ «نبود» هم جواب است و دوباره پرسیده نمی‌شود
-    NSLock *_keyLock;    // کلید، و حالتِ لغو و تسکِ در پرواز: هر سه زیر همین یک قفل
+    NSLock *_keyLock;    // فقط کلید. لغو و تسکِ در پرواز رفتند زیر `_pass`
     // ...و این یکی فقط دور خودِ *پرسش*. جدا از `_keyLock` و عمدا: آن قفل نباید در طول
-    // یک پرسشِ چندثانیه‌ای گرفته بماند (لغو و تسکِ در پرواز هم زیر همان‌اند).
+    // یک پرسشِ چندثانیه‌ای گرفته بماند.
     NSLock *_fetchLock;
     NSLock *_logLock;
-    BOOL _cancelled;
-    NSURLSessionTask *_liveTask;
-    NSURLSession *_liveSession;
+    // نوبتِ کل پاس، و مشترک با `ZEnhance`: انتقال یکی است، پس نگهبان هم باید یکی باشد.
+    ZPassLock *_pass;
 }
 
 + (instancetype)shared {
@@ -81,6 +80,7 @@ static NSString *ZGThinking(void) {
         _keyLock = [NSLock new];
         _fetchLock = [NSLock new];
         _logLock = [NSLock new];
+        _pass = [ZPassLock new];
     }
     return self;
 }
@@ -251,53 +251,35 @@ static NSString *ZKeyFromSecurityTool(void) {
         if (e && !code) code = -1;
         dispatch_semaphore_signal(sem);
     }];
-    [_keyLock lock];
-    BOOL dead = _cancelled;
-    if (!dead) {
-        _liveTask = task;
-        _liveSession = s;
-    }
-    [_keyLock unlock];
-    if (dead) {    // بین شروع کار و اینجا لغو رسیده؛ حتی درخواست را هم نمی‌فرستیم
+    if (![_pass armTask:task session:s]) {
+        // بین شروع کار و اینجا لغو رسیده (یا نوبتی در کار نیست)؛ حتی درخواست را هم
+        // نمی‌فرستیم
         if (status) *status = -2;
         return nil;
     }
     [task resume];
     dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)((kGTimeout + 30) * NSEC_PER_SEC)));
-    [_keyLock lock];
-    _liveTask = nil;
-    _liveSession = nil;
-    [_keyLock unlock];
+    [_pass disarm];
     [s finishTasksAndInvalidate];
     if (status) *status = code;
     if (headers) *headers = hd;
     return body;
 }
 
-- (BOOL)cancelled {
-    [_keyLock lock];
-    BOOL c = _cancelled;
-    [_keyLock unlock];
-    return c;
+- (void)cancel { [self cancelOwner:ZPassOwnerFinal]; }
+
+// به نامِ صاحب، نه «هرچه در پرواز است». قبلا یک بولینِ مشترک بود و همین باعث می‌شد Esc
+// در سشن، کارِ پنل فایل را هم بکشد؛ و بدتر، `resetCancel` نفرِ بعدی لغوِ همین لحظه‌ی
+// کاربر را پاک کند. حالا اگر کاری که در جریان است مالِ این صاحب نباشد، هیچ اتفاقی
+// نمی‌افتد.
+- (void)cancelOwner:(NSString *)owner {
+    if ([_pass cancelOwner:owner]) ZLog(@"final: %@ لغو شد", owner);
 }
 
-- (void)cancel {
-    [_keyLock lock];
-    _cancelled = YES;
-    NSURLSessionTask *t = _liveTask;
-    NSURLSession *s = _liveSession;
-    _liveTask = nil;
-    _liveSession = nil;
-    [_keyLock unlock];
-    [t cancel];
-    [s invalidateAndCancel];
-    ZLog(@"final: لغو شد");
-}
-
-- (void)resetCancel {
-    [_keyLock lock];
-    _cancelled = NO;
-    [_keyLock unlock];
+// نال یعنی مشغول. `resetCancel` عمدا رفت: لغو حالا روی نسلِ همان نوبت می‌نشیند، پس
+// لغوِ کهنه اصلا به کارِ بعدی نمی‌رسد و چیزی برای صفر کردن نمانده.
+- (ZPassLease *)claimPass:(NSString *)owner busy:(NSString **)busy {
+    return [_pass claim:owner busy:busy];
 }
 
 // ---------- انتقالِ قرضی ----------
@@ -592,9 +574,12 @@ static NSString *ZDropPreamble(NSString *t) {
     void (^say)(NSString *) = ^(NSString *m) {
         dispatch_async(dispatch_get_main_queue(), ^{ if (progress) progress(m); });
     };
-    [self resetCancel];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        ZFinalPassResult *r = [self work:audio lang:lang say:say];
+        // استخر عمدی است: نوبت با `dealloc` آزاد می‌شود و باید **قبل از** `done` رفته
+        // باشد. وگرنه کاربری که همان لحظه دکمه‌ی بعدی را می‌زند می‌توانست به نوبتی
+        // بخورد که هنوز در استخرِ نخِ پس‌زمینه منتظرِ تخلیه است.
+        ZFinalPassResult *r;
+        @autoreleasepool { r = [self work:audio lang:lang say:say]; }
         dispatch_async(dispatch_get_main_queue(), ^{ done(r); });
     });
 }
@@ -602,10 +587,21 @@ static NSString *ZDropPreamble(NSString *t) {
 - (ZFinalPassResult *)work:(NSURL *)audio lang:(NSString *)lang say:(void (^)(NSString *))say {
     ZFinalPassResult *r = [ZFinalPassResult new];
     NSDate *t0 = NSDate.date;
+    // نوبت، **اولین** کار و روی کل پاس. اول به دو دلیل: پاس نهایی دو تا سه تماس دارد و
+    // نوبتِ تماس‌به‌تماس بین «مو‌به‌مو» و «تمیزکاری» به کارِ دیگری راه می‌داد؛ و از این
+    // خط به بعد هر `return` خودش نوبت را پس می‌دهد، چون آزادسازی کارِ `dealloc` است نه
+    // کارِ ما. نُه نقطه‌ی بازگشتِ این متد هیچ‌کدام چیزی برای یادش ماندن ندارند.
+    NSString *busy = nil;
+    ZPassLease *lease = [self claimPass:ZPassOwnerFinal busy:&busy];
+    if (!lease) {
+        ZLog(@"final: نوبت آزاد نبود: %@", busy);
+        r.error = busy;
+        return r;
+    }
     // لغو بین هر دو مرحله چک می‌شود، نه فقط اولش: تماس اول ده ثانیه طول می‌کشد و
     // کاربری که در آن فاصله کنسل زده نباید تماس دوم را هم بپردازد.
     #define ZBailIfCancelled() do { \
-        if ([self cancelled]) { r.cancelled = YES; return r; } \
+        if (lease.cancelled) { r.cancelled = YES; return r; } \
     } while (0)
     NSString *key = [self key];
     if (!key) {

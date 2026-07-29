@@ -7,8 +7,12 @@
 //
 // و چرا انتقالِ خودش را نمی‌سازد: کلید، تلاش دوباره، رفتار ۴۲۹ و پارس پاسخِ اندپوینتِ
 // مستندنشده همه در `final.m` نشسته‌اند و هر کدامشان از یک آزمایش واقعی درآمده‌اند.
-// نسخه‌ی دومِ آن کد یعنی نسخه‌ی دومِ همان باگ‌ها. اینجا فقط چهار متدِ قرضی صدا زده
-// می‌شود (`askText:`، `promptNamed:`، `cancelled`، `resetCancel`).
+// نسخه‌ی دومِ آن کد یعنی نسخه‌ی دومِ همان باگ‌ها. اینجا فقط چند متدِ قرضی صدا زده
+// می‌شود (`claimPass:`، `askText:`، `promptNamed:`، `cancelOwner:`).
+//
+// و نوبت هم قرضی است، از همان `ZPassLock`ی که پاس نهایی از آن می‌گیرد: انتقال یکی
+// است، پس اگر نگهبان دو تا باشد «یک کار در هر لحظه» فقط داخل هر کدام برقرار می‌شود
+// نه بینشان. دقیقا همان باگی که بود.
 //
 // قاعده‌های سختی که این فایل رعایت می‌کند:
 //   · هیچ‌وقت خودکار نیست: فقط دکمه یا میان‌بر، فقط روی متنِ از قبل آماده.
@@ -56,7 +60,9 @@ static NSString *ZEnhThinking(void) {
     return self;
 }
 
-- (void)cancel { [ZFinalPass.shared cancel]; }
+// به نامِ خودش، نه «هرچه در پرواز است». اگر آن لحظه پاس نهایی در جریان باشد، این دکمه
+// نباید کارِ او را بکشد؛ قبلا می‌کشت.
+- (void)cancel { [ZFinalPass.shared cancelOwner:ZPassOwnerEnhance]; }
 
 - (void)runOnText:(NSString *)text lang:(NSString *)lang
          progress:(void (^)(NSString *msg))progress
@@ -65,9 +71,12 @@ static NSString *ZEnhThinking(void) {
         dispatch_async(dispatch_get_main_queue(), ^{ if (progress) progress(m); });
     };
     NSString *raw = [text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    [ZFinalPass.shared resetCancel];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        ZEnhanceResult *r = [self work:raw lang:lang say:say];
+        // استخر عمدی است و همان دلیلِ `runOnAudio:`: نوبت با `dealloc` آزاد می‌شود و
+        // باید قبل از `done` رفته باشد، وگرنه دکمه‌ی بعدی به نوبتی می‌خورد که هنوز
+        // منتظرِ تخلیه‌ی استخر است.
+        ZEnhanceResult *r;
+        @autoreleasepool { r = [self work:raw lang:lang say:say]; }
         dispatch_async(dispatch_get_main_queue(), ^{ done(r); });
     });
 }
@@ -75,6 +84,16 @@ static NSString *ZEnhThinking(void) {
 - (ZEnhanceResult *)work:(NSString *)raw lang:(NSString *)lang say:(void (^)(NSString *))say {
     ZEnhanceResult *r = [ZEnhanceResult new];
     NSDate *t0 = NSDate.date;
+    // نوبت، **اولین** کار و روی کل پاس (اینجا یک تا دو تماس). اول به همان دلیلِ
+    // `final.m`: از این خط به بعد هر `return` خودش نوبت را پس می‌دهد، چون آزادسازی کارِ
+    // `dealloc` است. هشت نقطه‌ی بازگشتِ این متد هیچ‌کدام چیزی برای یادش ماندن ندارند.
+    NSString *busy = nil;
+    ZPassLease *lease = [ZFinalPass.shared claimPass:ZPassOwnerEnhance busy:&busy];
+    if (!lease) {
+        ZLog(@"enhance: نوبت آزاد نبود: %@", busy);
+        r.error = busy;
+        return r;
+    }
     if (!raw.length) {
         r.error = @"متنی برای بهبود نیست";
         return r;
@@ -84,7 +103,7 @@ static NSString *ZEnhThinking(void) {
         r.error = @"پرامپت بهبود در بسته‌ی اپ نیست";
         return r;
     }
-    if ([ZFinalPass.shared cancelled]) {
+    if (lease.cancelled) {
         r.cancelled = YES;
         return r;
     }
@@ -98,7 +117,7 @@ static NSString *ZEnhThinking(void) {
     say(@"بهبود پرامپت…");
     NSString *out = [ZFinalPass.shared askText:system parts:parts label:@"enhance"
                                      thinking:ZEnhThinking() usage:usage error:&err];
-    if ([ZFinalPass.shared cancelled]) {
+    if (lease.cancelled) {
         r.cancelled = YES;
         return r;
     }
@@ -116,7 +135,7 @@ static NSString *ZEnhThinking(void) {
         NSArray *parts2 = [parts arrayByAddingObject:[self strictAddendum:g]];
         NSString *again = [ZFinalPass.shared askText:system parts:parts2 label:@"enhance-strict"
                                            thinking:ZEnhThinking() usage:usage error:&err];
-        if ([ZFinalPass.shared cancelled]) {
+        if (lease.cancelled) {
             r.cancelled = YES;
             return r;
         }

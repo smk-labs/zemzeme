@@ -90,6 +90,7 @@
 bash tools/seam_test.sh      # جوش درز: ۹ مورد، همه از درزهای واقعی همین دستگاه
 bash tools/ledger_test.sh    # دفتر متن: ۲۵ ادعا، با هزار عملیات در برابر مدل مرجع
 bash tools/replay_test.sh    # کورپوس طلایی: ۱۲ فیکسچر، هر کدام در دو حالت
+bash tools/passlock_test.sh  # نوبتِ پاس: رد کردنِ همان‌لحظه‌ای، نُه نقطه‌ی بازگشت، لغوِ صاحب‌دار
 zemzeme --replay <events.jsonl> [--live]   # یک سشن ضبط‌شده را دوباره پخش کن
 ```
 

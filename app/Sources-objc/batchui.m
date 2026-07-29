@@ -828,6 +828,9 @@ static NSString *ZGeminiMime(NSURL *url) {
     __weak typeof(self) ws = self;
     __block NSMutableArray<NSString *> *out = [NSMutableArray array];
     __block NSInteger at = 0;
+    // اولین خطا نگه داشته می‌شود تا پیامِ آخر خودِ دلیل را بگوید. بی این، «نوبت آزاد
+    // نبود» هم همان «چیزی برنگرداند»ِ کلی را می‌گرفت و کاربر نمی‌فهمید چرا.
+    __block NSString *firstErr = nil;
     __block void (^next)(void);
     next = ^{
         __strong typeof(ws) s = ws;
@@ -838,7 +841,7 @@ static NSString *ZGeminiMime(NSURL *url) {
             if (joined.length) [s setEditorText:joined];
             ZPlay(ZSoundPolish);
             [s flash:joined.length ? @"پاس نهایی با هوش مصنوعی انجام شد"
-                                   : @"پاس نهایی چیزی برنگرداند؛ متن قبلی سر جایش است"];
+                                   : (firstErr ?: @"پاس نهایی چیزی برنگرداند؛ متن قبلی سر جایش است")];
             [s syncButtons];
             next = nil;
             return;
@@ -852,8 +855,12 @@ static NSString *ZGeminiMime(NSURL *url) {
             if (s2) s2->_status.stringValue = [NSString stringWithFormat:@"%@ · %@",
                                                f.lastPathComponent, msg];
         } done:^(ZFinalPassResult *r) {
-            if (r.text.length) [out addObject:r.text];
-            else ZLog(@"batchui: پاس نهایی %@ نشد — %@", f.lastPathComponent, r.error ?: @"?");
+            if (r.text.length) {
+                [out addObject:r.text];
+            } else {
+                if (!firstErr) firstErr = r.error;
+                ZLog(@"batchui: پاس نهایی %@ نشد: %@", f.lastPathComponent, r.error ?: @"?");
+            }
             at++;
             if (next) next();
         }];
@@ -894,8 +901,9 @@ static NSString *ZGeminiMime(NSURL *url) {
         ZLog(@"enhance: %@", ZFinalPass.missingKeyHint);
         return;
     }
-    // همان پرچمِ «کاری در جریان است» که پاس نهایی استفاده می‌کند، و عمدا: انتقالِ زیرین
-    // یکی است و یک تماس در هر لحظه بیشتر نمی‌پذیرد.
+    // همان پرچمِ «کاری در جریان است» که پاس نهایی استفاده می‌کند، و حالا فقط برای
+    // دکمه‌هاست: «یک کار در هر لحظه» را خودِ انتقال نگه می‌دارد (`ZPassLock`)، چون این
+    // پرچم مالِ همین پنل بود و با پرچم‌های پنل شناور جمع نمی‌شد.
     _polishing = YES;
     [self syncButtons];
     _status.stringValue = @"بهبود پرامپت…";
