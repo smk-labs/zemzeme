@@ -1499,7 +1499,10 @@ static NSString *ZModeLabel(ZMode m) {
             __strong typeof(ws) s = ws;
             if (!s || !text.length) return;
             [s injectText:[text stringByAppendingString:@" "]];
-            [ZInjector copyFinal:text];    // بیمه: هرچه درج شد در کلیپ‌بورد هم می‌ماند
+            // بیمه: هرچه درج شد در کلیپ‌بورد هم می‌ماند. پشتِ صف درج، نه روی نخ اصلی:
+            // مسیر پیست کلیپ‌بورد را می‌چیند و بعد مهلت سینک می‌دهد، و یک copyFinal
+            // بی‌صف همان وسط می‌نشست و متنِ دیگری پیست می‌شد.
+            [s->_injector copyFinalAfterPending:text];
             [s->_panel clearEditor];
             // متن رفت بیرون؛ ادیتور از صفر شروع می‌کند و دفتر هم با آن
             s->_editorStintStart = s->_transcript.length;
@@ -1529,8 +1532,14 @@ static NSString *ZModeLabel(ZMode m) {
     } else {
         // مسیر اتمیک: متنِ یکجای حالت جمع بلند است و دقیقا همان‌جا بود که یک رویدادِ
         // کامل (۱۸ واحد) افتاد و هجده نویسه از وسط متن غیب شد.
+        //
+        // و اگر اپ نوشتنِ اتمیک را نپذیرفت، پیست. تایپ کردنِ کلِ متنِ سشن در اپی که
+        // همین حالا ثابت کرد رویدادها را کامل نمی‌گیرد، بدترین کارِ ممکن است: سشنِ
+        // ۸۶۶ نویسه‌ای ۳۰ تیرماه در Windows App همین‌جا قیچی شد (۳۰۰ نویسه گم شد و
+        // یک پنجره‌ی ۵۰ نویسه‌ای دوازده بار تکرار شد) در حالی که فایل سشن سالم بود.
         [_injector insert:text pid:_target.processIdentifier
-              delayMicros:ZSettings.shared.typeDelayMicros done:nil];
+              delayMicros:ZSettings.shared.typeDelayMicros
+           pasteIfRefused:YES done:nil];
     }
 }
 

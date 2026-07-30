@@ -131,17 +131,28 @@ static NSMutableSet<NSNumber *> *ZNoAXWritePids(void) {
 }
 
 - (void)insert:(NSString *)text pid:(pid_t)pid delayMicros:(useconds_t)d
-          done:(void (^)(BOOL viaAX))done {
+ pasteIfRefused:(BOOL)pasteIfRefused done:(void (^)(BOOL viaAX))done {
     dispatch_async(_q, ^{
         BOOL viaAX = NO;
-        if (text.length >= kZAtomicMinUnits && ![ZNoAXWritePids() containsObject:@(pid)]) {
+        BOOL atomic = text.length >= kZAtomicMinUnits;
+        if (atomic && ![ZNoAXWritePids() containsObject:@(pid)]) {
             viaAX = [self axInsert:text pid:pid];
             if (!viaAX) {
-                ZLog(@"inject: ax write refused by pid=%d, falling back to typing", pid);
+                ZLog(@"inject: ax write refused by pid=%d", pid);
                 [ZNoAXWritePids() addObject:@(pid)];
             }
         }
-        if (!viaAX) [self typeNow:text delayMicros:d leadIn:YES];
+        if (!viaAX) {
+            // اپ همین حالا گفت نوشتنِ اتمیک را نمی‌پذیرد. رگبار رویدادِ ساختگی روی
+            // متنِ بلند، در همان اپ، همان چیزی است که این مسیر برای فرارش ساخته شد:
+            // اپ رویداد می‌اندازد و رویداد تکرار می‌کند و متن قیچی می‌شود. پیست تنها
+            // مسیرِ اتمیکِ باقی‌مانده است، پس متنِ یکجا از آنجا می‌رود.
+            BOOL viaPaste = atomic && pasteIfRefused;
+            ZLog(@"inject: %@ %lu chars into pid=%d",
+                 viaPaste ? @"pasting" : @"typing", (unsigned long)text.length, pid);
+            if (viaPaste) [self pasteNow:text delayMicros:ZSettings.shared.pasteDelayMicros];
+            else [self typeNow:text delayMicros:d leadIn:YES];
+        }
         self->_lastWriteAt = CFAbsoluteTimeGetCurrent();
         if (done) dispatch_async(dispatch_get_main_queue(), ^{ done(viaAX); });
     });
@@ -320,19 +331,23 @@ static BOOL zSetSelectedRange(AXUIElementRef el, CFRange range) {
 // (باگ واقعی: برگرداندن کلیپ‌بورد قبلی وسط پیست بعدی می‌نشست و متن قدیمی پیست می‌شد؛
 // برای همین «برگرداندن» حذف شد. کپی پایانی Esc به هر حال کلیپ‌بورد را پر می‌کند.)
 - (void)paste:(NSString *)text delayMicros:(useconds_t)d {
-    dispatch_async(_q, ^{
-        dispatch_sync(dispatch_get_main_queue(), ^{
-            NSPasteboard *pb = NSPasteboard.generalPasteboard;
-            NSPasteboardType transient = @"org.nspasteboard.TransientType";
-            [pb declareTypes:@[NSPasteboardTypeString, transient] owner:nil];
-            [pb setString:text forType:NSPasteboardTypeString];
-            [pb setString:@"" forType:transient];
-        });
-        [ZInjector wakeRemoteClipboard];    // اول بیدارش کن، بعد مهلت بده
-        usleep(d);    // مهلت سینک کلیپ‌بورد ریموت دسکتاپ
-        [ZInjector sendCmdV];
-        usleep(150000);
+    dispatch_async(_q, ^{ [self pasteNow:text delayMicros:d]; });
+}
+
+// روی صف درج. مسیرِ درجِ اتمیک از همین‌جا صدایش می‌زند، چون همان‌جا روی صف است و
+// یک dispatch دیگر فقط پیست را پشتِ کارهای بعدی می‌انداخت.
+- (void)pasteNow:(NSString *)text delayMicros:(useconds_t)d {
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        NSPasteboard *pb = NSPasteboard.generalPasteboard;
+        NSPasteboardType transient = @"org.nspasteboard.TransientType";
+        [pb declareTypes:@[NSPasteboardTypeString, transient] owner:nil];
+        [pb setString:text forType:NSPasteboardTypeString];
+        [pb setString:@"" forType:transient];
     });
+    [ZInjector wakeRemoteClipboard];    // اول بیدارش کن، بعد مهلت بده
+    usleep(d);    // مهلت سینک کلیپ‌بورد ریموت دسکتاپ
+    [ZInjector sendCmdV];
+    usleep(150000);
 }
 
 // کپی پایانی پشت صف درج: هر پیست/تایپ معلق اول تمام می‌شود، بعد کلیپ‌بورد پر می‌شود
@@ -449,8 +464,11 @@ static void zPostModifier(CGKeyCode key, CGEventFlags flags) {
         done(ZSinkOK);    // پیست خبرِ نشستن ندارد؛ آنجا بازنویسی هم در کار نیست
         return;
     }
+    // دُمِ زنده پیست نمی‌شود: هر تکه یک رفت‌وبرگشتِ کند به کلیپ‌بورد است و دفتر باید
+    // بتواند بازنویسی‌اش کند. اینجا تکه‌ها کوچک‌اند و دفتر حسابشان را دارد.
     [_injector insert:text pid:_target.processIdentifier
           delayMicros:ZSettings.shared.typeDelayMicros
+       pasteIfRefused:NO
                  done:^(BOOL viaAX) { done(ZSinkOK); }];
 }
 
