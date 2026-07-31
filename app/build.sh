@@ -32,10 +32,10 @@ cp Info.plist "$APP/Contents/Info.plist"
 # venv و مدل‌ها (~۵۰۰ مگ) عمدا بیرون می‌مانند؛ setup.sh آن‌ها را در
 # ~/Library/Application Support/Zemzeme/py می‌گذارد.
 cp ../serve.py ../index.html py/polish.py py/terms.txt "$APP/Contents/Resources/"
-# پرامپت‌ها: فایل‌اند نه رشته‌ی هاردکد، چون هر سه روی متن واقعی تیون شده‌اند و باید
+# پرامپت‌ها: فایل‌اند نه رشته‌ی هاردکد، چون هر دو روی متن واقعی تیون شده‌اند و باید
 # بی‌بیلد قابل ویرایش باشند. یکی‌شان (enhance) مالِ بهبود پرامپت است، نه پاس نهایی.
 mkdir -p "$APP/Contents/Resources/prompts"
-cp prompts/verbatim.md prompts/polish.md prompts/enhance.md "$APP/Contents/Resources/prompts/"
+cp prompts/transcribe.md prompts/enhance.md "$APP/Contents/Resources/prompts/"
 
 # آیکون بسته از خود باینری تازه می‌آید (نشان یک بار در mark.m تعریف شده، بیت‌مپی در
 # ریپو نیست) و iconutil سیستم به icns تبدیلش می‌کند. قبل از امضا، چون داخل بسته است.

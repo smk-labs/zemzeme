@@ -1,4 +1,4 @@
-// پاس نهایی: صدای یک سشن، در دو تماس، تا یک متن تمیز.
+// پاس نهایی: صدای یک سشن، در یک تماس، تا یک متن تمیز.
 //
 // چرا این مسیر اصلا هست (اندازه‌گیری، نه سلیقه): متن خام همین اپ روی یک ویس ۳۶۷
 // ثانیه‌ای فارسیِ واقعی فقط ۷۷٪ کلمه‌های گفته‌شده را داشت. یازده تکه‌ی محتوا در آن
@@ -6,15 +6,17 @@
 // آن متن صفر از یازده را برگرداند، چون چیزی که در ورودی نیست برنمی‌گردد. مدلی که خودش
 // صدا را بشنود ده تا یازده از یازده.
 //
-// و چرا دو تماس نه یکی: «صدا تا متن نهایی» در یک تماس با thinking_level=minimal متنِ
-// درهم و دوباره‌نویسی‌شده داد (۲۰۷۲ کلمه به جای ۹۶۵). دو مرحله هم سالم‌تر بود هم
-// سریع‌تر: ۲۱ ثانیه برای ۶ دقیقه صدا.
+// یک تماس، نه دو. تا امروز دو تماس بود (رونویسی مو‌به‌مو، بعد پاس متنی روی همان) چون
+// یک تماسِ اولیه متنِ درهم و دوباره‌نویسی‌شده داده بود. ولی قیمتش را کاربر می‌داد:
+// روی سشن‌های واقعی ۱۵ تا ۱۸ ثانیه، و متنِ کامل دو بار تولید می‌شد. یک تماس یک
+// رفت‌وبرگشت است و یک بار خروجی. مهار آن شکستِ قدیمی رفت داخل خودِ پرامپت
+// (`prompts/transcribe.md`): سقفِ خروجی خودِ گفتار است و جمله دو بار نوشته نمی‌شود.
 //
 // قاعده‌های سختی که این فایل رعایت می‌کند:
 //   · مسیر زنده هیچ‌وقت به اینجا وابسته نمی‌شود. ZPolish و بودجه‌ی ۳۰۰ میلی‌ثانیه‌اش
 //     دست‌نخورده‌اند و هیچ LLM مولدی در پاس زنده نیست.
-//   · هیچ چیز گم نمی‌شود: صدا، متن مو‌به‌مو و متن نهایی هر سه روی دیسک می‌مانند.
-//   · دروازه‌ی کامل بودن جلوی خروجی رد شده را می‌گیرد و در تردید، خام می‌نشیند.
+//   · هیچ چیز گم نمی‌شود: صدا و متن نهایی هر دو روی دیسک می‌مانند، و متن خام سشن
+//     همیشه به عنوان یک نسخه‌ی جدا در پنل هست.
 #import "zemzeme.h"
 #import <Security/Security.h>
 
@@ -636,10 +638,9 @@ static NSString *ZDropPreamble(NSString *t) {
 - (ZFinalPassResult *)work:(NSURL *)audio lang:(NSString *)lang say:(void (^)(NSString *))say {
     ZFinalPassResult *r = [ZFinalPassResult new];
     NSDate *t0 = NSDate.date;
-    // نوبت، **اولین** کار و روی کل پاس. اول به دو دلیل: پاس نهایی دو تا سه تماس دارد و
-    // نوبتِ تماس‌به‌تماس بین «مو‌به‌مو» و «تمیزکاری» به کارِ دیگری راه می‌داد؛ و از این
-    // خط به بعد هر `return` خودش نوبت را پس می‌دهد، چون آزادسازی کارِ `dealloc` است نه
-    // کارِ ما. نُه نقطه‌ی بازگشتِ این متد هیچ‌کدام چیزی برای یادش ماندن ندارند.
+    // نوبت، **اولین** کار و روی کل پاس: از این خط به بعد هر `return` خودش نوبت را پس
+    // می‌دهد، چون آزادسازی کارِ `dealloc` است نه کارِ ما. هیچ‌کدام از نقطه‌های بازگشتِ
+    // این متد چیزی برای یادش ماندن ندارند.
     NSString *busy = nil;
     ZPassLease *lease = [self claimPass:ZPassOwnerFinal busy:&busy];
     if (!lease) {
@@ -647,8 +648,8 @@ static NSString *ZDropPreamble(NSString *t) {
         r.error = busy;
         return r;
     }
-    // لغو بین هر دو مرحله چک می‌شود، نه فقط اولش: تماس اول ده ثانیه طول می‌کشد و
-    // کاربری که در آن فاصله کنسل زده نباید تماس دوم را هم بپردازد.
+    // لغو قبل از آپلود و قبل از تماس چک می‌شود، نه فقط اولش: بدنه‌ی درخواست چند
+    // مگابایت صداست و کسی که کنسل زده نباید هزینه‌اش را بدهد.
     #define ZBailIfCancelled() do { \
         if (lease.cancelled) { r.cancelled = YES; return r; } \
     } while (0)
@@ -657,81 +658,40 @@ static NSString *ZDropPreamble(NSString *t) {
         r.error = ZFinalPass.missingKeyHint;
         return r;
     }
-    NSString *pVerbatim = [self prompt:@"verbatim"];
-    NSString *pPolish = [self prompt:@"polish"];
-    if (!pVerbatim.length || !pPolish.length) {
-        r.error = @"پرامپت‌های پاس نهایی در بسته‌ی اپ نیستند";
+    NSString *pTranscribe = [self prompt:@"transcribe"];
+    if (!pTranscribe.length) {
+        r.error = @"پرامپت پاس نهایی در بسته‌ی اپ نیست";
         return r;
     }
     NSMutableDictionary *usage = [NSMutableDictionary dictionary];
     NSString *err = nil;
     ZBailIfCancelled();
 
-    // ---------- تماس ۱: صدا ← رونویسی مو‌به‌مو ----------
+    // ---------- یک تماس: صدا ← متن نهایی ----------
     NSDictionary *part = [self audioPart:audio key:key progress:say error:&err];
     if (!part) {
         r.error = err ?: @"صدا فرستاده نشد";
         return r;
     }
-    say(@"رونویسی مو‌به‌مو…");
+    say(@"رونویسی…");
     ZBailIfCancelled();
-    NSString *verbatim = [self ask:pVerbatim
-                             parts:@[@{@"type": @"text", @"text": @"فقط صدا."}, part]
-                             label:@"verbatim" key:key thinking:ZGThinking()
-                             usage:usage error:&err];
-    if (!verbatim.length) {
+    // فقط صدا، و در حالت «همیشه ساده» یک خط شکل. هیچ متنِ پرکننده‌ی دیگری نه: با دو
+    // تماس یک «فقط صدا.» آنجا بود که تماس اول را از تماس دوم جدا کند، و حالا که یک
+    // تماس بیشتر نیست همان جمله خودش پیام کاربر حساب می‌شود. روی یک ویس خاموش، مدل
+    // به جای متن «فقط صدا؟» برگرداند.
+    NSMutableArray *parts = [NSMutableArray array];
+    if (ZSettings.shared.plainNotes) {
+        [parts addObject:@{@"type": @"text",
+                           @"text": @"ساختار: پاراگراف. هیچ بولت و فهرستی نزن، "
+                                     "حتی اگر گفتار شمرده بود."}];
+    }
+    [parts addObject:part];
+    NSString *out = [self ask:pTranscribe parts:parts label:@"transcribe" key:key
+                     thinking:ZGThinking() usage:usage error:&err];
+    if (!out.length) {
         r.error = err ?: @"رونویسی نشد";
         return r;
     }
-    r.verbatim = verbatim;
-    r.text = verbatim;    // از این لحظه، بدترین حالت هم متن دارد
-
-    // ---------- تماس ۲: متن مو‌به‌مو ← متن نهایی ----------
-    say(@"تمیزکاری متن…");
-    ZBailIfCancelled();
-    NSString *shape = ZSettings.shared.plainNotes
-        ? @"\n\nساختار: پاراگراف. هیچ بولت و فهرستی نزن، حتی اگر گفتار شمرده بود."
-        : @"";
-    NSArray *parts2 = @[@{@"type": @"text",
-                          @"text": [@"فقط متن رونویسی مو‌به‌موی همین صدا را داری. "
-                                     "این متن کامل است ولی خام و پر از فیلر؛ صدا را نداری."
-                                    stringByAppendingString:shape]},
-                        @{@"type": @"text", @"text": [@"متن رونویسی مو‌به‌مو:\n\n"
-                                                      stringByAppendingString:verbatim]}];
-    NSString *polished = [self ask:pPolish parts:parts2 label:@"polish" key:key
-                          thinking:ZGThinking() usage:usage error:&err];
-
-    // ---------- دروازه‌ی کامل بودن ----------
-    if (polished.length) {
-        ZCoverage *c = [ZCoverage ofDraft:verbatim output:polished];
-        r.coverage = c;
-        if (!c.passed) {
-            ZLog(@"final: دروازه بست: %@", c.summary);
-            say(@"بررسی کامل بودن: یک بار دیگر…");
-            // تلاش دوم با پرامپت سخت‌گیرتر، و صریحا با فهرست همان چیزی که افتاد.
-            // یک پرامپتِ کلیِ «سخت‌گیرتر» را اندازه گرفتیم و کم اثر بود؛ نام بردنِ خودِ
-            // واژه‌ها کارِ مدل را از «حدس بزن چه می‌خواهی» به «این‌ها را برگردان» می‌برد.
-            NSString *strict = [self strictAddendum:c];
-            NSArray *parts3 = [parts2 arrayByAddingObject:@{@"type": @"text", @"text": strict}];
-            NSString *again = [self ask:pPolish parts:parts3 label:@"polish-strict" key:key
-                               thinking:ZGThinking() usage:usage error:&err];
-            ZCoverage *c2 = again.length ? [ZCoverage ofDraft:verbatim output:again] : nil;
-            if (c2 && c2.passed) {
-                polished = again;
-                r.coverage = c2;
-            } else {
-                // در تردید، خام. قاعده‌ی خود ریپو، و اینجا «خام» یعنی متن مو‌به‌مو که
-                // خودش از متن خام گوگل کامل‌تر است.
-                ZLog(@"final: تلاش دوم هم رد شد (%@)؛ متن مو‌به‌مو می‌نشیند",
-                     c2 ? c2.summary : @"متنی نیامد");
-                if (c2) r.coverage = c2;
-                r.gated = YES;
-                polished = nil;
-            }
-        }
-    }
-
-    NSString *out = polished.length ? polished : verbatim;
 
     // ---------- پاس مکانیکی ----------
     // بعد از مدل و نه قبلش: LLM ها با نیم‌فاصله بی‌دقت‌اند و همین یک تکه‌ی قاعده‌ای
@@ -758,49 +718,24 @@ static NSString *ZDropPreamble(NSString *t) {
     r.seconds = [NSDate.date timeIntervalSinceDate:t0];
     ZBailIfCancelled();
     r.dir = [self archive:audio result:r];
-    ZLog(@"final: تمام در %.0f ثانیه، %ld+%ld توکن، %@%@", r.seconds,
-         (long)r.inTokens, (long)r.outTokens,
-         r.coverage ? r.coverage.summary : @"بی‌سنجش", r.gated ? @" (دروازه بست)" : @"");
+    ZLog(@"final: تمام در %.0f ثانیه، %ld+%ld توکن", r.seconds,
+         (long)r.inTokens, (long)r.outTokens);
     return r;
     #undef ZBailIfCancelled
 }
 
-// فهرست همان چیزی که افتاد، به زبان خودِ پرامپت. متنِ کمکی عمدا «مرجع» صدا زده
-// نمی‌شود: در آزمایش، جمله‌ی «متن خام مرجع کامل بودن است» باعث شد مدل فقط ۳ از ۱۱
-// تکه‌ی گم‌شده را برگرداند، یعنی بدتر از حالتی که هیچ متنی نداشت. متنِ ناقصی که مرجع
-// معرفی شود سقف می‌شود نه لنگر.
-- (NSString *)strictAddendum:(ZCoverage *)c {
-    NSMutableString *s = [NSMutableString stringWithString:
-        @"تلاش قبلی‌ات محتوا انداخت. این بار هیچ چیزی حذف نمی‌شود جز فیلر و تکرار و "
-         "جمله‌ی نیمه‌ی رهاشده. هر جمله‌ی متن بالا باید در خروجی معادلی داشته باشد."];
-    NSArray *hard = [c.lostNumbers arrayByAddingObjectsFromArray:c.lostLatin];
-    if (hard.count) {
-        [s appendFormat:@"\n\nاین‌ها در خروجی‌ات نبودند و باید باشند: %@",
-         [hard componentsJoinedByString:@"، "]];
-    }
-    if (c.missing.count) {
-        NSArray *head = [c.missing subarrayWithRange:NSMakeRange(0, MIN((NSUInteger)40, c.missing.count))];
-        [s appendFormat:@"\n\nاین واژه‌ها هم افتاده بودند: %@", [head componentsJoinedByString:@"، "]];
-    }
-    return s;
-}
-
 // ---------- روی دیسک ----------
-// صدا، متن مو‌به‌مو و متن نهایی، در یک پوشه با نام همان سشن. سه فایل، پس مقایسه‌ی
-// دستی هم ممکن است، نه فقط چرخش در پنل.
+// صدا و متن نهایی، در یک پوشه با نام همان سشن. مقایسه‌ی دستی با صدا ممکن می‌ماند.
 - (NSURL *)archive:(NSURL *)audio result:(ZFinalPassResult *)r {
     NSString *stem = audio.lastPathComponent.stringByDeletingPathExtension;
     NSURL *dir = [[ZSupport() URLByAppendingPathComponent:@"final"] URLByAppendingPathComponent:stem];
     [NSFileManager.defaultManager createDirectoryAtURL:dir withIntermediateDirectories:YES
                                            attributes:nil error:nil];
-    [r.verbatim writeToURL:[dir URLByAppendingPathComponent:@"verbatim.txt"]
-                atomically:YES encoding:NSUTF8StringEncoding error:nil];
     [r.text writeToURL:[dir URLByAppendingPathComponent:@"final.txt"]
             atomically:YES encoding:NSUTF8StringEncoding error:nil];
     NSString *meta = [NSString stringWithFormat:
-        @"model=%@ thinking=%@\naudio=%@\nseconds=%.0f tokens=%ld+%ld gated=%d\n%@\n",
-        ZGModel(), ZGThinking(), audio.path, r.seconds, (long)r.inTokens, (long)r.outTokens,
-        r.gated, r.coverage ? r.coverage.summary : @"بی‌سنجش"];
+        @"model=%@ thinking=%@\naudio=%@\nseconds=%.0f tokens=%ld+%ld\n",
+        ZGModel(), ZGThinking(), audio.path, r.seconds, (long)r.inTokens, (long)r.outTokens];
     [meta writeToURL:[dir URLByAppendingPathComponent:@"meta.txt"]
           atomically:YES encoding:NSUTF8StringEncoding error:nil];
     return dir;
@@ -858,10 +793,8 @@ int ZFinalPassMain(NSArray<NSString *> *args) {
         printf("finalpass: %s\n", res.error.UTF8String);
         return 1;
     }
-    fprintf(stderr, "  %.0f ثانیه، %ld+%ld توکن، %s%s\n", res.seconds,
-            (long)res.inTokens, (long)res.outTokens,
-            res.coverage ? res.coverage.summary.UTF8String : "بی‌سنجش",
-            res.gated ? " (دروازه بست)" : "");
+    fprintf(stderr, "  %.0f ثانیه، %ld+%ld توکن\n", res.seconds,
+            (long)res.inTokens, (long)res.outTokens);
     printf("%s\n", res.dir.path.UTF8String);
     return 0;
 }

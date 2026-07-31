@@ -1796,23 +1796,17 @@ static NSString *ZModeLabel(ZMode m) {
         [self finishNow];
         return;
     }
-    // سه نسخه، برای مقایسه با یک دکمه. خام فقط وقتی هست که موتوری واقعا شنیده باشد
+    // دو نسخه، برای مقایسه با یک دکمه. خام فقط وقتی هست که موتوری واقعا شنیده باشد
     // (حالت یادداشت متن خام ندارد).
     NSMutableArray *vs = [NSMutableArray arrayWithObject:@[@"نهایی", r.text]];
-    if (r.verbatim.length && ![r.verbatim isEqualToString:r.text]) {
-        [vs addObject:@[@"مو‌به‌مو", r.verbatim]];
-    }
     if (_rawSessionText.length) [vs addObject:@[@"خام", _rawSessionText]];
     _versions = vs;
     _versionAt = 0;
     [_panel setEditorText:r.text];
     [ZInjector copyFinal:r.text];
     ZPlay(ZSoundPolish);
-    NSString *note = r.gated
-        ? @"دروازه بست؛ متن مو‌به‌مو نشست"
-        : [NSString stringWithFormat:@"پاس نهایی نشست · %@ ثانیه",
-           ZFaDigits([NSString stringWithFormat:@"%.0f", r.seconds])];
-    [_panel flash:note];
+    [_panel flash:[NSString stringWithFormat:@"پاس نهایی نشست · %@ ثانیه",
+                   ZFaDigits([NSString stringWithFormat:@"%.0f", r.seconds])]];
     [self finishNow];
 }
 

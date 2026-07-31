@@ -5,7 +5,7 @@
 //     که در جریان است در آن هست.
 //   · نوبت مالِ **کل پاس** است نه یک تماس: بینِ تماس اول و دوم و سومِ یک پاس هم کسی
 //     تو نمی‌آید، و نتیجه‌ی پاسِ اول دست‌نخورده می‌ماند.
-//   · هر نقطه‌ی بازگشت نوبت را پس می‌دهد. نُه مورد، به همان ترتیبی که در دو متد
+//   · هر نقطه‌ی بازگشت نوبت را پس می‌دهد، به همان ترتیبی که در دو متد
 //     `work:` هستند، و هیچ‌کدام «آزاد کن» صدا نمی‌زند: آزادسازی کارِ `dealloc` است.
 //     تست عمدا استخر تازه نمی‌سازد، پس اگر روزی ARC نوبت را به استخر بیندازد (یعنی
 //     آزاد شدن تا تخلیه‌ی استخر عقب بیفتد) همین‌جا قرمز می‌شود.
@@ -25,14 +25,13 @@ static void ok(NSString *name, BOOL cond, NSString *detail) {
     if (!cond && detail.length) printf("      %s\n", detail.UTF8String);
 }
 
-// ---------- نُه نقطه‌ی بازگشت ----------
+// ---------- نقطه‌های بازگشت ----------
 // نام‌ها همان‌هایی است که در `-[ZFinalPass work:lang:say:]` و
 // `-[ZEnhance work:lang:say:]` واقعا وجود دارند. اگر روزی یکی اضافه شود، همین‌جا هم
 // یک سطر اضافه می‌شود و شکل کار عوض نمی‌شود.
 static NSString *const kBails[] = {
     @"key-missing", @"prompt-missing", @"cancelled-before-audio", @"audio-part-failed",
-    @"cancelled-before-verbatim", @"verbatim-empty", @"cancelled-before-polish",
-    @"gate-gave-up", @"normal-end",
+    @"cancelled-before-transcribe", @"transcribe-empty", @"gate-gave-up", @"normal-end",
 };
 #define kBailCount (sizeof(kBails) / sizeof(kBails[0]))
 
@@ -46,7 +45,7 @@ static NSString *bailAt(ZPassLock *lock, NSUInteger stop) {
     return @"fell-through";
 }
 
-// ---------- یک پاسِ کامل، سه تماس ----------
+// ---------- یک پاسِ کامل، چند تماس ----------
 // دو سمافور به‌جای خواب: تست باید قطعی باشد نه امیدوار. `at` یعنی «وسط تماس i ام‌ام»
 // و `go` یعنی «برو جلو».
 static NSString *fakePass(ZPassLock *lock, NSString *owner,
