@@ -130,8 +130,24 @@ int main(void) {
         {
             NSString *saved = @"پیشنهاد می‌کنم شما هم شونه‌تون";
             NSString *rolledBack = @"پیشنهاد می‌کنم شما هم شونه";
-            eq(@"merge: a rollback across a half-space keeps the longer",
-               ZMergeInterim(saved, rolledBack), saved);
+            eq(@"salvage: a rollback across a half-space keeps the longer",
+               ZInterimRatchet(saved, rolledBack), saved);
+        }
+
+        // و بازنویسیِ دُم، که هیچ‌کدام زیررشته‌ی دیگری نیست. سشن 2026-08-01-02-19-17:
+        // نجات‌گرفته به «دیگه بشه مثلاً ۶ ماهه» تمام می‌شد و آخرین interim همان جمله
+        // را با «یادش نره» بازنویسی کرده بود. ادغامِ چسبنده هر دو را نگه داشت و کل
+        // جمله دو بار در متن نشست.
+        {
+            NSString *head = @"کلا این گزینه که مثلاً ۶ ماهه بگیریم هم وجود داره من حالا "
+                @"فعلاً علی الحساب یه ماه یه ماه تمدید می‌کردم سرورهای مختلفی که حالا "
+                @"دارم رو تا اینکه قطعی بشه و مثلاً کارش جون بگیره و اینا که";
+            NSString *saved = [head stringByAppendingString:
+                @" دیگه بشه مثلاً ۶ ماهه حتی یه ساله اینا آدم تمدید کنه خیالش راحت"];
+            NSString *rewritten = [head stringByAppendingString:@" یادش نره"];
+            NSString *got = ZInterimRatchet(saved, rewritten);
+            ok(@"salvage: a rewritten tail is the same utterance, not a second one",
+               [got componentsSeparatedByString:@"وجود داره"].count == 2, got);
         }
 
         // ---------- راچتِ دُم: عقب‌گردِ interim نمایش را پاک نکند ----------

@@ -102,6 +102,11 @@ int ZReplayMain(NSArray<NSString *> *args) {
         ledger.pendingThrottle = 0;
 
         NSString *note = nil, *expect = nil;
+        // نجاتِ بازسازی‌شده از ورودی‌های خامش. رویدادِ salvage دقیقا پیش از رویدادی
+        // نوشته می‌شود که نتیجه‌اش را مصرف می‌کند (final یا rotate)، پس همان یکی
+        // مصرفش می‌کند و بس. لاگ‌های قدیمی این رویداد را ندارند و همان رشته‌ی
+        // ادغام‌شده‌ی ثبت‌شده را می‌دوانند، پس کورپوس نمی‌شکند.
+        NSString *salvaged = nil;
         NSUInteger lineNo = 0;
         for (NSString *raw in [body componentsSeparatedByString:@"\n"]) {
             lineNo++;
@@ -122,12 +127,20 @@ int ZReplayMain(NSArray<NSString *> *args) {
                 tx.weldWords = ZStitchWords([e[@"sec"] doubleValue]);
                 continue;
             }
+            if ([k isEqualToString:@"salvage"]) {
+                salvaged = ZInterimRatchet(ZEvStr(e, @"best"), ZEvStr(e, @"last"));
+                continue;
+            }
+            NSString *fromSalvage = salvaged;
+            salvaged = nil;
+
             if ([k isEqualToString:@"interim"]) [tx setInterim:ZEvStr(e, @"text")];
             else if ([k isEqualToString:@"final"]) {
-                [tx addFinal:ZEvStr(e, @"text") weld:[e[@"weld"] boolValue]];
+                [tx addFinal:fromSalvage ?: ZEvStr(e, @"text") weld:[e[@"weld"] boolValue]];
             }
             else if ([k isEqualToString:@"rotate"]) {
-                [tx beginDrainWithCarry:ZEvStr(e, @"carry") weld:[e[@"weld"] boolValue]];
+                [tx beginDrainWithCarry:fromSalvage ?: ZEvStr(e, @"carry")
+                                   weld:[e[@"weld"] boolValue]];
             }
             else if ([k isEqualToString:@"drainfinal"]) [tx drainFinal:ZEvStr(e, @"text")];
             else if ([k isEqualToString:@"drainend"]) [tx endDrain];

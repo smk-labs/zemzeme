@@ -79,11 +79,15 @@ static NSString *ZOverlapJoin(NSString *best, NSString *cur) {
     return [[best substringToIndex:s] stringByAppendingString:cur];
 }
 
-// ---------- ادغام دقیق: دو interim از یک استریم ----------
-// گوگل گاهی پیشوند تثبیت‌شده را از interim های بعدی می‌اندازد؛ موقع نجات، بلندترین
-// نسخه با دم فعلی ادغام می‌شود که کلمه‌ای گم نشود.
-// اینجا تطبیق **دقیق** است و باید بماند: هر دو طرف از یک تشخیصِ واحد می‌آیند، پس اگر
-// نویسه‌ای فرق کرده یعنی واقعا کلمه عوض شده، نه اینکه بد شنیده شده باشد.
+// ---------- چسباندنِ یک دُمِ معلق به متنِ تمام‌شده ----------
+//
+// این با ZInterimRatchet یک پرسش نیست و نباید جایش را بگیرد. اینجا یک طرف متنِ
+// تمام‌شده است و طرف دیگر دُمی که باید *بعدش* بنشیند، پس «کامل‌تر را بردار» غلط
+// است: متن را می‌بلعد. تنها کاری که می‌کند انداختنِ هم‌پوشانیِ مو‌به‌مو است.
+//
+// دو snapshot از یک استریم پرسشِ دیگری است و جوابش ZInterimRatchet است. یک بار همین
+// تابع آنجا هم کار می‌کرد و هر بازنویسیِ گوگل یک جمله‌ی تکراری می‌ساخت
+// (سشن 2026-08-01-02-19-17).
 NSString *ZMergeInterim(NSString *best, NSString *cur) {
     best = [best stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     cur = [cur stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];

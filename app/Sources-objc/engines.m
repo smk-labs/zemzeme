@@ -431,8 +431,24 @@
 
 // متن خاکستری معلق را قبل از هر مرگ/ری‌استارت قطعی کن که هیچ‌وقت گم نشود.
 // بلندترین interim این پاره هم با دم فعلی ادغام می‌شود (پنجره لغزان گوگل کلمه نخورد).
+//
+// با ZInterimRatchet و نه ZMergeInterim: این دو رشته دو snapshot از **یک** استریم‌اند و
+// همین پرسشِ راچت است. ادغامِ چسبنده اینجا هر بازنویسیِ گوگل را به یک جمله‌ی تکراری
+// ترجمه می‌کرد: در سشن 2026-08-01-02-19-17 نجات‌گرفته به «دیگه بشه مثلاً ۶ ماهه» تمام
+// می‌شد و آخرین interim همان جمله را با «یادش نره» بازنویسی کرده بود، پس سرِ هر دو یکی
+// بود ولی هیچ‌کدام زیررشته‌ی دیگری نبود و carry دو برابر شد.
+//
+// و ورودی‌ها ثبت می‌شوند، نه فقط نتیجه. تا امروز لاگ فقط رشته‌ی ادغام‌شده را داشت، پس
+// بازپخش خودِ ادغام را هرگز نمی‌دواند و این باگ از کورپوسِ طلایی رد شد. رویدادِ salvage
+// دقیقا پیش از رفتن به رونوشت نوشته می‌شود، پس بازپخش همان لحظه بازسازی‌اش می‌کند.
+- (NSString *)mergedSalvage {
+    ZEventLogWrite(@{@"k": @"salvage",
+                     @"best": _salvageBest ?: @"", @"last": _lastInterim ?: @""});
+    return ZInterimRatchet(_salvageBest, _lastInterim);
+}
+
 - (void)salvageFrom:(ZGoogleStream *)s {
-    NSString *t = ZMergeInterim(_salvageBest, _lastInterim);
+    NSString *t = [self mergedSalvage];
     _lastInterim = @"";
     _salvageBest = @"";
     // «چیزی برای تحویل ندارم» یعنی همین، نه «هرچه روی صفحه است را پاک کن». این بند
@@ -561,8 +577,7 @@
     // «یک‌دفعه نصف بیشتر متن پرید». دفترِ salvage پاک می‌شود که همان حرف‌ها دو بار نروند.
     // پرچمِ جوش مالِ همین استریم است. در گفتار بی‌وقفه سشن پیش از دادن متن قطعی
     // می‌چرخد، پس اولین متنش از مسیر تخلیه می‌رسد و بی این پرچم جوش نمی‌خورد.
-    [_tx beginDrainWithCarry:ZMergeInterim(_salvageBest, _lastInterim)
-                        weld:[self takeWeldFor:old]];
+    [_tx beginDrainWithCarry:[self mergedSalvage] weld:[self takeWeldFor:old]];
     _lastInterim = @"";
     _salvageBest = @"";
     [_feedLock lock];

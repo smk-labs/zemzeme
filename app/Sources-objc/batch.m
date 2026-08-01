@@ -299,7 +299,8 @@ static void ZSplitTail(NSString *all, NSUInteger words, NSString **head, NSStrin
 
     [lock lock];
     NSString *text = [finals componentsJoinedByString:@" "];
-    NSString *hanging = ZMergeInterim(bestInterim, interim);
+    // دو snapshot از یک استریم: همان پرسشِ راچت، نه چسباندنِ دو تکه‌ی جدا
+    NSString *hanging = ZInterimRatchet(bestInterim, interim);
     [lock unlock];
     if (hanging.length) text = ZMergeInterim(text, hanging);
     text = [text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
