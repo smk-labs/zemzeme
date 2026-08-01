@@ -123,6 +123,17 @@ int main(void) {
            [NSString stringWithFormat:@"drop=%lu score=%.2f", (unsigned long)weak.dropWords, weak.score]);
 
 
+        // ---------- نجاتِ سر چرخش: نیم‌فاصله نباید کلِ جمله را دو بار بنویسد ----------
+        // سشن واقعی 2026-07-26-03-09-19: نجات‌گرفته به «شونه‌تون» تمام می‌شد و آخرین
+        // interim به «شونه» عقب نشسته بود. تطبیقِ پیش‌فرض سرِ نیم‌فاصله می‌ایستاد، پس
+        // «شونه» را داخل «شونه‌تون» ندید و carry دو برابر شد: همان ۵۶ کلمه دو بار.
+        {
+            NSString *saved = @"پیشنهاد می‌کنم شما هم شونه‌تون";
+            NSString *rolledBack = @"پیشنهاد می‌کنم شما هم شونه";
+            eq(@"merge: a rollback across a half-space keeps the longer",
+               ZMergeInterim(saved, rolledBack), saved);
+        }
+
         // ---------- راچتِ دُم: عقب‌گردِ interim نمایش را پاک نکند ----------
         // رشته‌ها از سشن واقعی 03-09-19 همین دستگاه‌اند (رویدادهای ۱۰۵ تا ۱۰۸).
 
@@ -141,6 +152,33 @@ int main(void) {
         eq(@"ratchet: sliding window joins at the tail",
            ZInterimRatchet(@"یک دو سه چهار پنج", @"چهار پنج شش هفت"),
            @"یک دو سه چهار پنج شش هفت");
+        // نیم‌فاصله سر رشدِ کلمه. دو باگِ واقعیِ سشن 2026-08-01-00-16-14 و ریشه‌ی هر
+        // دو یکی بود: containsString: پیش‌فرض سرِ خوشه‌ی نویسه می‌ایستد و U+200C در
+        // یونیکد ادامه‌ی حرف قبلی است، پس «نکته» را داخل «نکته‌اش» پیدا نمی‌کرد و
+        // راچت به جای جایگزینی می‌چسباند. از همان‌جا به بعد دُم مسموم بود و کل جمله
+        // سه بار در متن نشست.
+        eq(@"ratchet: a word growing across a half-space is the same word",
+           ZInterimRatchet(@"نکته", @"نکته‌اش"), @"نکته‌اش");
+        eq(@"ratchet: and inside a sentence too",
+           ZInterimRatchet(@"هست یعنی لایه", @"هست یعنی لایه‌های"),
+           @"هست یعنی لایه‌های");
+        eq(@"ratchet: a sliding window whose last word is still half-typed",
+           ZInterimRatchet(@"ت ی‌ا", @"ی‌اسی"), @"ت ی‌اسی");
+        eq(@"ratchet: a sliding window with a partial tail word",
+           ZInterimRatchet(@"یک دو سه چهار پن", @"سه چهار پنج شش"),
+           @"یک دو سه چهار پنج شش");
+        {
+            // هم‌پوشانیِ درازتر از پنجره‌ی قدیمیِ ۱۶ کلمه‌ای. سرِ cur هم بازنویسی شده،
+            // پس فقط هم‌ترازیِ فازی جوابش را دارد. با سقفِ ۱۶، DP یک هم‌ترازیِ قلابیِ
+            // کوتاه‌تر پیدا می‌کرد و باقی‌مانده را می‌چسباند: یک جمله دو بار.
+            NSString *best = @"ت ی‌اسی و تک سونامی کامل کلی که اون یک کار اساسی اولی "
+                @"در هر موضوعی هست یعنی لایه";
+            NSString *cur = @"‌اسی و تک سونامی کامل کلی که اون یک کار اساسی اولی "
+                @"در هر موضوعی هست یعنی لایه‌های";
+            NSString *got = ZInterimRatchet(best, cur);
+            ok(@"ratchet: an overlap longer than sixteen words still joins once",
+               [got componentsSeparatedByString:@"سونامی"].count == 2, got);
+        }
         {
             // روی دنباله‌ی واقعی، نمایش هیچ‌وقت کوتاه نمی‌شود
             NSArray *seq = @[rolled, longI, rolled,

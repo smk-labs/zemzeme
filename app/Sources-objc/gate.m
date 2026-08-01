@@ -120,7 +120,10 @@ static NSArray<NSString *> *ZUniq(NSArray<NSString *> *in) {
     // بیشترِ فهرستِ «جا افتاد» پیش از این تکه، همین بود.
     NSString *joinedOut = [ot componentsJoinedByString:@""];
     BOOL (^have)(NSString *) = ^BOOL(NSString *w) {
-        return [oset containsObject:w] || [joinedOut rangeOfString:w].location != NSNotFound;
+        // NSLiteralSearch لازم است، وگرنه جست‌وجوی پیش‌فرض سر خوشه‌ی نویسه می‌ایستد و
+        // «نکته» را داخل «نکته‌اش» پیدا نمی‌کند: کلمه‌ی حاضر، گم‌شده گزارش می‌شد.
+        return [oset containsObject:w]
+            || [joinedOut rangeOfString:w options:NSLiteralSearch].location != NSNotFound;
     };
     NSSet *stop = ZStopWords();
     NSMutableArray *content = [NSMutableArray array], *missing = [NSMutableArray array];

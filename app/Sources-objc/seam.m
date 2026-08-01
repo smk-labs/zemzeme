@@ -18,6 +18,67 @@ NSString *ZJoinText(NSString *a, NSString *b) {
     return [NSString stringWithFormat:@"%@ %@", x, y];
 }
 
+// آیا y مو‌به‌مو، نویسه‌به‌نویسه، داخل x هست.
+//
+// عمدا NSLiteralSearch و نه containsString:. جست‌وجوی پیش‌فرضِ Foundation روی مرزِ
+// خوشه‌ی نویسه می‌ایستد و نیم‌فاصله (U+200C) در یونیکد «ادامه‌ی حرف قبلی» است، پس
+// «نکته» را داخل «نکته‌اش» پیدا نمی‌کرد: تطبیق وسطِ خوشه تمام می‌شد و رد می‌شد.
+// در فارسی این حالتِ نادر نیست، قاعده است: هر کلمه‌ای که با نیم‌فاصله ادامه پیدا
+// می‌کند (لایه‌های، نکته‌اش، می‌شود) دقیقا همین شکل رشد می‌کند.
+//
+// اندازه‌گیری روی سشن 2026-08-01-00-16-14: interim از «نکته» به «نکته‌اش» رفت،
+// آزمونِ پیشوند نه گفت، و ratchet به جای جایگزینی چسباند. از همان یک نویسه به بعد
+// دُم مسموم بود و هر snapshot بعدی روی هم انباشته شد، تا کل جمله سه بار در متن
+// نشست. دو بار در یک سشن، هر دو بار سر نیم‌فاصله.
+static BOOL ZContainsExact(NSString *x, NSString *y) {
+    return [x rangeOfString:y options:NSLiteralSearch].location != NSNotFound;
+}
+
+// ---------- چسبِ دو snapshot از یک استریم ----------
+
+// بلندترین دُمِ best که مو‌به‌مو سرِ cur باشد، و از مرزِ کلمه شروع شود.
+// NSNotFound یعنی هیچ هم‌پوشانی‌ای نیست.
+//
+// چرا نویسه‌ای و نه کلمه‌ای: تشخیصِ زنده کلمه‌ی آخر را نصفه می‌فرستد و بعد کاملش
+// می‌کند. مقایسه‌ی کلمه‌به‌کلمه «س» و «سونامی» را دو کلمه‌ی جدا می‌بیند، پس درست
+// همان جایی که پنجره لغزیده بود هم‌پوشانی را از دست می‌داد و دو تکه را سرِ هم
+// می‌چسباند. اندازه‌گیری روی سشن 2026-08-01-00-16-14: «ت ی‌ا» + «ی‌اسی» شد
+// «ت ی‌ا ی‌اسی» و از همان‌جا دُم مسموم شد.
+//
+// دو شرط، و هر دو لازم‌اند:
+//
+// از مرزِ کلمه شروع شود، وگرنه یک هم‌پوشانیِ اتفاقیِ دو نویسه‌ای وسطِ کلمه دو تکه‌ی
+// بی‌ربط را به هم می‌دوخت.
+//
+// و بیشترِ cur را توضیح بدهد. دو snapshot پشت‌سرهم چند صدم ثانیه فاصله دارند، پس
+// تقریبا تمامِ cur باید همان چیزی باشد که قبلا هم بود؛ هم‌پوشانیِ یک‌نویسه‌ای که
+// نود نویسه‌ی تازه را با خودش می‌آورد، snapshot نیست، جوشِ اشتباه است. در سشن
+// 2026-07-31-21-23-40 دُم به «و» تمام می‌شد و cur با «وی» شروع می‌شد: همان یک
+// نویسه سرِ کلمه‌ی دیگری را گرفت و کل جمله دوباره نوشته شد. رد کردن اینجا یعنی
+// «تصمیم با هم‌ترازیِ فازی»، نه «بچسبان».
+static const double kZOverlapShare = 0.5;
+
+static NSUInteger ZOverlapStart(NSString *best, NSString *cur) {
+    NSUInteger n = best.length, m = cur.length;
+    for (NSUInteger s = 0; s < n; s++) {
+        if (s && [best characterAtIndex:s - 1] != ' ') continue;
+        NSUInteger len = n - s;
+        if (len > m) continue;
+        // بلندترین اول، پس اولین تطبیق بهترین سهم را هم دارد
+        if (![[best substringFromIndex:s] isEqualToString:[cur substringToIndex:len]]) continue;
+        return (double)len >= kZOverlapShare * (double)m ? s : NSNotFound;
+    }
+    return NSNotFound;
+}
+
+// دو snapshot از یک استریم را می‌چسباند: هم‌پوشانی یک بار نوشته می‌شود.
+// nil یعنی هیچ نسبتی پیدا نشد و تصمیم با صدازننده است.
+static NSString *ZOverlapJoin(NSString *best, NSString *cur) {
+    NSUInteger s = ZOverlapStart(best, cur);
+    if (s == NSNotFound) return nil;
+    return [[best substringToIndex:s] stringByAppendingString:cur];
+}
+
 // ---------- ادغام دقیق: دو interim از یک استریم ----------
 // گوگل گاهی پیشوند تثبیت‌شده را از interim های بعدی می‌اندازد؛ موقع نجات، بلندترین
 // نسخه با دم فعلی ادغام می‌شود که کلمه‌ای گم نشود.
@@ -28,20 +89,9 @@ NSString *ZMergeInterim(NSString *best, NSString *cur) {
     cur = [cur stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (!best.length) return cur;
     if (!cur.length) return best;
-    if ([best containsString:cur]) return best;
-    NSArray *a = [best componentsSeparatedByString:@" "];
-    NSArray *b = [cur componentsSeparatedByString:@" "];
-    NSUInteger maxK = MIN(a.count, b.count);
-    for (NSUInteger k = maxK; k > 0; k--) {
-        NSArray *tailA = [a subarrayWithRange:NSMakeRange(a.count - k, k)];
-        NSArray *headB = [b subarrayWithRange:NSMakeRange(0, k)];
-        if ([tailA isEqualToArray:headB]) {
-            NSArray *rest = [b subarrayWithRange:NSMakeRange(k, b.count - k)];
-            return rest.count
-                ? [best stringByAppendingFormat:@" %@", [rest componentsJoinedByString:@" "]]
-                : best;
-        }
-    }
+    if (ZContainsExact(best, cur)) return best;
+    NSString *joined = ZOverlapJoin(best, cur);
+    if (joined) return joined;
     return [NSString stringWithFormat:@"%@ %@", best, cur];
 }
 
@@ -129,7 +179,9 @@ ZSeamMatch ZSeamFind(NSString *a, NSString *b, NSUInteger maxWords) {
     if (!a.length || !b.length) return none;
     NSArray *A = [a componentsSeparatedByString:@" "];
     NSArray *B = [b componentsSeparatedByString:@" "];
-    NSUInteger W = MAX((NSUInteger)2, maxWords);
+    // سقفِ ۶۳ اندازه‌ی جدولِ C است و نه یک انتخابِ معنایی. بی این، maxWords بزرگ‌تر
+    // از ۶۳ روی متنِ بلند از جدول بیرون می‌نوشت.
+    NSUInteger W = MIN((NSUInteger)63, MAX((NSUInteger)2, maxWords));
     NSUInteger p = MIN(A.count, W), q = MIN(B.count, W);
 
     NSMutableArray *na = [NSMutableArray arrayWithCapacity:p];
@@ -193,8 +245,12 @@ NSString *ZInterimRatchet(NSString *best, NSString *cur) {
     cur = [(cur ?: @"") stringByTrimmingCharactersInSet:ws];
     if (!best.length) return cur;
     if (!cur.length) return best;
-    if ([best containsString:cur]) return best;   // عقب‌گرد به پیشوند: نگهش دار
-    if ([cur containsString:best]) return cur;    // رشد عادی
+    if (ZContainsExact(best, cur)) return best;   // عقب‌گرد به پیشوند: نگهش دار
+    if (ZContainsExact(cur, best)) return cur;    // رشد عادی
+    // پنجره‌ی لغزانِ ساده: دُمِ best مو‌به‌مو سرِ cur است، حتی اگر کلمه‌ی آخر نصفه
+    // باشد. این را پیش از حدس‌های فازی می‌آزماییم چون قطعی است، نه محتمل.
+    NSString *spliced = ZOverlapJoin(best, cur);
+    if (spliced) return spliced;
 
     NSArray *A = [best componentsSeparatedByString:@" "];
     NSArray *B = [cur componentsSeparatedByString:@" "];
@@ -211,7 +267,14 @@ NSString *ZInterimRatchet(NSString *best, NSString *cur) {
         return B.count >= A.count ? cur : best;
     }
     // پنجره‌ی لغزان: سرِ cur به دمِ best می‌چسبد؟ همان هم‌ترازیِ فازیِ جوش.
-    ZSeamMatch m = ZSeamFind(best, cur, 16);
+    //
+    // پنجره تا ته می‌رود، نه ۱۶ کلمه. اینجا با درزِ دو تشخیصِ جدا فرق دارد: آنجا
+    // هم‌پوشانی از ثانیه‌های واقعیِ صدا می‌آید و پنجره‌ی گشاد یعنی بلعیدنِ متن، ولی
+    // اینجا هر دو طرف یک snapshot از یک استریم‌اند و هم‌پوشانی می‌تواند کلِ متن باشد.
+    // سقفِ ۱۶ دقیقا همان جایی بود که شکست: هم‌پوشانیِ واقعی ۱۷ کلمه بود، DP یک
+    // هم‌ترازیِ قلابیِ کوتاه‌تر پیدا کرد و باقی‌مانده را چسباند، پس یک جمله دو بار
+    // نوشته شد (سشن 2026-08-01-00-16-14، «یعنی لایه‌های»).
+    ZSeamMatch m = ZSeamFind(best, cur, MAX(best.length, cur.length));
     if (m.dropWords >= B.count) return best;
     if (m.dropWords) {
         NSArray *rest = [B subarrayWithRange:NSMakeRange(m.dropWords, B.count - m.dropWords)];
@@ -233,22 +296,37 @@ NSString *ZUncoveredTail(NSString *whole, NSString *covered) {
     if (!covered.length) return whole;
     NSArray *A = [whole componentsSeparatedByString:@" "];
     NSArray *B = [covered componentsSeparatedByString:@" "];
-    if (B.count + 8 > A.count && [covered containsString:whole]) return @"";
-    if (A.count > 60 || B.count > 60) {
-        // بزرگ‌تر از این یعنی پوشش تقریبا قطعی است؛ هزینه‌ی DP را نمی‌دهیم
-        return B.count >= A.count ? @"" : whole;
-    }
+    if (B.count + 8 > A.count && ZContainsExact(covered, whole)) return @"";
+
+    // متنِ بلند در پنجره هم‌تراز می‌شود، نه یک‌جا. لازم هم نیست یک‌جا شود: تنها چیزی
+    // که می‌خواهیم بدانیم این است که covered *کجای* whole تمام می‌شود، پس فقط دُمِ
+    // covered و همان حوالی از whole به کار می‌آید.
+    //
+    // قبلا اینجا یک پرتگاه بود: بیش از ۶۰ کلمه یعنی حدس، «حتما همه‌اش پوشیده» یا
+    // «حتما هیچ‌کدام». حدسِ دوم روی سشن واقعی 2026-07-26-03-09-19 (دُمِ ۱۱۲ کلمه در
+    // برابر متنِ قطعیِ ۵۶ کلمه) کلِ دُم را پوشش‌نداده اعلام کرد، و همان ۵۶ کلمه سرِ
+    // بستنِ تخلیه دوباره در متن نشست. برای کاربر همان «یک جمله دو بار» بود.
     NSUInteger n = A.count, m = B.count;
-    NSMutableArray *nA = [NSMutableArray arrayWithCapacity:n];
-    NSMutableArray *nB = [NSMutableArray arrayWithCapacity:m];
-    for (NSString *t in A) [nA addObject:ZSeamNorm(t)];
-    for (NSString *t in B) [nB addObject:ZSeamNorm(t)];
-    double C[61][61];
+    NSUInteger L = MIN(m, (NSUInteger)45);              // دُمِ covered
+    NSUInteger dropped = m - L;                         // سرِ covered که کنار گذاشتیم
+    NSUInteger lo = dropped > 15 ? dropped - 15 : 0;    // پنجره‌ی whole
+    NSUInteger hi = MIN(n, lo + 75);
+    if (hi <= lo) return @"";                           // whole کوتاه‌تر از پیشوندِ قطعا پوشیده
+    NSUInteger P = hi - lo;
+
+    NSMutableArray *nA = [NSMutableArray arrayWithCapacity:P];
+    NSMutableArray *nB = [NSMutableArray arrayWithCapacity:L];
+    for (NSUInteger i = lo; i < hi; i++) [nA addObject:ZSeamNorm(A[i])];
+    for (NSUInteger j = m - L; j < m; j++) [nB addObject:ZSeamNorm(B[j])];
+
+    double C[76][46];
     C[0][0] = 0;
-    for (NSUInteger i = 1; i <= n; i++) C[i][0] = (double)i;
-    for (NSUInteger j = 1; j <= m; j++) C[0][j] = (double)j;
-    for (NSUInteger i = 1; i <= n; i++) {
-        for (NSUInteger j = 1; j <= m; j++) {
+    // شروعِ آزاد فقط وقتی که سرِ covered را خودمان دور ریخته‌ایم. اگر همه‌ی covered
+    // در دست است، سرِ هر دو یک لحظه‌ی صوتی است و پریدن از روی whole باید خرج بدهد.
+    for (NSUInteger i = 1; i <= P; i++) C[i][0] = dropped ? 0.0 : (double)i;
+    for (NSUInteger j = 1; j <= L; j++) C[0][j] = (double)j;
+    for (NSUInteger i = 1; i <= P; i++) {
+        for (NSUInteger j = 1; j <= L; j++) {
             double sub = C[i - 1][j - 1] + (1.0 - ZSeamTokenSim(nA[i - 1], nB[j - 1]));
             double del = C[i - 1][j] + 1.0;
             double ins = C[i][j - 1] + 1.0;
@@ -259,13 +337,14 @@ NSString *ZUncoveredTail(NSString *whole, NSString *covered) {
     // یعنی دمِ کوتاه‌تر، یعنی کمترین ادعا.
     NSUInteger bestI = 0;
     double bestCost = 1e9;
-    for (NSUInteger i = 0; i <= n; i++) {
-        if (C[i][m] <= bestCost) {
-            bestCost = C[i][m];
+    for (NSUInteger i = 0; i <= P; i++) {
+        if (C[i][L] <= bestCost) {
+            bestCost = C[i][L];
             bestI = i;
         }
     }
-    double score = 1.0 - bestCost / (double)MAX(m, MAX(bestI, (NSUInteger)1));
+    double score = 1.0 - bestCost / (double)MAX(L, MAX(bestI, (NSUInteger)1));
+    bestI += lo;
     if (score < 0.60 || bestI >= n) return @"";
     NSArray *rest = [A subarrayWithRange:NSMakeRange(bestI, n - bestI)];
     return [rest componentsJoinedByString:@" "];
