@@ -2,16 +2,11 @@
     "title": "Zemzeme Dictation",
     "rules": [
         {
-            "description": "Double-tap Right Command: wake Zemzeme and start listening. Runs only while Zemzeme is down; once it is up the app owns the key and this rule stays out of the way (lone taps send nothing, safe inside Windows App).",
+            "description": "Double-tap Right Command: if Zemzeme is down, wake it and start listening. Right Command always passes through untouched, so while Zemzeme is up the app hears every tap and owns all its own shortcuts.",
             "manipulators": [
                 {
                     "type": "basic",
                     "conditions": [
-                        {
-                            "type": "variable_unless",
-                            "name": "zemzeme_running",
-                            "value": 1
-                        },
                         {
                             "type": "variable_if",
                             "name": "rcmd_double_tap",
@@ -34,19 +29,15 @@
                             }
                         },
                         {
-                            "shell_command": "open -g 'zemzeme://start'"
+                            "key_code": "right_command"
+                        },
+                        {
+                            "shell_command": "/usr/bin/pgrep -x zemzeme >/dev/null || /usr/bin/open -g 'zemzeme://start'"
                         }
                     ]
                 },
                 {
                     "type": "basic",
-                    "conditions": [
-                        {
-                            "type": "variable_unless",
-                            "name": "zemzeme_running",
-                            "value": 1
-                        }
-                    ],
                     "from": {
                         "key_code": "right_command",
                         "modifiers": {
@@ -57,8 +48,7 @@
                     },
                     "to": [
                         {
-                            "key_code": "right_command",
-                            "lazy": true
+                            "key_code": "right_command"
                         }
                     ],
                     "to_if_alone": [

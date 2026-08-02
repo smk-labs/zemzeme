@@ -34,6 +34,7 @@ clang -fobjc-arc -O2 -Wall -Wno-unused-function \
   -framework AppKit -framework AVFoundation -framework Carbon \
   -framework CoreText -framework ApplicationServices -framework QuartzCore \
   -framework AudioToolbox -framework CoreMedia -framework Security \
+  -framework ServiceManagement \
   -o .build/zemzeme
 
 rm -rf "$APP"
@@ -81,11 +82,6 @@ if pgrep -x zemzeme >/dev/null; then
     pkill -x zemzeme >/dev/null 2>&1 || true
     for _ in $(seq 20); do pgrep -x zemzeme >/dev/null || break; sleep 0.1; done
   fi
-  # اپ سرِ خروج به کارابینر می‌گوید «پایینم» تا رول دابل‌تپ دوباره مسلح شود. با kill
-  # آن مسیر اجرا نشده، پس همین‌جا دستی گفته می‌شود؛ وگرنه رول تا ری‌استارت کارابینر
-  # خاموش می‌ماند و کاربر فکر می‌کند هاتکی خراب شده.
-  KCLI="/Library/Application Support/org.pqrs/Karabiner-Elements/bin/karabiner_cli"
-  [ -x "$KCLI" ] && "$KCLI" --set-variables '{"zemzeme_running":0}' >/dev/null 2>&1 || true
 fi
 
 rm -rf "$DEST"

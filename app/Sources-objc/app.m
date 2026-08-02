@@ -1,5 +1,30 @@
 // دلیگیت اپ (منوبار، URL scheme، چرخه سشن)، سلف‌تست و main.
 #import "zemzeme.h"
+#import <ServiceManagement/ServiceManagement.h>
+
+// ---------- اجرا در ورود به مک ----------
+// چرا این فیچر مهم‌تر از یک راحتیِ کوچک است: هیچ اپی نمی‌تواند وقتی اجرا نمی‌شود
+// کلیدی را بشنود. تا زمزمه بسته باشد، تنها راهِ بالا آوردنش با کیبورد یک برنامه‌ی
+// همیشه‌بیدارِ دیگر است (Karabiner، یا میان‌بر اپ Shortcuts). با اجرای خودکار در
+// ورود، آن «بسته بودن» اصلا پیش نمی‌آید و هاتکی داخلیِ خودِ اپ بی هیچ ابزار جانبی
+// کافی است.
+//
+// حالت از خود سیستم خوانده می‌شود نه از دیفالتز: کاربر می‌تواند همین را در تنظیمات
+// سیستم خاموش کند، و اگر نسخه‌ی خودمان را باور کنیم منو دروغ می‌گوید.
+static BOOL ZLoginItemOn(void) {
+    if (@available(macOS 13.0, *)) {
+        return SMAppService.mainAppService.status == SMAppServiceStatusEnabled;
+    }
+    return NO;
+}
+
+static BOOL ZSetLoginItem(BOOL on, NSError **err) {
+    if (@available(macOS 13.0, *)) {
+        SMAppService *s = SMAppService.mainAppService;
+        return on ? [s registerAndReturnError:err] : [s unregisterAndReturnError:err];
+    }
+    return NO;
+}
 
 // ---------- سلف‌تست ----------
 // فایل خام s16le/16k را با سرعت واقعی به یک ZGoogleStream می‌دهد؛ همان مسیر
@@ -61,39 +86,6 @@ int ZSelfTest(NSString *file, NSString *lang) {
     return finals > 0 ? 0 : 1;
 }
 
-// ---------- خبر دادن به Karabiner ----------
-// یک متغیر با یک معنی: «زمزمه بالاست». رول کارابینر فقط وقتی صفر است به Command
-// راست دست می‌زند، یعنی تا اپ زنده است کلید فقط مالِ خودِ اپ است.
-//
-// چرا لازم شد: هر دو طرف همان دابل‌تپ را می‌پاییدند و مسابقه‌شان دیدنی نبود، خوردنی
-// بود. کارابینر تپِ تنها را می‌بلعد، ولی اگر کلید کمی بیشتر از ۴۰۰ms پایین بماند
-// «تنها» حساب نمی‌شود و همان راست-Command به جریان رویدادها برمی‌گردد؛ تپِ اپ آن را
-// تپِ تنها می‌خواند و تک‌تپ یعنی مکث. نتیجه: وسط حرف زدن، موتور بی‌صدا مکث می‌کرد و
-// صدای مکث دور ریخته می‌شود، پس آخر کار متن صفر بود. با این متغیر آن مسابقه اصلا
-// شکل نمی‌گیرد: هر لحظه دقیقا یک نفر صاحب کلید است.
-//
-// کارابینر نصب نباشد، همه‌ی این‌ها بی‌صدا رد می‌شوند و اپ مثل قبل کار می‌کند.
-static NSString *const kZKarabinerCLI =
-    @"/Library/Application Support/org.pqrs/Karabiner-Elements/bin/karabiner_cli";
-
-static void ZTellKarabiner(BOOL up, BOOL waitForIt) {
-    if (![NSFileManager.defaultManager isExecutableFileAtPath:kZKarabinerCLI]) return;
-    NSTask *t = [NSTask new];
-    t.executableURL = [NSURL fileURLWithPath:kZKarabinerCLI];
-    t.arguments = @[@"--set-variables",
-                    up ? @"{\"zemzeme_running\":1}" : @"{\"zemzeme_running\":0}"];
-    t.standardOutput = NSFileHandle.fileHandleWithNullDevice;
-    t.standardError = NSFileHandle.fileHandleWithNullDevice;
-    NSError *e = nil;
-    if (![t launchAndReturnError:&e]) {
-        ZLog(@"karabiner: خبر نرفت: %@", e.localizedDescription ?: @"?");
-        return;
-    }
-    // سر خروج باید صبر کرد: پروسه زودتر از رسیدن خبر می‌میرد و رول برای همیشه
-    // خاموش می‌ماند. سر لانچ لازم نیست، آنجا کسی عجله ندارد.
-    if (waitForIt) [t waitUntilExit];
-}
-
 // ---------- AppDelegate ----------
 
 @interface ZAppDelegate : NSObject <NSApplicationDelegate, NSMenuDelegate>
@@ -107,7 +99,6 @@ static void ZTellKarabiner(BOOL up, BOOL waitForIt) {
     CFAbsoluteTime _lastToggleAt;    // دیبانس toggle داخلی در برابر toggle بیرونی (Karabiner)
     NSColor *_menubarTint;           // رنگ فعلی آیتم منوبار؛ رندر پرتکرار تصویر نو نسازد
     BOOL _axPrompted;                // پنجره درخواست اکسسبیلیتی فقط یک بار در هر اجرا
-    BOOL _toldKarabiner;             // فقط کسی که «بالا» گفته حق دارد «پایین» بگوید
 }
 
 - (void)applicationWillFinishLaunching:(NSNotification *)n {
@@ -159,10 +150,6 @@ static void ZTellKarabiner(BOOL up, BOOL waitForIt) {
             }
         }
     }
-    // از اینجا به بعد نمونه‌ی واقعی‌ایم: نه اجرای عکس‌گیری، نه نمونه‌ی دومی که همین
-    // حالا برمی‌گردد. پس فقط از اینجا به کارابینر گفته می‌شود «بالا آمدم».
-    _toldKarabiner = YES;
-    ZTellKarabiner(YES, NO);
     [NSFileManager.defaultManager createDirectoryAtURL:ZSessionsDir()
                            withIntermediateDirectories:YES attributes:nil error:nil];
     ZRegisterFonts();
@@ -243,9 +230,24 @@ static void ZTellKarabiner(BOOL up, BOOL waitForIt) {
          "«پاس نهایی» و «بهبود پرامپت» اختیاری‌اند و یک کلید رایگان از Google AI Studio "
          "می‌خواهند؛ هر وقت خواستی، از منوی زمزمه «کلید Gemini…» را بزن.\n\n"
          "راهنمای کامل میان‌برها: Command راست + H.";
+    // تیک‌خورده می‌آید و عمدا: زمزمه‌ی بسته هیچ کلیدی را نمی‌شنود، پس اپی که بعد از
+    // ری‌استارت بالا نیاید عملا هاتکی ندارد. ولی پنهان هم نیست، چون افزودنِ بی‌خبرِ
+    // یک آیتم به لیست ورود همان کاری است که کاربر از اپ‌های دیگر بدش می‌آید.
+    NSButton *atLogin = [NSButton checkboxWithTitle:@"بعد از روشن شدن مک، زمزمه خودش بالا بیاید"
+                                             target:nil action:NULL];
+    atLogin.state = NSControlStateValueOn;
+    [atLogin sizeToFit];
+    a.accessoryView = atLogin;
     [a addButtonWithTitle:@"باشه"];
     [a addButtonWithTitle:@"راهنمای میان‌برها"];
-    if ([a runModal] == NSAlertSecondButtonReturn) [ZCheatSheet toggle];
+    NSModalResponse r = [a runModal];
+    if (atLogin.state == NSControlStateValueOn) {
+        NSError *e = nil;
+        if (!ZSetLoginItem(YES, &e)) {
+            ZLog(@"login item: روشن نشد: %@", e.localizedDescription ?: @"?");
+        }
+    }
+    if (r == NSAlertSecondButtonReturn) [ZCheatSheet toggle];
 }
 
 // اجازه اکسسبیلیتی معمولا بعد از لانچ می‌رسد: کاربر می‌رود در تنظیمات تیک می‌زند.
@@ -274,8 +276,6 @@ static void ZTellKarabiner(BOOL up, BOOL waitForIt) {
     // اپ تا برگشتنش زنده نمی‌ماند، یعنی متن گم می‌شد. پاس را می‌بازیم، متن را نه.
     [_session finishNow];
     [_hotkeys disable];
-    // آخرین کار: کلید را به کارابینر پس بده، وگرنه دابل‌تپ دیگر اپ را بالا نمی‌آورد.
-    if (_toldKarabiner) ZTellKarabiner(NO, YES);
 }
 
 // ---------- URL: zemzeme://toggle | start | stop ----------
@@ -543,10 +543,18 @@ static void ZTellKarabiner(BOOL up, BOOL waitForIt) {
     NSMenuItem *hk = [self icon:[self item:adv title:@"هاتکی داخلی" action:@selector(menuToggleHotkey) key:@""]
                           symbol:@"command"];
     hk.state = ZSettings.shared.internalHotkey ? NSControlStateValueOn : NSControlStateValueOff;
-    // دیگر «آزمایشی» نیست و دیگر با Karabiner دعوا ندارد: تا اپ بالاست رول Karabiner
-    // خودش کنار می‌کشد (متغیر zemzeme_running)، پس هر لحظه یک نفر صاحب کلید است.
-    hk.toolTip = @"دابل‌تپ Command راست، از داخل خود اپ. تا زمزمه بالاست رول Karabiner "
-                  "خودش کنار می‌کشد، پس خاموش کردن دستی‌اش لازم نیست";
+    // دیگر «آزمایشی» نیست و دیگر با Karabiner دعوا ندارد: رول Karabiner کلید را پاس
+    // می‌دهد و قبل از هر کاری با pgrep می‌پرسد اپ بالاست یا نه. بالا که باشد، هیچ.
+    hk.toolTip = @"دابل‌تپ Command راست، از داخل خود اپ. رول Karabiner فقط وقتی زمزمه "
+                  "بسته است کاری می‌کند، پس خاموش کردن دستی‌اش لازم نیست";
+
+    // کنارِ هاتکی می‌نشیند چون در عمل شرطِ کار کردنِ آن است: اپِ بسته کلید نمی‌شنود.
+    NSMenuItem *li = [self icon:[self item:adv title:@"اجرا در ورود به مک"
+                                     action:@selector(menuToggleLoginItem) key:@""]
+                          symbol:@"power"];
+    li.state = ZLoginItemOn() ? NSControlStateValueOn : NSControlStateValueOff;
+    li.toolTip = @"زمزمه بعد از روشن شدن مک خودش بالا می‌آید. با این، هاتکی داخلی به "
+                  "تنهایی کافی است و به Karabiner یا هیچ ابزار جانبی دیگری نیازی نیست";
     [adv addItem:NSMenuItem.separatorItem];
 
     [self icon:[self item:adv title:@"پوشه سشن‌ها" action:@selector(menuOpenSessions) key:@""] symbol:@"folder"];
@@ -687,6 +695,29 @@ static void ZTellKarabiner(BOOL up, BOOL waitForIt) {
 // تپ همیشه سرپا است؛ این تنظیم فقط تفسیر دابل‌تپ به toggle را روشن/خاموش می‌کند
 - (void)menuToggleHotkey {
     ZSettings.shared.internalHotkey = !ZSettings.shared.internalHotkey;
+}
+
+- (void)menuToggleLoginItem {
+    BOOL want = !ZLoginItemOn();
+    NSError *e = nil;
+    if (ZSetLoginItem(want, &e)) {
+        ZLog(@"login item: %@", want ? @"روشن" : @"خاموش");
+        return;
+    }
+    // شکستش را بی‌صدا نمی‌گذاریم: کاربر تیک را زده و اگر هیچ نبینَد فکر می‌کند شد.
+    // معمولا یعنی مک اجازه‌ی مدیریتِ آیتم‌های ورود را نداده، و درِ آن در تنظیمات است.
+    ZLog(@"login item: %@ کردن نشد: %@", want ? @"روشن" : @"خاموش", e.localizedDescription ?: @"?");
+    NSAlert *a = [NSAlert new];
+    a.messageText = want ? @"اجرای خودکار روشن نشد" : @"اجرای خودکار خاموش نشد";
+    a.informativeText = [NSString stringWithFormat:
+        @"مک اجازه نداد: %@\n\nمی‌توانی همین را دستی از تنظیمات سیستم، بخش «General ← "
+         "Login Items»، تغییر دهی.", e.localizedDescription ?: @"دلیل نامعلوم"];
+    [a addButtonWithTitle:@"باشه"];
+    [a addButtonWithTitle:@"تنظیمات سیستم"];
+    if ([a runModal] == NSAlertSecondButtonReturn) {
+        NSURL *u = [NSURL URLWithString:@"x-apple.systempreferences:com.apple.LoginItems-Settings.extension"];
+        [NSWorkspace.sharedWorkspace openURL:u];
+    }
 }
 - (void)menuOpenSessions { [NSWorkspace.sharedWorkspace openURL:ZSessionsDir()]; }
 - (void)menuOpenAccessibility {
