@@ -17,8 +17,20 @@ LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchSe
 bash ../tools/make-cert.sh
 
 mkdir -p .build
+# سینک‌تینگ وقتی دو دستگاه یک فایل را با هم عوض کنند، نسخه‌ی دوم را کنارِ اصلی
+# می‌گذارد و در نامش sync-conflict می‌آورد. ستاره‌ی بالا آن را هم برمی‌داشت، یعنی
+# کلاس‌های تکراری و یک بیلدِ شکسته (یک بار همین شد و ۱۲ فایلِ جامانده جلوی بیلد را
+# گرفته بود). حالا از لیست بیرون‌اند، ولی بی‌صدا نه: فایلِ جامانده یعنی یک ویرایش
+# جایی گم شده و باید دیده شود.
+SRC=()
+for f in Sources-objc/*.m; do
+  case "$f" in
+    *sync-conflict*) echo "warn: بیرون از بیلد ماند (نسخه‌ی جامانده‌ی سینک): $f" ;;
+    *) SRC+=("$f") ;;
+  esac
+done
 clang -fobjc-arc -O2 -Wall -Wno-unused-function \
-  Sources-objc/*.m \
+  "${SRC[@]}" \
   -framework AppKit -framework AVFoundation -framework Carbon \
   -framework CoreText -framework ApplicationServices -framework QuartzCore \
   -framework AudioToolbox -framework CoreMedia -framework Security \
@@ -69,6 +81,11 @@ if pgrep -x zemzeme >/dev/null; then
     pkill -x zemzeme >/dev/null 2>&1 || true
     for _ in $(seq 20); do pgrep -x zemzeme >/dev/null || break; sleep 0.1; done
   fi
+  # اپ سرِ خروج به کارابینر می‌گوید «پایینم» تا رول دابل‌تپ دوباره مسلح شود. با kill
+  # آن مسیر اجرا نشده، پس همین‌جا دستی گفته می‌شود؛ وگرنه رول تا ری‌استارت کارابینر
+  # خاموش می‌ماند و کاربر فکر می‌کند هاتکی خراب شده.
+  KCLI="/Library/Application Support/org.pqrs/Karabiner-Elements/bin/karabiner_cli"
+  [ -x "$KCLI" ] && "$KCLI" --set-variables '{"zemzeme_running":0}' >/dev/null 2>&1 || true
 fi
 
 rm -rf "$DEST"

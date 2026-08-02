@@ -189,7 +189,13 @@ NSFont *ZFont(CGFloat size, BOOL medium) {
 }
 - (void)setMode:(ZMode)v { [self.d setInteger:v forKey:@"collect"]; }
 
-- (BOOL)internalHotkey { return [self.d boolForKey:@"internalHotkey"]; }
+// پیش‌فرض روشن. قبلا خاموش بود چون کارابینر دابل‌تپ را می‌گرفت و دو تشخیصِ هم‌زمان
+// یعنی مسابقه. حالا رول کارابینر تا وقتی اپ بالاست اصلا دست به کلید نمی‌زند، پس
+// اگر این خاموش بماند هیچ‌کس دابل‌تپ را نمی‌شنود و اپ روی نصبِ تازه بی‌هاتکی است.
+- (BOOL)internalHotkey {
+    NSObject *o = [self.d objectForKey:@"internalHotkey"];
+    return o ? [self.d boolForKey:@"internalHotkey"] : YES;
+}
 - (void)setInternalHotkey:(BOOL)v { [self.d setBool:v forKey:@"internalHotkey"]; }
 
 - (BOOL)polishEnabled {

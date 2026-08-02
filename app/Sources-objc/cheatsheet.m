@@ -127,6 +127,8 @@ static NSString *const kCSAutosave = @"ZemzemeCheatSheet";
                        @"بهبود پرامپت روشن است ولی کلید جمینای نیست، پس B کاری نمی‌کند؛ از منو «کلید Gemini…» را بزن",
                        @YES]];
     }
+    // هشدارِ واقعی و نه احتیاطی: تا اپ بالاست رول Karabiner کنار کشیده، پس اگر این هم
+    // خاموش باشد هیچ‌کس دابل‌تپ را نمی‌شنود و کاربر فکر می‌کند هاتکی خراب شده.
     if (!ZSettings.shared.internalHotkey) {
         [n addObject:@[@"exclamationmark.triangle",
                        @"دابل‌تپ الان خاموش است: در پیشرفته «هاتکی داخلی» را روشن کن", @YES]];

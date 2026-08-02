@@ -2,11 +2,16 @@
     "title": "Zemzeme Dictation",
     "rules": [
         {
-            "description": "Double-tap Right Command: toggle Zemzeme dictation (lone taps send nothing, safe inside Windows App)",
+            "description": "Double-tap Right Command: wake Zemzeme and start listening. Runs only while Zemzeme is down; once it is up the app owns the key and this rule stays out of the way (lone taps send nothing, safe inside Windows App).",
             "manipulators": [
                 {
                     "type": "basic",
                     "conditions": [
+                        {
+                            "type": "variable_unless",
+                            "name": "zemzeme_running",
+                            "value": 1
+                        },
                         {
                             "type": "variable_if",
                             "name": "rcmd_double_tap",
@@ -29,12 +34,19 @@
                             }
                         },
                         {
-                            "shell_command": "open -g 'zemzeme://toggle'"
+                            "shell_command": "open -g 'zemzeme://start'"
                         }
                     ]
                 },
                 {
                     "type": "basic",
+                    "conditions": [
+                        {
+                            "type": "variable_unless",
+                            "name": "zemzeme_running",
+                            "value": 1
+                        }
+                    ],
                     "from": {
                         "key_code": "right_command",
                         "modifiers": {

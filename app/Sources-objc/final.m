@@ -61,6 +61,7 @@ static NSString *ZGThinking(void) {
 @implementation ZFinalPass {
     NSString *_key;
     BOOL _keyChecked;    // یک بار پرسیده شد؛ «نبود» هم جواب است و دوباره پرسیده نمی‌شود
+    BOOL _keyBlocked;    // پرسشِ بی‌پنجره خورد به ACL: کلید شاید هست، ولی اجازه‌اش نه
     NSLock *_keyLock;    // فقط کلید. لغو و تسکِ در پرواز رفتند زیر `_pass`
     // ...و این یکی فقط دور خودِ *پرسش*. جدا از `_keyLock` و عمدا: آن قفل نباید در طول
     // یک پرسشِ چندثانیه‌ای گرفته بماند.
@@ -97,20 +98,41 @@ static NSString *ZGThinking(void) {
 // چرا کدِ خطا لاگ می‌شود: نسخه‌ی اول ساکت بود و «کلید پیدا نشد» هیچ نمی‌گفت از کجا.
 // یک بار ACL آیتم عوض شد و همین سکوت، عیب‌یابی را به حدس زدن تبدیل کرد. حالا هر شکست
 // کد خودش را می‌گوید: ۲۵۳۰۰ یعنی نیست، ۲۵۳۰۸ یعنی اجازه نداد، ۵۱ یعنی ACL راهت نمی‌دهد.
-static NSString *ZKeyFromKeychain(void) {
+// `allowUI` جدی است و باگِ واقعی از همین‌جا آمد: آیتمِ کلید را یک بار `security` در
+// ترمینال ساخته بود، پس ACL آن اپ را نمی‌شناسد و مک برای هر خواندن پنجره‌ی «رمز
+// کی‌چین را بده» باز می‌کند. آن پنجره وسط دیکته می‌پرید بالا، فوکوس را می‌برد و کاربر
+// فقط می‌دید زمزمه ریست شد. بدتر: هیچ‌کس کلید را نخواسته بود، فقط منو باز شده بود و
+// منو می‌خواست بداند تیک «کلید تنظیم شده» را بزند یا نه.
+//
+// پس دو جور پرسش داریم. پرسشِ رابط (منو، کارت راهنما) بی‌پنجره است: اگر ACL راه
+// ندهد، جوابش «نمی‌دانم» است و همان‌جا تمام. پنجره فقط وقتی حق دارد باز شود که کاربر
+// واقعا کاری خواسته که کلید لازم دارد (پاس نهایی، بهبود پرامپت). آن‌وقت پنجره
+// معنا دارد، چون کاربر تازه دکمه‌اش را زده و «همیشه اجازه بده» یعنی دیگر پرسیده نشود.
+static NSString *ZKeyFromKeychain(BOOL allowUI, BOOL *blocked) {
+    if (blocked) *blocked = NO;
     NSDictionary *q = @{(id)kSecClass: (id)kSecClassGenericPassword,
                         (id)kSecAttrService: kKeychainService,
                         (id)kSecReturnData: @YES,
                         (id)kSecMatchLimit: (id)kSecMatchLimitOne};
     CFTypeRef out = NULL;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    // پرچمِ پروسه است نه نخ، ولی خواندنِ کلید تک‌پرواز است (`_fetchLock`) و جای دیگری
+    // در اپ کی‌چین را نمی‌خواند، پس در عمل همان یک پرسش را می‌پوشاند.
+    if (!allowUI) SecKeychainSetUserInteractionAllowed(FALSE);
     OSStatus st = SecItemCopyMatching((__bridge CFDictionaryRef)q, &out);
+    if (!allowUI) SecKeychainSetUserInteractionAllowed(TRUE);
+#pragma clang diagnostic pop
     if (st == errSecSuccess && out) {
         NSData *d = (__bridge_transfer NSData *)out;
         NSString *s = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
         return [s stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     }
     if (out) CFRelease(out);
-    ZLog(@"final: Keychain کلید نداد (OSStatus %d)", (int)st);
+    // ۲۵۳۰۸ یعنی «کلید هست ولی بی‌پنجره نمی‌دهم». این «نبود» نیست و نباید مثل نبود
+    // بایگانی شود، وگرنه تا ری‌استارت بعدی اپ فکر می‌کند کلیدی در کار نیست.
+    if (st == errSecInteractionNotAllowed && blocked) *blocked = YES;
+    ZLog(@"final: Keychain کلید نداد (OSStatus %d%@)", (int)st, allowUI ? @"" : @"، بی‌پنجره");
     return nil;
 }
 
@@ -145,7 +167,9 @@ static NSString *ZKeyFromSecurityTool(void) {
 // و فراخوان کم نیست: `hasKey` روی نخ اصلی هر بار که جواب نداشته باشد یک `prefetchKey`
 // می‌اندازد، و منو و کارت راهنما و شروع سشن و دو در تازه‌ی بهبود پرامپت همه صدایش
 // می‌زنند. باز کردن منو دو بار پشت هم کافی بود.
-- (NSString *)key {
+- (NSString *)key { return [self keyAllowingUI:YES]; }
+
+- (NSString *)keyAllowingUI:(BOOL)allowUI {
     [_keyLock lock];
     NSString *k = _key;
     BOOL checked = _keyChecked;
@@ -163,32 +187,52 @@ static NSString *ZKeyFromSecurityTool(void) {
     }
     k = NSProcessInfo.processInfo.environment[@"GEMINI_API_KEY"];
     k = [k stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    if (!k.length) k = ZKeyFromKeychain();
-    if (!k.length) k = ZKeyFromSecurityTool();
+    BOOL blocked = NO;
+    if (!k.length) k = ZKeyFromKeychain(allowUI, &blocked);
+    // ابزار `security` هم می‌تواند پنجره باز کند، پس در پرسشِ رابط اصلا صدا نمی‌شود
+    if (!k.length && allowUI) k = ZKeyFromSecurityTool();
     [_keyLock lock];
-    _keyChecked = YES;
+    // «پرسیدم و نبود» را فقط وقتی می‌نویسیم که واقعا پرسیده باشیم. پرسشِ بی‌پنجره‌ای
+    // که ACL جلویش را گرفت هیچ نمی‌داند، و اگر «نبود» بایگانی شود پاس نهایی تا
+    // ری‌استارت بعدی خاموش می‌ماند با اینکه کلید سر جایش است.
+    _keyChecked = k.length || !blocked;
+    _keyBlocked = blocked;
     if (k.length) _key = [k copy];
     [_keyLock unlock];
     [_fetchLock unlock];
     return k.length ? k : nil;
 }
 
+// پرسشِ رابط: بی‌پنجره، همیشه. تنها فراخوانش از `hasKey` است و `hasKey` فقط برای
+// کشیدنِ منو و کارت راهنماست؛ هیچ‌کدام آنقدر مهم نیستند که کاربر را وسط کار
+// بایستانند پای رمز کی‌چین.
 - (void)prefetchKey {
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{ [self key]; });
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{ [self keyAllowingUI:NO]; });
 }
 
 // جوابِ کش‌شده، و روی نخ اصلی **هیچ‌وقت** پرسشِ تازه. سه فراخوان از نخ اصلی می‌آیند
-// (منو، کارت راهنما، شروع سشن) و پرسیدنِ Keychain می‌تواند پنجره‌ی اجازه باز کند و
-// همان‌جا یخ بزند. اگر هنوز پرسیده نشده، پرسش را در پس‌زمینه راه می‌اندازد و جواب
-// این دفعه «نه» است؛ دفعه‌ی بعد که منو باز شود درست می‌گوید.
+// (منو، کارت راهنما، شروع سشن) و همان‌جا یخ زدن یعنی اپ ایستاده. اگر هنوز پرسیده
+// نشده، پرسش را در پس‌زمینه راه می‌اندازد و جواب این دفعه «نه» است؛ دفعه‌ی بعد که منو
+// باز شود درست می‌گوید. پرسشِ پس‌زمینه هم بی‌پنجره است: این تابع رابط را می‌کشد، و
+// رابط حق ندارد پنجره‌ی رمزِ کی‌چین را بالا بیاورد.
 + (BOOL)hasKey {
     ZFinalPass *s = ZFinalPass.shared;
-    if (!NSThread.isMainThread) return [s key].length > 0;
+    if (!NSThread.isMainThread) return [s keyAllowingUI:NO].length > 0;
     [s->_keyLock lock];
     BOOL have = s->_key.length > 0, checked = s->_keyChecked;
     [s->_keyLock unlock];
     if (!have && !checked) [s prefetchKey];
     return have;
+}
+
+// «کلیدی هست ولی کی‌چین بی‌اجازه نمی‌دهدش». منو با این حالت سوم درست حرف می‌زند،
+// وگرنه «کلید تنظیم نشده» می‌گفت و کاربر می‌رفت کلید تازه بسازد بی‌آنکه لازم باشد.
++ (BOOL)keyNeedsPermission {
+    ZFinalPass *s = ZFinalPass.shared;
+    [s->_keyLock lock];
+    BOOL blocked = s->_keyBlocked && s->_key.length == 0;
+    [s->_keyLock unlock];
+    return blocked;
 }
 
 + (BOOL)keyKnownMissing {

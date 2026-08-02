@@ -61,6 +61,39 @@ int ZSelfTest(NSString *file, NSString *lang) {
     return finals > 0 ? 0 : 1;
 }
 
+// ---------- خبر دادن به Karabiner ----------
+// یک متغیر با یک معنی: «زمزمه بالاست». رول کارابینر فقط وقتی صفر است به Command
+// راست دست می‌زند، یعنی تا اپ زنده است کلید فقط مالِ خودِ اپ است.
+//
+// چرا لازم شد: هر دو طرف همان دابل‌تپ را می‌پاییدند و مسابقه‌شان دیدنی نبود، خوردنی
+// بود. کارابینر تپِ تنها را می‌بلعد، ولی اگر کلید کمی بیشتر از ۴۰۰ms پایین بماند
+// «تنها» حساب نمی‌شود و همان راست-Command به جریان رویدادها برمی‌گردد؛ تپِ اپ آن را
+// تپِ تنها می‌خواند و تک‌تپ یعنی مکث. نتیجه: وسط حرف زدن، موتور بی‌صدا مکث می‌کرد و
+// صدای مکث دور ریخته می‌شود، پس آخر کار متن صفر بود. با این متغیر آن مسابقه اصلا
+// شکل نمی‌گیرد: هر لحظه دقیقا یک نفر صاحب کلید است.
+//
+// کارابینر نصب نباشد، همه‌ی این‌ها بی‌صدا رد می‌شوند و اپ مثل قبل کار می‌کند.
+static NSString *const kZKarabinerCLI =
+    @"/Library/Application Support/org.pqrs/Karabiner-Elements/bin/karabiner_cli";
+
+static void ZTellKarabiner(BOOL up, BOOL waitForIt) {
+    if (![NSFileManager.defaultManager isExecutableFileAtPath:kZKarabinerCLI]) return;
+    NSTask *t = [NSTask new];
+    t.executableURL = [NSURL fileURLWithPath:kZKarabinerCLI];
+    t.arguments = @[@"--set-variables",
+                    up ? @"{\"zemzeme_running\":1}" : @"{\"zemzeme_running\":0}"];
+    t.standardOutput = NSFileHandle.fileHandleWithNullDevice;
+    t.standardError = NSFileHandle.fileHandleWithNullDevice;
+    NSError *e = nil;
+    if (![t launchAndReturnError:&e]) {
+        ZLog(@"karabiner: خبر نرفت: %@", e.localizedDescription ?: @"?");
+        return;
+    }
+    // سر خروج باید صبر کرد: پروسه زودتر از رسیدن خبر می‌میرد و رول برای همیشه
+    // خاموش می‌ماند. سر لانچ لازم نیست، آنجا کسی عجله ندارد.
+    if (waitForIt) [t waitUntilExit];
+}
+
 // ---------- AppDelegate ----------
 
 @interface ZAppDelegate : NSObject <NSApplicationDelegate, NSMenuDelegate>
@@ -74,6 +107,7 @@ int ZSelfTest(NSString *file, NSString *lang) {
     CFAbsoluteTime _lastToggleAt;    // دیبانس toggle داخلی در برابر toggle بیرونی (Karabiner)
     NSColor *_menubarTint;           // رنگ فعلی آیتم منوبار؛ رندر پرتکرار تصویر نو نسازد
     BOOL _axPrompted;                // پنجره درخواست اکسسبیلیتی فقط یک بار در هر اجرا
+    BOOL _toldKarabiner;             // فقط کسی که «بالا» گفته حق دارد «پایین» بگوید
 }
 
 - (void)applicationWillFinishLaunching:(NSNotification *)n {
@@ -125,6 +159,10 @@ int ZSelfTest(NSString *file, NSString *lang) {
             }
         }
     }
+    // از اینجا به بعد نمونه‌ی واقعی‌ایم: نه اجرای عکس‌گیری، نه نمونه‌ی دومی که همین
+    // حالا برمی‌گردد. پس فقط از اینجا به کارابینر گفته می‌شود «بالا آمدم».
+    _toldKarabiner = YES;
+    ZTellKarabiner(YES, NO);
     [NSFileManager.defaultManager createDirectoryAtURL:ZSessionsDir()
                            withIntermediateDirectories:YES attributes:nil error:nil];
     ZRegisterFonts();
@@ -236,6 +274,8 @@ int ZSelfTest(NSString *file, NSString *lang) {
     // اپ تا برگشتنش زنده نمی‌ماند، یعنی متن گم می‌شد. پاس را می‌بازیم، متن را نه.
     [_session finishNow];
     [_hotkeys disable];
+    // آخرین کار: کلید را به کارابینر پس بده، وگرنه دابل‌تپ دیگر اپ را بالا نمی‌آورد.
+    if (_toldKarabiner) ZTellKarabiner(NO, YES);
 }
 
 // ---------- URL: zemzeme://toggle | start | stop ----------
@@ -379,13 +419,23 @@ int ZSelfTest(NSString *file, NSString *lang) {
     // تولتیپش همین را می‌گوید. تا کلید ست نشده باشد، ردیف خودش خبر می‌دهد: روشن بودنش
     // بی‌کلید فقط یک پیام خطا در پایان هر سشن است.
     BOOL hasKey = ZFinalPass.hasKey;
+    // حالت سوم: کلید در کی‌چین هست ولی ACL آیتم این اپ را نمی‌شناسد (معمولا چون یک بار
+    // با `security` در ترمینال ساخته شده). منو پنجره‌ی رمز را بالا نمی‌آورد، پس اینجا
+    // فقط راستش را می‌گوید؛ یک بار «کلید Gemini…» و ذخیره‌ی دوباره، تمامش می‌کند.
+    BOOL keyLocked = !hasKey && ZFinalPass.keyNeedsPermission;
     // کلید Gemini: یک شیت کوچک به‌جای ترمینال. بالای هر دو ردیفی می‌نشیند که به آن
     // نیاز دارند، چون کلید مشترک است (همان `ZFinalPass`، همان `zemzeme-gemini`).
-    NSMenuItem *key = [self icon:[self item:menu title:hasKey ? @"کلید Gemini (تنظیم‌شده)" : @"کلید Gemini…"
+    NSMenuItem *key = [self icon:[self item:menu
+                                       title:hasKey ? @"کلید Gemini (تنظیم‌شده)"
+                                           : keyLocked ? @"کلید Gemini (کی‌چین اجازه نمی‌دهد)"
+                                                       : @"کلید Gemini…"
                                      action:@selector(menuSetKey) key:@""]
                            symbol:@"key.fill"];
-    key.toolTip = @"کلید رایگان از Google AI Studio؛ فقط در Keychain همین دستگاه ذخیره می‌شود. "
-                   "لازمِ «پاس نهایی» و «بهبود پرامپت»؛ بدون آن دو، اصلا لازم نیست.";
+    key.toolTip = keyLocked
+        ? @"کلیدی در Keychain هست ولی این نسخه‌ی اپ اجازه‌ی خواندنش را ندارد. "
+           "همین‌جا کلید را دوباره بگذار تا صاحبش خودِ زمزمه شود و دیگر پرسیده نشود."
+        : @"کلید رایگان از Google AI Studio؛ فقط در Keychain همین دستگاه ذخیره می‌شود. "
+           "لازمِ «پاس نهایی» و «بهبود پرامپت»؛ بدون آن دو، اصلا لازم نیست.";
     NSMenuItem *fin = [self icon:[self item:menu title:hasKey ? @"پاس نهایی با هوش مصنوعی"
                                                               : @"پاس نهایی با هوش مصنوعی (کلید نیست)"
                                      action:@selector(menuToggleFinalPass) key:@""]
@@ -490,10 +540,13 @@ int ZSelfTest(NSString *file, NSString *lang) {
     rdp.toolTip = @"اول در نوار منوی Windows App: Keyboard Mode ← Unicode. بی آن، فارسی در ریموت درست تایپ نمی‌شود";
     [adv addItem:NSMenuItem.separatorItem];
 
-    NSMenuItem *hk = [self icon:[self item:adv title:@"هاتکی داخلی (آزمایشی)" action:@selector(menuToggleHotkey) key:@""]
+    NSMenuItem *hk = [self icon:[self item:adv title:@"هاتکی داخلی" action:@selector(menuToggleHotkey) key:@""]
                           symbol:@"command"];
     hk.state = ZSettings.shared.internalHotkey ? NSControlStateValueOn : NSControlStateValueOff;
-    hk.toolTip = @"اول رول Karabiner را خاموش کن، وگرنه دابل‌تپ به اپ نمی‌رسد";
+    // دیگر «آزمایشی» نیست و دیگر با Karabiner دعوا ندارد: تا اپ بالاست رول Karabiner
+    // خودش کنار می‌کشد (متغیر zemzeme_running)، پس هر لحظه یک نفر صاحب کلید است.
+    hk.toolTip = @"دابل‌تپ Command راست، از داخل خود اپ. تا زمزمه بالاست رول Karabiner "
+                  "خودش کنار می‌کشد، پس خاموش کردن دستی‌اش لازم نیست";
     [adv addItem:NSMenuItem.separatorItem];
 
     [self icon:[self item:adv title:@"پوشه سشن‌ها" action:@selector(menuOpenSessions) key:@""] symbol:@"folder"];
