@@ -996,6 +996,11 @@ void ZEventLogWrite(NSDictionary *ev);
 // دست‌نخورده می‌ماند و هیچ سشن دیکته‌ای باز نمی‌شود.
 int ZReplayMain(NSArray<NSString *> *args);
 
+// خودآزمای میکروفن: چند ثانیه از همان مسیر دیکته در یک WAV، برای اندازه گرفتنِ
+// بلندی و بریدگی و پهنای باند به‌جای حدس زدنشان.
+int ZMicDumpMain(NSString *path, double seconds);
+NSString *ZDefaultInputName(void);
+
 // ---------- فونت و سلف‌تست ----------
 void ZRegisterFonts(void);
 NSFont *ZFont(CGFloat size, BOOL medium);

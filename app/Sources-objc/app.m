@@ -785,6 +785,17 @@ int main(int argc, const char *argv[]) {
         // بالا پیش از NSApplication برمی‌گردد: نه اپ در حال اجرا دست می‌خورد، نه
         // میکروفنی باز می‌شود، نه بایتی روی شبکه می‌رود.
         if ([args containsObject:@"--replay"]) return ZReplayMain(args);
+        // خودآزمای میکروفن: چند ثانیه از **همان** مسیری که دیکته از آن می‌خورد
+        // (ZMic، تبدیل به ۱۶ کیلوهرتز مونو s16) در یک WAV می‌ریزد. دلیل وجودش این
+        // بود که «صدا بد ضبط می‌شود» تا امروز فقط یک حس بود و هیچ عددی نداشت؛ با یک
+        // فایل واقعی می‌شود بلندی، بریدگی، و پهنای باند را اندازه گرفت نه حدس زد.
+        // مثل بقیه‌ی حالت‌ها پیش از NSApplication برمی‌گردد، پس اپِ در حال اجرا و
+        // سشن بازش دست نمی‌خورند.
+        NSUInteger md = [args indexOfObject:@"--micdump"];
+        if (md != NSNotFound && md + 1 < args.count) {
+            double secs = md + 2 < args.count ? [args[md + 2] doubleValue] : 10.0;
+            return ZMicDumpMain(args[md + 1], secs > 0 ? secs : 10.0);
+        }
         NSApplication *app = NSApplication.sharedApplication;
         static ZAppDelegate *delegate;
         delegate = [ZAppDelegate new];
