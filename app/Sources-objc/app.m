@@ -99,6 +99,8 @@ int ZSelfTest(NSString *file, NSString *lang) {
     CFAbsoluteTime _lastToggleAt;    // دیبانس toggle داخلی در برابر toggle بیرونی (Karabiner)
     NSColor *_menubarTint;           // رنگ فعلی آیتم منوبار؛ رندر پرتکرار تصویر نو نسازد
     BOOL _axPrompted;                // پنجره درخواست اکسسبیلیتی فقط یک بار در هر اجرا
+    BOOL _launched;                  // applicationDidFinishLaunching تمام شد و پنل هست
+    NSString *_pendingURL;           // آدرسی که پیش از آن رسید و منتظر مانده
 }
 
 - (void)applicationWillFinishLaunching:(NSNotification *)n {
@@ -212,6 +214,13 @@ int ZSelfTest(NSString *file, NSString *lang) {
     ZLog(@"app: launched res=%@ data=%@ ax=%d polish=%d",
          ZRes().path, ZSupport().path,
          [ZInjector accessibilityOK], ZSettings.shared.polishEnabled);
+
+    // حالا پنل هست و آدرسِ در صف می‌تواند اجرا شود. اگر کارابینر اپ را با
+    // `zemzeme://start` بالا آورده باشد، سشن دقیقا از همین‌جا شروع می‌شود.
+    _launched = YES;
+    NSString *queued = _pendingURL;
+    _pendingURL = nil;
+    if (queued.length) [self runURL:queued];
 }
 
 // یک‌بار در عمر نصب، نه در عمر پروسه: کلید همان کلید معمولی دیفالتز است، پس ری‌استارت
@@ -283,6 +292,22 @@ int ZSelfTest(NSString *file, NSString *lang) {
 - (void)handleURLEvent:(NSAppleEventDescriptor *)event withReply:(NSAppleEventDescriptor *)reply {
     NSString *url = [event paramDescriptorForKeyword:keyDirectObject].stringValue ?: @"";
     ZLog(@"app: url %@", url);
+    // **آدرسی که اپ را بالا می‌آورد زودتر از خودِ بالا آمدن می‌رسد.** هندلر در
+    // `applicationWillFinishLaunching` نصب می‌شود، پس لانچ‌سرویس آدرس را پیش از
+    // `applicationDidFinishLaunching` تحویل می‌دهد. یعنی وقتی کارابینر اپِ بسته را با
+    // `zemzeme://start` بالا می‌آورد، سشن پیش از ساخته شدنِ `_panel` شروع می‌شد و با
+    // پنلِ nil کار می‌کرد: دیکته می‌رفت، ولی هیچ پنلی روی صفحه نبود. در لاگ هم پیدا
+    // بود، `session: start` بالای `app: launched` می‌نشست.
+    // پس آدرس در صف می‌ماند تا اپ واقعا سرِ پا باشد.
+    if (!_launched) {
+        _pendingURL = url;
+        ZLog(@"app: url در صف تا پایان لانچ");
+        return;
+    }
+    [self runURL:url];
+}
+
+- (void)runURL:(NSString *)url {
     if ([url isEqualToString:@"zemzeme://start"]) {
         if (!_session) [self startSession];
     } else if ([url isEqualToString:@"zemzeme://stop"]) {

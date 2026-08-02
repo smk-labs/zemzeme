@@ -34,7 +34,7 @@ clang -fobjc-arc -O2 -Wall -Wno-unused-function \
   -framework AppKit -framework AVFoundation -framework Carbon \
   -framework CoreText -framework ApplicationServices -framework QuartzCore \
   -framework AudioToolbox -framework CoreMedia -framework Security \
-  -framework ServiceManagement \
+  -framework ServiceManagement -framework CoreAudio \
   -o .build/zemzeme
 
 rm -rf "$APP"
