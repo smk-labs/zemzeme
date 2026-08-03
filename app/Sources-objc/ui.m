@@ -79,6 +79,19 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
 }
 @end
 
+// دکمه‌ی نوار، با حرفِ میان‌برش. حرف *داخلِ* خودِ دکمه می‌نشیند، نه در آرایه‌ای موازی.
+// چرا اینقدر تاکید: قبلا caps آرایه‌ی جدایی بود و چیدمان این دو را با اندیس جفت
+// می‌کرد، یعنی «ترتیبِ ساختن باید همان ترتیبِ نوار باشد» یک قاعده‌ی نانوشته بود که
+// کامپایلر نمی‌دیدش. دکمه‌ی حساسیت آخر ساخته شد و سومِ نوار نشست، و از آن نقطه به بعد
+// همه‌ی حرف‌ها یکی جابه‌جا شدند: زیر «کپی» نوشته بود D. حالا جفت شدن ساختاری است و
+// جابه‌جا کردنِ نوار هیچ‌چیزی را به هم نمی‌ریزد.
+@interface ZBarButton : NSButton
+@property (nonatomic, strong) NSTextField *cap;
+@end
+
+@implementation ZBarButton
+@end
+
 @implementation ZPanel {
     NSPanel *_panel;
     ZDragEffectView *_effect;
@@ -87,13 +100,12 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
     NSTextField *_text;
     NSView *_chipBg;
     NSTextField *_chipLabel;
-    NSButton *_btnClose, *_btnPause, *_btnCopy, *_btnTrash, *_btnInsert;
-    NSButton *_btnLang, *_btnMode, *_btnPolish, *_btnFinal, *_btnRotate, *_btnFile;
-    NSButton *_btnSens;
-    NSButton *_btnEnhance;
+    ZBarButton *_btnClose, *_btnPause, *_btnCopy, *_btnTrash, *_btnInsert;
+    ZBarButton *_btnLang, *_btnMode, *_btnPolish, *_btnFinal, *_btnRotate, *_btnFile;
+    ZBarButton *_btnSens;
+    ZBarButton *_btnEnhance;
     NSProgressIndicator *_spinner;    // جای نشان، وقتی کاری در جریان است
-    NSArray<NSButton *> *_bar;    // ترتیب دکمه‌ها؛ یک منبع حقیقت برای چیدمان و پهنای متن
-    NSMutableArray<NSTextField *> *_barCaps;   // حرف میان‌بر زیر هر دکمه، به همان ترتیب
+    NSArray<ZBarButton *> *_bar;  // ترتیب دکمه‌ها؛ یک منبع حقیقت برای چیدمان و پهنای متن
     id<ZTextSink> _editorSink;
     ZPanelModel *_lastModel;      // برای رندر دوباره بدون سشن (فیدبک لحظه‌ای)
     NSString *_flash;             // پیام کوتاه تایید کار، چند لحظه روی خط وضعیت
@@ -205,9 +217,6 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
                              action:@selector(finalTap)];
         // بهبود پرامپت (بتا). آیکونش عمدا نه جادو است نه جرقه: آن دو مالِ «همین متن،
         // تمیزتر»اند و این یکی متن را به چیز دیگری تبدیل می‌کند.
-        // **ترتیبِ ساختن باید همان ترتیبِ `_bar` باشد.** حرفِ میان‌بر در آرایه‌ی جدایی
-        // (`_barCaps`) می‌نشیند و `layoutViews` این دو را با *همان اندیس* جفت می‌کند؛
-        // یک بار همین‌جا جابه‌جا ساخته شد و روی نوار، زیر همین دکمه «R» نوشته شده بود.
         _btnEnhance = [self makeButton:@"curlybraces" key:@"B"
                                    tip:@"بهبود پرامپت (بتا): همین متن، به یک پرامپت آماده برای ایجنت"
                                 action:@selector(enhanceTap)];
@@ -250,27 +259,26 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
     return self;
 }
 
-// آیکون + حرف میان‌بر ریز زیرش. تولتیپ روی این پنل هیچ‌وقت ظاهر نمی‌شود (پنل
-// nonactivating است و اپ اکسسوری، پس مک تولتیپ را نمی‌کشد)، پس میان‌بر باید
-// خودش روی نوار نوشته باشد.
-- (NSButton *)makeButton:(NSString *)symbol key:(NSString *)key
-                     tip:(NSString *)tip action:(SEL)action {
-    NSButton *b = [self makeButton:symbol tip:tip action:action];
+// آیکون + حرف میان‌بر ریز زیرش، و حرف به خودِ همین دکمه چسبیده. تولتیپ روی این پنل
+// هیچ‌وقت ظاهر نمی‌شود (پنل nonactivating است و اپ اکسسوری، پس مک تولتیپ را نمی‌کشد)،
+// پس میان‌بر باید خودش روی نوار نوشته باشد.
+- (ZBarButton *)makeButton:(NSString *)symbol key:(NSString *)key
+                       tip:(NSString *)tip action:(SEL)action {
+    ZBarButton *b = [self makeButton:symbol tip:tip action:action];
     NSTextField *cap = [NSTextField labelWithString:key];
     cap.font = [NSFont monospacedDigitSystemFontOfSize:8 weight:NSFontWeightMedium];
     cap.textColor = NSColor.tertiaryLabelColor;
     cap.alignment = NSTextAlignmentCenter;
     [_effect addSubview:cap];
-    if (!_barCaps) _barCaps = [NSMutableArray array];
-    [_barCaps addObject:cap];
+    b.cap = cap;
     return b;
 }
 
-- (NSButton *)makeButton:(NSString *)symbol tip:(NSString *)tip action:(SEL)action {
+- (ZBarButton *)makeButton:(NSString *)symbol tip:(NSString *)tip action:(SEL)action {
     NSImage *img = [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:tip];
     img = [img imageWithSymbolConfiguration:
            [NSImageSymbolConfiguration configurationWithPointSize:12 weight:NSFontWeightMedium]];
-    NSButton *b = [NSButton buttonWithImage:img ?: [NSImage new] target:self action:action];
+    ZBarButton *b = [ZBarButton buttonWithImage:img ?: [NSImage new] target:self action:action];
     b.bordered = NO;
     b.buttonType = NSButtonTypeMomentaryChange;
     b.contentTintColor = NSColor.secondaryLabelColor;
@@ -292,13 +300,11 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
     CGFloat cy = (kBarH - 24) / 2;   // مرکز ردیف؛ آیکون‌ها ۴ پیکسل بالاتر می‌روند
     // آیکون کمی بالاتر می‌نشیند تا حرف میان‌بر زیرش جا شود
     CGFloat left = kBarPad;
-    for (NSUInteger i = 0; i < _bar.count; i++) {
-        NSButton *b = _bar[i];
-        NSTextField *cap = i < _barCaps.count ? _barCaps[i] : nil;
-        cap.hidden = b.hidden;
+    for (ZBarButton *b in _bar) {
+        b.cap.hidden = b.hidden;
         if (b.hidden) continue;
         b.frame = NSMakeRect(left, cy + 4, 24, 24);
-        cap.frame = NSMakeRect(left - 3, 3, 30, 10);
+        b.cap.frame = NSMakeRect(left - 3, 3, 30, 10);
         left += kBarStep;
     }
     if (!_chipBg.hidden) {
@@ -478,7 +484,7 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
 // چون آن یک رندر عقب است و درست همان لحظه‌ای که چیپ ظاهر می‌شود غلط می‌دهد.
 - (CGFloat)textWidth {
     CGFloat left = kBarPad;
-    for (NSButton *b in _bar) if (!b.hidden) left += kBarStep;
+    for (ZBarButton *b in _bar) if (!b.hidden) left += kBarStep;
     if (!_chipBg.hidden) left += _chipBg.frame.size.width + 8;
     return MAX(40, (_dot.frame.origin.x - 8) - left);
 }
