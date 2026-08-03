@@ -178,8 +178,18 @@ static OSStatus ZFlacInputProc(AudioConverterRef inConv, UInt32 *ioNumberDataPac
         // این کدک هر چند فراخوان موفق یک‌بار صفر برمی‌گرداند بدون خطای واقعی؛
         // AudioConverterReset فورا جانش می‌دهد. فقط reactive و فقط یک retry
         // (retry نامحدود یا reset پیش‌گیرانه‌ی بعد از هر موفقیت در عمل قفل کرد).
+        NSUInteger before = _cursor;
         AudioConverterReset(_conv);
-        [self fillOnce:count intoResult:result];
+        if (![self fillOnce:count intoResult:result]) {
+            // **هر دو تلاش شکست خورد.** تا امروز `_cursor` که در supplyInput جلو
+            // رفته بود همان پایین بی‌قیدوشرط از بافر بریده می‌شد، پس همان صدا نه
+            // کد می‌شد، نه فرستاده می‌شد، و نه حتی یک خط لاگ می‌داد. با تکه‌های
+            // ۱۶ کیلوبایتی یعنی تا نیم ثانیه حرف، بی‌صدا، وسط جمله.
+            // حالا آنچه واقعا مصرف نشده سر جایش می‌ماند تا دور بعد دوباره امتحان شود.
+            if (_cursor > before) _cursor = before;
+            ZLog(@"flac: هر دو تلاش کدک شکست خورد، %lu بایت صدا نگه داشته شد",
+                 (unsigned long)(_inBuf.length - _cursor));
+        }
     }
 
     if (_cursor > 0) {
