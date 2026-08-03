@@ -142,6 +142,8 @@ void ZMicDumpReport(NSData *pcm, NSUInteger clipped, NSString *path) {
     float _hpPrevIn, _hpPrevOut;   // حافظه‌ی فیلتر بالاگذرِ آشکارساز
     BOOL _sawSpeech;
     BOOL _warnedSNR;
+    BOOL _gainLocked;
+    NSUInteger _lockBlocks;
 }
 
 // ---------- کالیبراسیون بلندی (نه AGC) ----------
@@ -164,7 +166,15 @@ void ZMicDumpReport(NSData *pcm, NSUInteger clipped, NSString *path) {
 static const float kZPeakTarget = 0.22f;      // حدود منفی ۱۳ دسی‌بل، وسطِ پنجره‌ی گوگل
 static const float kZPeakCeil = 0.99f;        // محدودکننده؛ بریدن ممنوع است
 static const float kZGainNormal = 12.0f;      // سقفِ حالت عادی
-static const float kZGainSensitive = 160.0f;  // سقفِ حالت حساسیت بالا
+static const float kZGainSensitive = 512.0f;  // سقفِ حالت حساسیت بالا
+// **قفلِ بهره.** گوگل AGC را منع می‌کند و دلیلش همین است: بهره‌ای که وسط جمله بالا و
+// پایین برود پوشِ صدا را عوض می‌کند و مدل روی صدای دست‌نخورده آموزش دیده. نسخه‌ی قبل
+// «آرام» بود ولی نمی‌ایستاد؛ در لاگ یک سشن بین ۷۳ و ۱۳۰ برابر نوسان داشت، یعنی
+// پنج دسی‌بل بالا و پایین در حین حرف زدن. حالا وقتی کالیبراسیون به هدف رسید قفل
+// می‌شود و تا آخر سشن همان می‌ماند: یک بهره‌ی ثابت، دقیقا آن چیزی که گوگل می‌خواهد.
+static const float kZLockTolerance = 1.19f;   // تا ±۱.۵ دسی‌بل یعنی رسیدیم
+static const NSUInteger kZLockBlocks = 7;     // حدود دو ثانیه حرفِ پایدار
+static const float kZUnlockDrop = 8.0f;       // این‌قدر دور شد، دوباره کالیبره کن
 static const float kZGainUpMax = 1.41f;       // حداکثر ۳ دسی‌بل در هر تکه، رو به بالا
 static const float kZGainDownMax = 4.0f;      // و ۱۲ دسی‌بل رو به پایین، چون بریدن ممنوع است
 // دروازه دیگر عددِ ثابت نیست: کفِ نویزِ **همین** دستگاه یاد گرفته می‌شود و حرف یعنی
@@ -340,6 +350,15 @@ static NSString *ZFormatDesc(AVAudioFormat *f) {
 
     float ceiling = ZSettings.shared.highSensitivity ? kZGainSensitive : kZGainNormal;
     float want = MIN(ceiling, MAX(1.0f, kZPeakTarget / _speechPeak));
+    // قفل: رسیدیم و ماندیم، پس دیگر تکان نخور. باز شدنش فقط وقتی است که واقعا دور
+    // شده باشیم (کاربر فاصله‌اش را عوض کرد، یا میکروفن عوض شد)، نه با هر نوسان.
+    if (_gainLocked) {
+        float off = want > _gain ? want / _gain : _gain / want;
+        if (off < kZUnlockDrop) return _gain;
+        _gainLocked = NO;
+        _lockBlocks = 0;
+        ZLog(@"mic: بهره از قفل درآمد (هدف %.0f× شد، قفل روی %.0f×)", want, _gain);
+    }
     // حرکت در مقیاس دسی‌بل با سرعت سقف‌دار، نه کسری از فاصله. با نسخه‌ی کسری،
     // رسیدن از یک به بیست برابر سیزده ثانیه طول می‌کشید و جمله‌های کوتاه هیچ‌وقت به
     // هدف نمی‌رسیدند. بالا رفتن آرام است تا کالیبراسیون بماند نه AGC؛ پایین آمدن
@@ -349,6 +368,15 @@ static NSString *ZFormatDesc(AVAudioFormat *f) {
     else if (ratio < 1.0f / kZGainDownMax) ratio = 1.0f / kZGainDownMax;
     _gain *= ratio;
     if (_gain < 1.0f) _gain = 1.0f;
+    float off = want > _gain ? want / _gain : _gain / want;
+    if (off < kZLockTolerance) {
+        if (++_lockBlocks >= kZLockBlocks) {
+            _gainLocked = YES;
+            ZLog(@"mic: بهره روی %.1f× قفل شد", _gain);
+        }
+    } else {
+        _lockBlocks = 0;
+    }
     return _gain;
 }
 
