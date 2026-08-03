@@ -236,7 +236,7 @@ static NSString *ZFormatDesc(AVAudioFormat *f) {
         _outFormat = [[AVAudioFormat alloc] initWithCommonFormat:AVAudioPCMFormatFloat32
                                                       sampleRate:16000 channels:1 interleaved:NO];
         _gain = 1.0f;
-        _noiseFloor = 1.0f;
+        _noiseFloor = -1.0f;
     }
     return self;
 }
@@ -295,7 +295,7 @@ static NSString *ZFormatDesc(AVAudioFormat *f) {
     _lockBlocks = 0;
     _unlockBlocks = 0;
     _speechPeak = 0;
-    _noiseFloor = 1.0f;
+    _noiseFloor = -1.0f;    // هنوز کاشته نشده؛ اولین تکه می‌کاردش
     _hpPrevIn = 0;
     _hpPrevOut = 0;
     _sawSpeech = NO;
@@ -389,7 +389,14 @@ static NSString *ZFormatDesc(AVAudioFormat *f) {
 - (float)calibrateForPeak:(float)peak {
     // کف نویز: تند پایین می‌آید (هر سکوتی کف تازه است) و آرام بالا، تا اتاقی که
     // کم‌کم شلوغ می‌شود هم دنبال شود بی آنکه یک تَق کف را برای همیشه بالا ببرد.
-    if (peak < _noiseFloor) _noiseFloor += (peak - _noiseFloor) * kZFloorFall;
+    // **کاشتِ فوری، بعد ردیابیِ آرام.** افتِ آرام جلوی فروریختنِ کف را می‌گیرد، ولی
+    // اگر از یک شروع شود همان آرامی خودش فاجعه است: از ۱.۰ تا کفِ واقعیِ یک هدست
+    // (حدود ۰.۰۰۱) با پنج درصد در هر تکه چهل ثانیه طول می‌کشد، و در تمام آن مدت
+    // هیچ چیز سه برابرِ کف نمی‌شود، پس هیچ حرفی تشخیص داده نمی‌شود و بهره روی یک
+    // می‌ماند. دقیقا همین در لاگ افتاد: gain 1.0× و snr 0dB برای کل سشن.
+    // پس اولین تکه کف را می‌کارد و از آن به بعد آرام دنبال می‌شود.
+    if (_noiseFloor < 0) _noiseFloor = MAX(peak, kZFloorMin);
+    else if (peak < _noiseFloor) _noiseFloor += (peak - _noiseFloor) * kZFloorFall;
     else _noiseFloor = MIN(_noiseFloor * kZNoiseRise, peak);
     if (_noiseFloor < kZFloorMin) _noiseFloor = kZFloorMin;
 
