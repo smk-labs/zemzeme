@@ -636,18 +636,22 @@ static CGEventRef zHotkeyCallback(CGEventTapProxy proxy, CGEventType type, CGEve
         _savedDown = CGEventCreateCopy(event);
         return NULL;    // فعلا از همه پنهان؛ اگر ترکیب شد دوباره تزریق می‌شود
     }
+    // بالاآمدنی که پایین‌رفتنش را ندیده‌ایم مالِ ما نیست: یعنی تپ وسطِ نگه‌داشتنِ کلید
+    // بالا آمده، یا با تایم‌اوت خاموش بوده و رویدادها بی ما رد شده‌اند. بلعیدنش یعنی
+    // سیستم هیچ‌وقت نمی‌فهمد مودیفایر رها شد، و از آن لحظه هر کلیدی در هر اپی با
+    // Command راست خوانده می‌شود؛ داخل ریموت دسکتاپ آن هم کلیدِ ویندوز است، پس
+    // میان‌برهای خودِ کاربر (Cmd+A و بقیه) یکجا از کار می‌افتند.
+    if (!_physDown) return event;
     BOOL wasEmitted = _emitted;
     BOOL suppressUp = _suppressUp;
-    _physDown = NO;
-    _emitted = NO;
-    _suppressUp = NO;
-    if (_savedDown) {
-        CFRelease(_savedDown);
-        _savedDown = NULL;
-    }
+    [self forgetHeld];
     if (wasEmitted) return suppressUp ? NULL : event;
     [self loneTapUp];
-    return NULL;
+    // تپِ تنها باید برای بقیه نامرئی باشد، پس بالاآمدنش هم بلعیده می‌شود. یک استثنا:
+    // اگر سیستم همین حالا Command راست را پایین می‌داند، یعنی یک پایین‌رفتنِ تزریق‌شده
+    // جایی رها نشده؛ بلعیدنِ این رویداد آن مودیفایر را برای همیشه گیر می‌اندازد.
+    // آنجا رد می‌شود: یک ⌘ اضافه‌ی دیده‌نشده بهتر از کیبوردی است که تا ریبوت خراب است.
+    return zSystemThinksRightCmdHeld() ? event : NULL;
 }
 
 // نقشه‌ی کلید به کار. یک ورودی دارد و بس: Command راست + حرف. هر دکمه‌ی پنل دقیقا
@@ -692,6 +696,14 @@ static CGEventRef zHotkeyCallback(CGEventTapProxy proxy, CGEventType type, CGEve
 - (CGEventRef)handleKeyDown:(CGEventRef)event proxy:(CGEventTapProxy)proxy {
     int64_t code = CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode);
 
+    // مدرک، پیش از اعتماد به حالتِ خودمان: «نگه‌داشته» می‌تواند کهنه باشد و کلید همین
+    // حالا بالا باشد. بی این پرسش، رویدادِ کهنه‌ی پایین‌رفتن تزریق می‌شد و چون هیچ
+    // بالاآمدنی پشتش نمی‌آمد، Command راست تا ابد پایین می‌ماند.
+    if (_physDown && !zRightCmdHeldForReal()) {
+        ZLog(@"hotkey tap: حالت کهنه دور ریخته شد (Command راست دیگر پایین نیست)");
+        [self forgetHeld];
+    }
+
     if (_physDown && !_emitted) {
         CGEventFlags mods = CGEventGetFlags(event) & kZModMask;
         // گارد سشن داخل خود نقشه است، چون یک کار (F) عمدا بی‌سشن هم کار می‌کند
@@ -726,6 +738,13 @@ static CGEventRef zHotkeyCallback(CGEventTapProxy proxy, CGEventType type, CGEve
 
 - (CGEventRef)handleProxy:(CGEventTapProxy)proxy type:(CGEventType)type event:(CGEventRef)event {
     if (type == kCGEventTapDisabledByTimeout || type == kCGEventTapDisabledByUserInput) {
+        // در فاصله‌ی خاموشی هر تعداد رویداد بی ما رد شده. هرچه نگه داشته‌ایم دیگر
+        // مدرک نیست، حدس است، پس دور ریخته می‌شود. لاگ هم لازم است: خاموش شدن با
+        // تایم‌اوت یعنی نخ اصلی سر وقت جواب نداده، و آن خودش یک باگ است نه یک اتفاق.
+        ZLog(@"hotkey tap: %@، دوباره روشن شد",
+             type == kCGEventTapDisabledByTimeout ? @"با تایم‌اوت خاموش شد (نخ اصلی دیر جواب داد)"
+                                                 : @"با ورودی کاربر خاموش شد");
+        [self forgetHeld];
         if (_tap) CGEventTapEnable(_tap, true);
         return event;
     }

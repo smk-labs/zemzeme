@@ -51,19 +51,39 @@ static const CGFloat kBarH = 46;      // ارتفاع ردیف پایه (دکم�
 static const CGFloat kBarPad = 10;    // فاصله اولین دکمه از لبه چپ
 static const CGFloat kBarStep = 28;   // گام هر دکمه (۲۴ عرض + ۴ فاصله)
 static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جمع
+static const CGFloat kGripW = 30;     // دستگیرهٔ دیداری: خطِ وسطِ لبهٔ بالا
+static const CGFloat kGripH = 4;
+static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بالا
 
 // پس‌زمینهٔ پنل (تعریفش در zemzeme.h است، چون کارت میان‌برها هم همین را می‌خواهد):
-// دکمه‌ها/برچسب/ادیتور چون خودشان mouseDown را می‌گیرند دست‌نخورده می‌مانند.
+// کشیدن از همه‌جا، جز چیزی که واقعا کلیک لازم دارد (دکمه و ادیتور). تصمیمش در
+// hitTest پایین است، نه در این‌که هر ویو خودش mouseDown را بگیرد یا نه.
 @implementation ZDragEffectView
 - (BOOL)mouseDownCanMoveWindow { return YES; }
 - (void)mouseDown:(NSEvent *)event { [self.window performWindowDragWithEvent:event]; }
+
+// کلِ سطحِ پنل دستگیره است، هرجا که دکمه یا ادیتور نیست.
+// چرا لازم شد: لیبلِ خط وضعیت (NSTextField، یعنی NSControl) کلیک را می‌بلعد و
+// بیشترِ پهنای نوار را گرفته بود، پس عملا فقط از چند شکافِ باریکِ بین دکمه‌ها می‌شد
+// پنل را کشید. برگرداندنِ self یعنی mouseDown همین‌جا می‌رسد و پنجره کشیده می‌شود.
+// چیزی که واقعا کلیک لازم دارد دست‌نخورده می‌ماند: دکمه‌ها، و ادیتورِ حالت جمع با
+// اسکرولرش (پس انتخاب متن و اسکرول سر جایشان هستند).
+- (NSView *)hitTest:(NSPoint)point {
+    NSView *v = [super hitTest:point];
+    if (!v || v == self) return v;
+    for (NSView *p = v; p && p != self; p = p.superview) {
+        if ([p isKindOfClass:NSButton.class] || [p isKindOfClass:NSScrollView.class]
+            || [p isKindOfClass:NSTextView.class]) return v;
+    }
+    return self;
+}
 @end
 
 @implementation ZPanel {
     NSPanel *_panel;
     ZDragEffectView *_effect;
     ZMarkView *_dot;
-    NSImageView *_grip;
+    NSView *_grip;
     NSTextField *_text;
     NSView *_chipBg;
     NSTextField *_chipLabel;
@@ -131,15 +151,14 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
         _spinner.displayedWhenStopped = NO;
         [_effect addSubview:_spinner];
 
-        // دستگیرهٔ کشیدن: فقط راهنمای دیداری (کل پس‌زمینه از قبل قابل کشیدن است)، کنار نقطه
-        NSImage *gripImg = [NSImage imageWithSystemSymbolName:@"line.3.horizontal"
-                                      accessibilityDescription:@"دستگیرهٔ جابه‌جایی پنل"];
-        gripImg = [gripImg imageWithSymbolConfiguration:
-                   [NSImageSymbolConfiguration configurationWithPointSize:9 weight:NSFontWeightRegular]];
-        _grip = [NSImageView imageViewWithImage:gripImg ?: [NSImage new]];
-        _grip.contentTintColor = NSColor.secondaryLabelColor;
-        _grip.toolTip = @"بکش تا جابه‌جا شود";
-        _grip.frame = NSMakeRect(kPW - 16 - 9 * ZMarkAspect - 8 - 16, (kBarH - 9) / 2, 16, 9);
+        // دستگیره: یک خطِ کوچکِ وسطِ لبه‌ی بالا، و فقط همین. هیچ کاری نمی‌کند و لازم هم
+        // نیست بکند، چون کشیدن از همه‌جای پنل کار می‌کند (hitTest بالای همین فایل).
+        // تنها کارش این است که بگوید «می‌شود جابه‌جایم کرد». قبلا کنارِ نقطه و شبیه
+        // یک دکمه‌ی کوچک بود، یعنی هم شبیه دستگیره نبود هم جای درستی نبود: چشم برای
+        // جابه‌جا کردنِ یک پنجره اول می‌رود بالا، نه لای دکمه‌های پایین.
+        _grip = [NSView new];
+        _grip.wantsLayer = YES;
+        _grip.layer.cornerRadius = kGripH / 2;
         [_effect addSubview:_grip];
 
         _text = [NSTextField labelWithString:@""];
@@ -288,7 +307,9 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
         _chipBg.frame = f;
         left += _chipBg.frame.size.width + 8;
     }
-    CGFloat right = _grip.frame.origin.x - 8;   // قبل از دستگیره تمام شود، نه زیر نقطه
+    // دستگیره وسطِ لبه‌ی بالا می‌نشیند، پس با قد کشیدنِ پنل با آن بالا می‌رود
+    _grip.frame = NSMakeRect((kPW - kGripW) / 2, H - kGripTop - kGripH, kGripW, kGripH);
+    CGFloat right = _dot.frame.origin.x - 8;    // قبل از نشان تمام شود، نه زیرش
     // در تسمه‌نقاله، فریم متن با قد پنل بالا می‌رود که تا سه خط جا شود
     CGFloat textH = (_editorVisible ? kBarH : H) - 22;
     _text.frame = NSMakeRect(left, 11, MAX(40, right - left), textH);
@@ -300,6 +321,9 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
 - (void)applyColors {
     _effect.layer.borderColor = [NSColor.labelColor colorWithAlphaComponent:0.12].CGColor;
     _chipBg.layer.backgroundColor = [NSColor.labelColor colorWithAlphaComponent:0.08].CGColor;
+    // CGColor مثل بقیه‌ی رنگ‌های لایه‌ای اینجا، نه NSColor: با عوض شدن روشن و تاریک
+    // خودش به‌روز نمی‌شود، پس از همین یک نقطه دوباره ساخته می‌شود
+    _grip.layer.backgroundColor = [NSColor.labelColor colorWithAlphaComponent:0.25].CGColor;
 }
 
 // ---------- ادیتور حالت جمع ----------
@@ -456,7 +480,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     CGFloat left = kBarPad;
     for (NSButton *b in _bar) if (!b.hidden) left += kBarStep;
     if (!_chipBg.hidden) left += _chipBg.frame.size.width + 8;
-    return MAX(40, (_grip.frame.origin.x - 8) - left);
+    return MAX(40, (_dot.frame.origin.x - 8) - left);
 }
 
 // قد نوار در حالت تسمه‌نقاله: با متن بلند قد می‌کشد، تا سقف conveyorMaxLines
