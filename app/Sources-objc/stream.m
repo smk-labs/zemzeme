@@ -258,6 +258,14 @@ static NSString *const kBase = @"https://www.google.com/speech-api/full-duplex/v
         completionHandler(nil);
         return;
     }
+    // تلاش دوم (ریدایرکت یا retry) نباید نویسنده‌ی دوم بسازد: هر دو از همان
+    // `_pending` می‌خوانند و صدا درهم می‌رود، و `_output` هم بین دو نخ بی‌قفل
+    // جابه‌جا می‌شود. یکی بس است.
+    if (_writerThread) {
+        ZLog(@"stream: needNewBodyStream دوباره آمد؛ نویسنده‌ی دوم ساخته نشد");
+        completionHandler(nil);
+        return;
+    }
     _output = output;
     _stopWriter = NO;
     NSThread *t = [[NSThread alloc] initWithTarget:self selector:@selector(writerMain:) object:output];

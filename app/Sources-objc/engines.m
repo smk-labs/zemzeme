@@ -1,5 +1,22 @@
 // موتور اصلی گوگل (میکروفن + استریم + سوپروایزر) و موتور فال‌بک صفحه کروم.
 #import "zemzeme.h"
+#import <stdatomic.h>
+
+// مهر زمانیِ آخرین تکه‌ی صدا، بی‌قفل و بی‌شیء. bit-cast می‌شود چون atomic_double
+// روی همه‌ی نسخه‌ها موجود نیست و دقتِ لازم اینجا در حد ثانیه است.
+static inline void ZSetChunkStamp(atomic_llong *slot) {
+    double now = CFAbsoluteTimeGetCurrent();
+    long long bits;
+    memcpy(&bits, &now, sizeof(bits));
+    atomic_store(slot, bits);
+}
+
+static inline double ZChunkStamp(atomic_llong *slot) {
+    long long bits = atomic_load(slot);
+    double v;
+    memcpy(&v, &bits, sizeof(v));
+    return v;
+}
 
 // ---------- ZGoogleEngine ----------
 // سوپروایزر همان سه پادزهر صفحه وب: backoff نمایی تا ۵ ثانیه، تسلیم بعد از
@@ -53,7 +70,10 @@
     NSDate *_streamStartedAt;
     ZEngineState _lastState;
     NSDate *_lastLevelAt;
-    NSDate *_lastChunkAt;        // واچ‌داگ میکروفن مرده
+    // زمانِ آخرین تکه، به‌صورت عدد نه شیء: روی نخ صدا نوشته می‌شود و روی نخ اصلی
+    // خوانده. با NSDate* هر نوشتن یک release روی شیءِ قبلی است و آن دو نخ با هم
+    // یعنی over-release. عدد اتمیک نه پاره خوانده می‌شود نه چیزی آزاد می‌کند.
+    atomic_llong _lastChunkAtBits;
     NSInteger _micRetries;
     BOOL _paused;
 
@@ -133,7 +153,7 @@
     if (!_running || !_paused) return;
     _paused = NO;
     _endsSinceResult = 0;
-    _lastChunkAt = NSDate.date;
+    ZSetChunkStamp(&_lastChunkAtBits);
     // صدای پیش از مکث دیگر همسایه‌ی صدای تازه نیست؛ هم‌پوشانی از آن یعنی چسباندن دو
     // تکه‌ی بی‌ربط به هم
     [_feedLock lock];
@@ -216,9 +236,16 @@
     _mic.onChunk = ^(NSData *pcm) {
         __strong typeof(ws) s = ws;
         if (!s) return;
-        s->_lastChunkAt = NSDate.date;
+        ZSetChunkStamp(&s->_lastChunkAtBits);
         s->_micRetries = 0;
-        if (s->_paused) return;    // در مکث، صدا دور ریخته می‌شود (بافر هم نه)
+        // در مکث فقط **بالا نمی‌رود**. تا امروز اصلا دور ریخته می‌شد: نه روی دیسک
+        // می‌نشست نه در بافر، پس یک مکثِ ناخواسته (یا یک تپِ اشتباهی) همان چند ثانیه
+        // را برای همیشه می‌برد و پاس نهایی هم دیگر نمی‌توانست از صدا نجاتش دهد.
+        // ضبط ادامه دارد، چون فایل سشن باید همان چیزی باشد که میکروفن شنید.
+        if (s->_paused) {
+            [s.recorder feed:pcm];
+            return;
+        }
         // ضبط روی دیسک، پیش از هر تصمیم دیگری: این تکه ممکن است در چرخش و بازپخش و
         // جوش هزار جا برود، ولی فایل سشن باید دقیقا همان چیزی باشد که میکروفن شنید.
         [s.recorder feed:pcm];
@@ -273,7 +300,7 @@
         }
         _micRunning = YES;
     }
-    _lastChunkAt = NSDate.date;
+    ZSetChunkStamp(&_lastChunkAtBits);
     _micRetries = 0;
     [self openStream];
     [_watchdog invalidate];
@@ -496,11 +523,11 @@
     if (!_running || _paused) return;
     // واچ‌داگ میکروفن مرده: صدا اصلا نمی‌رسد یعنی تشخیص هم بی‌معناست؛
     // بی‌صدا ماندنش قبلا شبیه «سکوت کاربر» دیده می‌شد و اپ بی‌سروصدا کر می‌ماند.
-    NSTimeInterval sinceChunk = [NSDate.date timeIntervalSinceDate:_lastChunkAt];
+    NSTimeInterval sinceChunk = CFAbsoluteTimeGetCurrent() - ZChunkStamp(&_lastChunkAtBits);
     if (_micRunning && sinceChunk > 5) {
         if (_micRetries < 2) {
             _micRetries++;
-            _lastChunkAt = NSDate.date;
+            ZSetChunkStamp(&_lastChunkAtBits);
             ZLog(@"engine: mic silent %.0fs, restarting mic (try %ld)", sinceChunk, (long)_micRetries);
             [_mic stop];
             _micRunning = NO;

@@ -590,11 +590,15 @@ static CGEventRef zHotkeyCallback(CGEventTapProxy proxy, CGEventType type, CGEve
 
 // حالتِ «Command راست پایین است» را دور بریز، بی تزریق و بی بلعیدن. هرجا که مدرک
 // می‌گوید این حالت کهنه است از همین‌جا رد می‌شود، یک نقطه و نه چند جای پراکنده.
+// فراموش کردنِ نگه‌داشتن. رویدادِ بلعیده‌شده پس داده می‌شود، نه دور ریخته: کاربر
+// Command راست را واقعا پایین آورده و اگر ما آن را نه پخش کنیم نه پس بدهیم، اپِ
+// زیرین بعدا یک بالاآمدنِ بی‌صاحب می‌گیرد و مودیفایرش گیر می‌کند.
 - (void)forgetHeld {
     _physDown = NO;
     _emitted = NO;
     _suppressUp = NO;
     if (_savedDown) {
+        CGEventPost(kCGSessionEventTap, _savedDown);
         CFRelease(_savedDown);
         _savedDown = NULL;
     }

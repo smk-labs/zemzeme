@@ -35,9 +35,16 @@ static const NSTimeInterval kZLedgerPendingThrottle = 0.12;
 
 // ---------- ZTextLedger ----------
 
+// مرزِ مشترک، ولی هیچ‌وقت وسطِ یک نویسه. مقایسه بر حسب واحدهای UTF-16 است و یک
+// جفتِ جانشین (ایموجی، و هر چیز بیرون از BMP) دو واحد است؛ بریدن از وسطش نیم‌نویسه
+// روی صفحه می‌گذارد و شمارشِ Backspace را هم یکی کم می‌آورد.
 static NSUInteger ZCommonPrefix(NSString *a, NSString *b) {
     NSUInteger n = MIN(a.length, b.length), i = 0;
     while (i < n && [a characterAtIndex:i] == [b characterAtIndex:i]) i++;
+    if (i > 0 && i < a.length) {
+        NSRange r = [a rangeOfComposedCharacterSequenceAtIndex:i];
+        if (r.location < i) i = r.location;    // عقب تا مرزِ سالم
+    }
     return i;
 }
 

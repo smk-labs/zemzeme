@@ -334,7 +334,15 @@ static NSString *ZFormatDesc(AVAudioFormat *f) {
         *outStatus = AVAudioConverterInputStatus_HaveData;
         return buffer;
     }];
-    if (st == AVAudioConverterOutputStatus_Error || out.frameLength == 0 || !out.floatChannelData) return;
+    // خطای مبدل تا امروز یک `return` خالی بود: صدا ناپدید می‌شد و هیچ ردی نمی‌ماند.
+    // شایع‌ترین راهش هم عوض شدن دستگاه است، چون removeTapOnBus منتظر بلاکِ در پرواز
+    // نمی‌ماند و یک بافرِ ۴۸ کیلوهرتزی می‌تواند به مبدلی برسد که برای فرمت دیگری
+    // ساخته شده. فریمِ صفر عادی است (مبدل هنوز بلاک کامل ندارد) و لاگ نمی‌خواهد.
+    if (st == AVAudioConverterOutputStatus_Error) {
+        ZLogAsync(@"mic: تبدیل شکست خورد، این تکه صدا از دست رفت");
+        return;
+    }
+    if (out.frameLength == 0 || !out.floatChannelData) return;
 
     float *p = out.floatChannelData[0];
     NSUInteger n = out.frameLength;

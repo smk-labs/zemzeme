@@ -1405,6 +1405,12 @@ static NSString *ZModeLabel(ZMode m) {
         _versionAt = 0;
     }
     if (keep < _transcript.length) {
+        // پیش از بریدن، متنِ محکوم را در کلیپ‌بورد پارک کن. در حالت زنده و کرسر
+        // `keep` برابر چیزی است که واقعا در اپ مقصد نشسته؛ اگر مقصد جلو نبوده یا
+        // درج را رد کرده، آن عدد نزدیک صفر می‌ماند و این خط عملا کلِ سشن را می‌برد.
+        // یک Cmd+V بهتر از یک پاراگرافِ رفته است.
+        NSString *doomed = [_transcript substringFromIndex:keep];
+        if (doomed.length > 8) [ZInjector copyFinal:doomed];
         [_transcript deleteCharactersInRange:NSMakeRange(keep, _transcript.length - keep)];
     }
     [_ledger adoptSink:[self sinkForMode:_mode] committed:_transcript delivered:keep];
