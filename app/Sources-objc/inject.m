@@ -326,6 +326,21 @@ static BOOL zSetSelectedRange(AXUIElementRef el, CFRange range) {
     });
 }
 
+// فلیکِ پنجره‌ی کلید فقط مالِ کلاینتِ ریموت است. در یک اپ مک گرفتنِ لحظه‌ایِ کلید
+// بی‌دلیل است و می‌تواند پاپ‌اوورِ باز را ببندد، پس آنجا دست نمی‌زنیم. مقصدِ Cmd+V
+// همان اپِ جلو است، پس همین‌جا و همین حالا پرسیدنش دقیقا همان چیزی است که لازم داریم.
+static BOOL zFrontIsRemoteClient(void) {
+    __block NSString *b = nil;
+    if (NSThread.isMainThread) {
+        b = NSWorkspace.sharedWorkspace.frontmostApplication.bundleIdentifier;
+    } else {
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            b = NSWorkspace.sharedWorkspace.frontmostApplication.bundleIdentifier;
+        });
+    }
+    return [b isEqualToString:kZRDPBundleId];
+}
+
 // پیست تکه‌ای: کپی با نشونه transient (تاریخچه‌گیرها رد می‌کنند) و Cmd+V.
 // همه چیز روی یک صف سریال تا دو پیست پشت هم مسابقه کلیپ‌بورد نگیرند
 // (باگ واقعی: برگرداندن کلیپ‌بورد قبلی وسط پیست بعدی می‌نشست و متن قدیمی پیست می‌شد؛
@@ -344,7 +359,7 @@ static BOOL zSetSelectedRange(AXUIElementRef el, CFRange range) {
         [pb setString:text forType:NSPasteboardTypeString];
         [pb setString:@"" forType:transient];
     });
-    [ZInjector wakeRemoteClipboard];    // اول بیدارش کن، بعد مهلت بده
+    if (zFrontIsRemoteClient()) [ZKeyFlick flick];   // «برو مک و برگرد»، خودکار
     usleep(d);    // مهلت سینک کلیپ‌بورد ریموت دسکتاپ
     [ZInjector sendCmdV];
     usleep(150000);
@@ -369,8 +384,6 @@ static BOOL zSetSelectedRange(AXUIElementRef el, CFRange range) {
 static const CGEventFlags kZLeftCmdBit = 0x8;    // NX_DEVICELCMDKEYMASK
 static const useconds_t kZChordGap = 25000;      // مهلت رسیدن مودیفایر، قبل از حرف
 
-static const CGEventFlags kZLeftShiftBit = 0x2;  // NX_DEVICELSHIFTKEYMASK
-
 static void zPostModifier(CGKeyCode key, CGEventFlags flags) {
     CGEventRef e = CGEventCreateKeyboardEvent(NULL, key, true);
     if (!e) return;
@@ -382,17 +395,19 @@ static void zPostModifier(CGKeyCode key, CGEventFlags flags) {
     usleep(kZChordGap);
 }
 
-// بیدارباش قبل از مهلت سینک: یک ضربه‌ی خالی روی Shift چپ.
-// اندازه‌گیری: Windows App کلیپ‌بورد مک را مدام نمی‌پاید. سرویس pasteboard.xpc اش
-// ساعت‌ها بالا بود و ۰٫۰۳ ثانیه CPU خورده بود، و با عوض شدن کلیپ‌بورد در پس‌زمینه
-// یک ذره هم تکان نخورد. تا چیزی بیدارش نکند، به ویندوز خبر نمی‌دهد که کلیپ‌بورد عوض
-// شده، و ویندوز همان متن قبلی خودش را پیست می‌کند. Shift تنها بی‌خطرترین چیزی است
-// که می‌شود فرستاد: در ویندوز هیچ کاری نمی‌کند، روی صفحه دیده نمی‌شود، و متن را
-// دست نمی‌زند. کیکد ۵۶ است، پس تپ خودمان (که فقط ۵۴ را می‌پاید) هم نمی‌بیندش.
-+ (void)wakeRemoteClipboard {
-    zPostModifier((CGKeyCode)kVK_Shift, kCGEventFlagMaskShift | kZLeftShiftBit);
-    zPostModifier((CGKeyCode)kVK_Shift, 0);
-}
+// چرا پیش از پیست، پنجره‌ی کلید فلیک می‌شود (بالا، در pasteNow):
+//
+// اندازه‌گیری روی Windows App 11.3.0.2814، از دیس‌اسمبلیِ خودِ کلاینت: فرستادنِ
+// کلیپ‌بوردِ مک به سرور تنها از دو جا صدا زده می‌شود، onNSWindowDidBecomeKey و
+// onNSWindowDidResignKey (هر دو به updateClipboardHandler و getAvailableFormats
+// می‌روند). نه تایمری کلیپ‌بورد را می‌پاید، نه ناظری روی NSPasteboard هست. یعنی تا
+// پنجره‌ی کلاینت کلید را از دست ندهد و پس نگیرد، سرور اصلا خبر ندارد کلیپ‌بورد عوض
+// شده و Ctrl+V همان متنِ قبلیِ خودِ ویندوز را می‌گذارد. کاربر دستی همین را می‌کرد:
+// «برو روی مک و برگرد». حالا ZKeyFlick همان کار را در ۸۰ میلی‌ثانیه می‌کند.
+//
+// اینجا قبلا یک ضربه‌ی خالی روی Shift چپ می‌رفت، با این حدس که هر ورودی‌ای کلاینت را
+// بیدار می‌کند. حدس غلط بود: ورودی کلید را عوض نمی‌کند، پس آن راه از اول هم نمی‌توانست
+// کار کند. پاک شد، چون کدی که کاری نمی‌کند بدتر از نبودن است: جای فیکس واقعی می‌نشیند.
 
 + (void)sendCmdV {
     CGEventFlags held = kCGEventFlagMaskCommand | kZLeftCmdBit;
@@ -505,6 +520,19 @@ static const CGEventFlags kZModMask = kCGEventFlagMaskCommand | kCGEventFlagMask
                                      | kCGEventFlagMaskControl | kCGEventFlagMaskShift;
 static const CFTimeInterval kZTapWindow = 0.35;   // پنجره دابل/تک‌تپ
 
+// دو مدرکِ بی‌واسطه درباره‌ی Command راست، هر دو ارزان و هیچ‌کدام از حالتِ خودمان:
+// یکی این‌که کلید *واقعا* پایین است (از HID، یعنی خودِ سخت‌افزار)، و دیگری این‌که
+// *سیستم* پایین می‌داندش (حالتِ ترکیبی، که رویدادِ تزریق‌شده هم در آن حساب می‌شود).
+// حالتِ نگه‌داشته‌ی ما می‌تواند کهنه شود؛ این دو هیچ‌وقت نمی‌شوند. همان قاعده‌ی دفتر:
+// هیچ چیزی بی مدرک تزریق یا بلعیده نمی‌شود.
+static BOOL zRightCmdHeldForReal(void) {
+    return CGEventSourceKeyState(kCGEventSourceStateHIDSystemState, (CGKeyCode)kVK_RightCommand);
+}
+
+static BOOL zSystemThinksRightCmdHeld(void) {
+    return (CGEventSourceFlagsState(kCGEventSourceStateCombinedSessionState) & kRightCmdBit) != 0;
+}
+
 @interface ZHotkeyTap ()
 - (CGEventRef)handleProxy:(CGEventTapProxy)proxy type:(CGEventType)type event:(CGEventRef)event;
 @end
@@ -558,13 +586,19 @@ static CGEventRef zHotkeyCallback(CGEventTapProxy proxy, CGEventType type, CGEve
         CFRelease(_tap);
         _tap = NULL;
     }
+    [self forgetHeld];
+}
+
+// حالتِ «Command راست پایین است» را دور بریز، بی تزریق و بی بلعیدن. هرجا که مدرک
+// می‌گوید این حالت کهنه است از همین‌جا رد می‌شود، یک نقطه و نه چند جای پراکنده.
+- (void)forgetHeld {
+    _physDown = NO;
+    _emitted = NO;
+    _suppressUp = NO;
     if (_savedDown) {
         CFRelease(_savedDown);
         _savedDown = NULL;
     }
-    _physDown = NO;
-    _emitted = NO;
-    _suppressUp = NO;
 }
 
 // تپِ تنها راست-Command: یا نیمه‌ی دوم یک دابل‌تپ (فوری: toggle) یا اگر پنجره سپری
@@ -647,6 +681,9 @@ static CGEventRef zHotkeyCallback(CGEventTapProxy proxy, CGEventType type, CGEve
         // ریموت، رول کارابینر که ⌥V را به Win+V می‌برد (تاریخچه‌ی کلیپ‌بورد ویندوز).
         // آن دو یک معنی‌اند در دو دنیا و کلیدشان مال خودشان است؛ درجِ زمزمه راه‌های
         // دیگری هم دارد (دکمه‌ی پنل و Esc)، پس همین یکی کنار کشید. I هم مثل insert.
+        // S مثل sensitivity و مثل «حساسیت». مثل بقیه فقط در حین سشن، چون بیرون از
+        // سشن میکروفنی باز نیست که حساسیتش معنا داشته باشد.
+        case 1:  return self.onSensToggle;    // S
         case 34: return self.onInsertHere;    // I
         default: return nil;
     }

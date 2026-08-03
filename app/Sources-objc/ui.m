@@ -69,6 +69,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
     NSTextField *_chipLabel;
     NSButton *_btnClose, *_btnPause, *_btnCopy, *_btnTrash, *_btnInsert;
     NSButton *_btnLang, *_btnMode, *_btnPolish, *_btnFinal, *_btnRotate, *_btnFile;
+    NSButton *_btnSens;
     NSButton *_btnEnhance;
     NSProgressIndicator *_spinner;    // جای نشان، وقتی کاری در جریان است
     NSArray<NSButton *> *_bar;    // ترتیب دکمه‌ها؛ یک منبع حقیقت برای چیدمان و پهنای متن
@@ -198,6 +199,13 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
                                action:@selector(insertTap)];
         // رونویسی فایل: در هر دو حالتِ پنل‌دار پیداست، چون به سشن ربطی ندارد. راه سوم
         // دسترسی است، کنار آیتم منوبار و میان‌بر، و همان یک صف را باز می‌کند.
+        // حساسیت میکروفن. جایش روی نوار عمدی است: درست کنارِ نقطه‌ی ضربان و دکمه‌ی
+        // مکث می‌نشیند، یعنی همان‌جا که چشمِ کاربر وقتی می‌بیند حرفش گرفته نمی‌شود
+        // اول از همه می‌رود. توی منو گذاشتنش یعنی وسط دیکته باید پنل را رها کنی،
+        // منوبار را باز کنی و برگردی؛ این تنظیم دقیقا آن لحظه لازم می‌شود.
+        _btnSens = [self makeButton:@"ear.badge.waveform" key:@"S"
+                                tip:@"حساسیت بالای میکروفن: برای پچ‌پچ و اتاق ساکت"
+                             action:@selector(sensTap)];
         _btnFile = [self makeButton:@"arrow.up.doc" key:@"F"
                                 tip:@"رونویسی فایل صوتی: صف، پیشرفت و متن یکجا (Command راست + F)"
                              action:@selector(fileTap)];
@@ -208,7 +216,7 @@ static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جم
         _btnInsert.hidden = YES;
         // ترتیب چیدمان؛ layoutViews و textWidth هر دو از همین یک لیست می‌خوانند، پس
         // پیدا و ناپیدا شدن دکمه‌ها هیچ‌وقت با عدد هاردکد ناهمخوان نمی‌شود.
-        _bar = @[_btnClose, _btnPause, _btnCopy, _btnTrash, _btnLang, _btnMode, _btnPolish,
+        _bar = @[_btnClose, _btnPause, _btnSens, _btnCopy, _btnTrash, _btnLang, _btnMode, _btnPolish,
                  _btnFinal, _btnEnhance, _btnRotate, _btnInsert, _btnFile];
 
         [self layoutViews];
@@ -597,10 +605,21 @@ static NSString *ZClock(NSTimeInterval sec) {
 
     // سشن که تمام شد (در بازبینی، یا وسط کارِ پایانی) دکمه‌های شنیدن معنا ندارند؛
     // دکمه‌های متن می‌مانند. نشان دادنِ دکمه‌ای که کار نمی‌کند، دروغ است.
+    // حساسیت: آیکون خودش حالت را می‌گوید، مثل بقیه‌ی دکمه‌های این نوار. گوشِ ساده
+    // یعنی عادی، گوشِ پر یعنی حساسیت بالا روشن است.
+    BOOL sens = ZSettings.shared.highSensitivity;
+    [self setButton:_btnSens symbol:sens ? @"ear.fill" : @"ear.badge.waveform"];
+    _btnSens.toolTip = sens
+        ? @"حساسیت بالا روشن است: صدای آرام تا حد زیادی بزرگ می‌شود. برای برگشتن بزن "
+           "(Command راست + S)"
+        : @"حساسیت بالای میکروفن: برای پچ‌پچ کردن و اتاق ساکت، یا میکروفنی که صدایش "
+           "کم می‌رسد (Command راست + S)";
+
     BOOL over = m.review || m.working;
     _btnPause.hidden = over;
     _btnMode.hidden = over;
     _btnLang.hidden = over;
+    _btnSens.hidden = over;
     _btnClose.toolTip = m.working ? @"لغو؛ صدا سر جایش می‌ماند (Esc)"
                       : m.review ? @"بستن (Esc)" : @"پایان و درج همه (Esc)";
     _btnTrash.toolTip = m.working ? @"لغو و پاک کردن صدا و متن (D)"
@@ -747,6 +766,7 @@ static NSString *ZClock(NSTimeInterval sec) {
 - (void)enhanceTap { if (self.onEnhance) self.onEnhance(); }
 - (void)insertTap { if (self.onInsertAll) self.onInsertAll(); }
 - (void)fileTap { if (self.onFilePanel) self.onFilePanel(); }
+- (void)sensTap { if (self.onSensToggle) self.onSensToggle(); }
 
 // اسکرین‌شات برای بازبینی طراحی (بدون نیاز به اجازه ضبط صفحه)
 - (void)makeShots:(NSString *)dir {
@@ -1091,6 +1111,7 @@ static NSString *ZModeLabel(ZMode m) {
     _panel.onCopyNow = ^{ [ws copyNow]; };
     _panel.onTrash = ^{ [ws dropPending]; };
     _panel.onInsertAll = ^{ [ws insertHere]; };
+    _panel.onSensToggle = ^{ [ws toggleSensitivity]; };
     _panel.onLangSwitch = ^{ [ws switchLang]; };
     _panel.onModeToggle = ^{ [ws toggleMode]; };
     _panel.onPolishNow = ^{ [ws polishCollected]; };
@@ -1288,6 +1309,17 @@ static NSString *ZModeLabel(ZMode m) {
         ZPlay(ZSoundPause);
         [_panel flash:@"مکث"];
     }
+}
+
+// حساسیت بالای میکروفن. وسط سشن هم عوض می‌شود و همان لحظه اثر می‌کند، چون
+// کالیبراسیون هر تکه سقف را از تنظیمات می‌خواند. پیام کوتاه لازم است: تغییرش روی
+// صفحه دیده نمی‌شود مگر بعدا که متن بهتر (یا نویز بیشتر) بیاید.
+- (void)toggleSensitivity {
+    BOOL on = !ZSettings.shared.highSensitivity;
+    ZSettings.shared.highSensitivity = on;
+    ZLog(@"mic: حساسیت بالا %@", on ? @"روشن" : @"خاموش");
+    [_panel flash:on ? @"حساسیت بالا روشن" : @"حساسیت عادی"];
+    [self render];
 }
 
 // کل متن سشن. در حالت‌های ادیتوردار، متنِ ادیتور مرجع است چون کاربر آنجا ویرایشش کرده.

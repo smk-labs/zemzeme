@@ -62,6 +62,7 @@ typedef NS_ENUM(NSInteger, ZMode) {
 @property (nonatomic) ZInsertMode insertMode;       // روش درج (تایپ/پیست)
 @property (nonatomic) ZMode mode;                   // حالتی که سشن بعدی با آن شروع می‌شود
 @property (nonatomic) BOOL internalHotkey;
+@property (nonatomic) BOOL highSensitivity;   // بهره‌ی بیشتر برای پچ‌پچ و میکروفن کم‌جان
 @property (nonatomic) BOOL polishEnabled;           // پاس ویرایش فارسی؛ پیش‌فرض روشن
 @property (nonatomic) BOOL latinTerms;              // وام‌واژه فنی به لاتین؛ پیش‌فرض خاموش
 @property (nonatomic) BOOL soundsEnabled;           // صدای کارها؛ پیش‌فرض روشن
@@ -582,12 +583,20 @@ typedef NS_ENUM(NSInteger, ZWriteProof) {
     ZProofUntouched,    // اپ خواندن نمی‌دهد، ولی از آخرین نوشتنِ ما کسی دست نزده
 };
 
+// ---------- فلیکِ پنجره‌ی کلید ----------
+// یک پنجره‌ی ۱×۱ نامرئی کلید را می‌گیرد و همان‌جا پس می‌دهد، بی این‌که اپِ جلو عوض شود.
+// تنها مشتری‌اش پیستِ ریموت است: کلاینت ریموت دسکتاپ کلیپ‌بوردِ مک را فقط سرِ عوض شدنِ
+// پنجره‌ی کلید به سرور می‌فرستد (شرحِ اندازه‌گیری‌اش در inject.m). بلوکه است، پس نباید
+// روی نخ اصلی صدا زده شود.
+@interface ZKeyFlick : NSObject
++ (void)flick;
+@end
+
 @interface ZInjector : NSObject
 + (BOOL)accessibilityOK;
 + (void)promptAccessibility;
 + (BOOL)secureInputActive;
 + (void)copyFinal:(NSString *)text;                     // کپی ماندگار پایانی
-+ (void)wakeRemoteClipboard;                            // ضربه‌ی خالی Shift: کلاینت ریموت کلیپ‌بورد تازه را ببیند
 - (void)type:(NSString *)text delayMicros:(useconds_t)d;
 - (void)paste:(NSString *)text delayMicros:(useconds_t)d;
 // دُم موقت حالت کرسر: n نویسه‌ی آخر پاک، متن تازه تایپ، هر دو پشت سر هم و تجزیه‌ناپذیر.
@@ -645,6 +654,7 @@ typedef NS_ENUM(NSInteger, ZWriteProof) {
 @property (nonatomic, copy) void (^onEnhance)(void);        // B: بهبود پرامپت (بتا)
 // F: پنل رونویسی فایل. تنها میان‌بری که بی‌سشن هم کار می‌کند، چون به سشن ربطی ندارد
 @property (nonatomic, copy) void (^onFilePanel)(void);      // F
+@property (nonatomic, copy) void (^onSensToggle)(void);     // S
 @property (nonatomic) BOOL sessionActive;
 @property (nonatomic, readonly) BOOL enabled;   // تپ واقعا بالا است، نه فقط enable صدا خورده
 - (void)enable;
@@ -863,6 +873,7 @@ int ZCaretProbeMain(NSArray<NSString *> *args);
 @property (nonatomic, copy) void (^onModeToggle)(void); // چرخش حالت: زنده ← جمع ← کرسر
 @property (nonatomic, copy) void (^onPolishNow)(void);  // اعمال پاس فارسی روی متن جمع‌شده
 @property (nonatomic, copy) void (^onFilePanel)(void);  // باز کردن پنل رونویسی فایل
+@property (nonatomic, copy) void (^onSensToggle)(void); // حساسیت بالای میکروفن
 @property (nonatomic, copy) void (^onFinalPass)(void);  // پایان سشن و پاس نهایی روی صدای همین سشن
 @property (nonatomic, copy) void (^onRotateText)(void); // چرخش بین نسخه‌های متن (نهایی، مو‌به‌مو، خام)
 @property (nonatomic, copy) void (^onEnhance)(void);   // بهبود پرامپت روی متنِ همین حالا (بتا)
@@ -999,6 +1010,7 @@ int ZReplayMain(NSArray<NSString *> *args);
 // خودآزمای میکروفن: چند ثانیه از همان مسیر دیکته در یک WAV، برای اندازه گرفتنِ
 // بلندی و بریدگی و پهنای باند به‌جای حدس زدنشان.
 int ZMicDumpMain(NSString *path, double seconds);
+void ZMicDumpReport(NSData *pcm, NSUInteger clipped, NSString *path);
 NSString *ZDefaultInputName(void);
 
 // ---------- فونت و سلف‌تست ----------

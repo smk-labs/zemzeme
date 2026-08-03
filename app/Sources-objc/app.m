@@ -176,6 +176,7 @@ int ZSelfTest(NSString *file, NSString *lang) {
     _hotkeys.onPauseToggle = ^{ [ws sessionDo:@selector(pauseToggle)]; };
     _hotkeys.onCopyNow = ^{ [ws sessionDo:@selector(copyNow)]; };
     _hotkeys.onInsertHere = ^{ [ws sessionDo:@selector(insertHere)]; };
+    _hotkeys.onSensToggle = ^{ [ws sessionDo:@selector(toggleSensitivity)]; };
     _hotkeys.onTrash = ^{ [ws sessionDo:@selector(dropPending)]; };
     _hotkeys.onLangSwitch = ^{ [ws sessionDo:@selector(switchLang)]; };
     _hotkeys.onModeToggle = ^{ [ws sessionDo:@selector(toggleMode)]; };
@@ -420,6 +421,16 @@ int ZSelfTest(NSString *file, NSString *lang) {
     }
     // رونویسی فایل: کنار «شروع دیکته» می‌نشیند چون هم‌رده‌ی آن است، دو راه رسیدن به متن.
     // همیشه فعال است: به سشن ربطی ندارد و وسط دیکته هم می‌شود بازش کرد.
+    // حساسیت میکروفن، بیرون از «پیشرفته» و عمدا: این یک ترجیحِ یک‌باره نیست، یک
+    // تنظیمِ موقعیتی است که کاربر بسته به اتاق و میکروفن عوض می‌کند. راه اصلی‌اش
+    // دکمه‌ی روی خود پنل است؛ این‌جا برای وقتی است که سشنی باز نیست.
+    NSMenuItem *sens = [self icon:[self item:menu title:@"حساسیت بالای میکروفن"
+                                       action:@selector(menuToggleSensitivity) key:@""]
+                            symbol:ZSettings.shared.highSensitivity ? @"ear.fill" : @"ear.badge.waveform"];
+    sens.state = ZSettings.shared.highSensitivity ? NSControlStateValueOn : NSControlStateValueOff;
+    sens.toolTip = @"برای پچ‌پچ کردن، اتاق ساکت، یا میکروفنی که صدایش کم می‌رسد. "
+                    "وسط دیکته هم با Command راست + S عوض می‌شود";
+
     NSMenuItem *batch = [self icon:[self item:menu title:@"رونویسی فایل…"
                                        action:@selector(menuBatch) key:@""]
                              symbol:@"arrow.up.doc"];
@@ -718,6 +729,17 @@ int ZSelfTest(NSString *file, NSString *lang) {
     ZPlay(ZSoundStart);    // روشن که شد، خودش را می‌شنوانَد
 }
 // تپ همیشه سرپا است؛ این تنظیم فقط تفسیر دابل‌تپ به toggle را روشن/خاموش می‌کند
+- (void)menuToggleSensitivity {
+    ZSession *s = _session;
+    if (s) {    // سشن باز است: از همان راهِ سشن برو تا پیام و رندر هم بیایند
+        [self sessionDo:@selector(toggleSensitivity)];
+        return;
+    }
+    BOOL on = !ZSettings.shared.highSensitivity;
+    ZSettings.shared.highSensitivity = on;
+    ZLog(@"mic: حساسیت بالا %@", on ? @"روشن" : @"خاموش");
+}
+
 - (void)menuToggleHotkey {
     ZSettings.shared.internalHotkey = !ZSettings.shared.internalHotkey;
 }

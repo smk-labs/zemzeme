@@ -71,10 +71,51 @@ int ZMicDumpMain(NSString *path, double seconds) {
         fprintf(stderr, "micdump: نوشتن %s نشد\n", path.UTF8String);
         return 1;
     }
-    printf("micdump: %lu نمونه (%.1f ثانیه)، %lu نمونه‌ی بریده، %s\n",
-           (unsigned long)(body.length / 2), body.length / 2 / 16000.0,
-           (unsigned long)clipped, path.UTF8String);
+    ZMicDumpReport(body, clipped, path);
     return 0;
+}
+
+// گزارشِ **خودبسنده**: هر عددی که لازم است از همین یک ضبط درمی‌آید، نه از مقایسه با
+// ضبطی که وقت دیگری گرفته شده. دلیلش یک اشتباه واقعی بود: دو هدست را در دو زمان
+// ضبط کردم و کنار هم گذاشتم، در حالی که نمی‌دانستم در کدام‌یک کسی حرف می‌زده. آن
+// مقایسه بی‌اعتبار بود. کف و اوج اگر از **یک** ضبط بیایند، شرایط اتاق برای هر دو
+// یکی است و دیگر جای این اشتباه نیست.
+//
+// کف نویز: میانه‌ی آرام‌ترین یک‌پنجم قاب‌ها. اوج حرف: بلندترین یک‌بیستم.
+void ZMicDumpReport(NSData *pcm, NSUInteger clipped, NSString *path) {
+    const int16_t *p = pcm.bytes;
+    NSUInteger n = pcm.length / 2, frame = 1600;   // قاب ۱۰۰ میلی‌ثانیه
+    NSUInteger frames = n / frame;
+    if (frames < 4) {
+        printf("micdump: ضبط برای تحلیل کوتاه است\n");
+        return;
+    }
+    double *lv = calloc(frames, sizeof(double));
+    for (NSUInteger f = 0; f < frames; f++) {
+        double acc = 0;
+        for (NSUInteger i = 0; i < frame; i++) {
+            double v = p[f * frame + i] / 32768.0;
+            acc += v * v;
+        }
+        lv[f] = sqrt(acc / frame);
+    }
+    for (NSUInteger i = 1; i < frames; i++) {      // مرتب‌سازی درجی، چند صد قاب است
+        double k = lv[i];
+        NSUInteger j = i;
+        while (j > 0 && lv[j - 1] > k) { lv[j] = lv[j - 1]; j--; }
+        lv[j] = k;
+    }
+    double floorLv = lv[frames / 10];
+    double loudLv = lv[frames - 1 - frames / 20];
+    double snr = (floorLv > 1e-9 && loudLv > 1e-9) ? 20 * log10(loudLv / floorLv) : 0;
+    printf("micdump: %.1f ثانیه، %lu نمونه‌ی بریده، %s\n",
+           n / 16000.0, (unsigned long)clipped, path.UTF8String);
+    printf("  کف نویز    rms %.5f\n", floorLv);
+    printf("  بلندترین   rms %.5f\n", loudLv);
+    printf("  نسبت       %.1f dB  %s\n", snr,
+           snr < 6 ? "← حرفی از نویز جدا نشده؛ یا کسی حرف نزده یا میکروفن نمی‌گیرد"
+                   : snr < 15 ? "← ضعیف" : "← سالم");
+    free(lv);
 }
 
 @implementation ZMic {
@@ -93,40 +134,48 @@ int ZMicDumpMain(NSString *path, double seconds) {
     NSUInteger _lvlCount;
     NSUInteger _lvlFrames;  // چند فریم در بازه، برای ثانیه‌ی واقعی
     CFAbsoluteTime _lvlAt;
-    float _gain;            // بهره‌ی خودکار؛ پایین همین فایل
-    NSUInteger _quietBlocks; // چند تکه پشت هم زیر دروازه بوده‌اند
     double _gainSum;        // میانگین بهره در بازه، فقط برای لاگ
+    // ---------- کالیبراسیون بلندی ----------
+    float _gain;            // بهره‌ی فعلی
+    float _speechPeak;      // اوجِ حرف، با حمله‌ی تند و افتِ کند
+    float _noiseFloor;      // کفِ نویزِ همین دستگاه، یادگرفته نه هاردکد
+    float _hpPrevIn, _hpPrevOut;   // حافظه‌ی فیلتر بالاگذرِ آشکارساز
+    BOOL _sawSpeech;
+    BOOL _warnedSNR;
 }
 
-// ---------- بهره‌ی خودکار ----------
-// هدست‌های بلوتوث سیگنالی می‌دهند که برای گوش خوب است و برای تشخیص گفتار بسیار
-// آرام. اندازه‌گیری روی Galaxy Buds+: حرف زدن معمولی rms حدود ۰.۰۰۴ تا ۰.۰۱۳
-// می‌داد، جایی که تشخیص گفتار حدود ۰.۰۵ می‌خواهد؛ یعنی ۱۵ تا ۲۵ دسی‌بل کمتر. گوگل
-// صدا را «صدا» می‌دید (voice=1) ولی کلمه‌ای بیرون نمی‌داد. ولوم ورودی مک هم از قبل
-// روی بیشترین مقدار بود، پس بهره‌ی بیشتری در سیستم‌عامل باقی نمانده بود.
+// ---------- کالیبراسیون بلندی (نه AGC) ----------
+// راهنمای خود گوگل صریح است: **AGC نزنید و نویز نگیرید**، چون مدل روی صدای خام
+// آموزش دیده و پردازشِ قبلی دقت را پایین می‌آورد. ولی همان راهنما یک عدد هم
+// می‌دهد: اوجِ حرف باید حدود منفی ۲۰ تا منفی ۱۰ دسی‌بل باشد و نبُرد.
 //
-// این جبران در مسیر خودمان انجام می‌شود، با سه احتیاط:
-// - **دروازه‌ی نویز:** فقط وقتی واقعا صدایی هست بهره تنظیم می‌شود، وگرنه سکوتِ یک
-//   اتاق ساکت تا ته تقویت می‌شد و به گوگل نویز می‌رسید نه سکوت.
-// - **بالا آرام، پایین تند:** بلند شدن بهره کند است تا وسط جمله بالا و پایین نپرد،
-//   ولی کم شدنش تند است تا اولین هجای بلند نبُرد.
-// - **سقف:** بیشتر از این، نویزِ خودِ هدست را به اندازه‌ی حرف بزرگ می‌کند.
-static const float kZGainTarget = 0.05f;    // rms هدف
-static const float kZGainMax = 16.0f;
-// دروازه از روی اندازه‌گیری واقعی انتخاب شد، نه از روی حدس: نویزِ اتاق روی همین
-// هدست rms حدود ۰.۰۰۱۵ می‌دهد و تکه‌های حرفِ آرام حدود ۰.۰۱ به بالا. ۰.۰۰۵ بینشان
-// می‌نشیند. با ۰.۰۰۲ (تلاش اول) نویزِ اتاق هم دروازه را باز می‌کرد و کفِ سکوت
-// ۴.۶ دسی‌بل بالا می‌رفت.
-static const float kZGainGate = 0.005f;
-static const float kZGainUp = 0.04f;        // ضریب نرم‌شدن رو به بالا
-static const float kZGainDown = 0.35f;      // و رو به پایین
-// و برگشت به یک بعد از سکوتِ **کشدار**. بی این، یک تَقِ گذرا (کلید، در) دروازه را
-// باز می‌کرد، بهره بالا می‌رفت و بعد روی همان می‌ماند: در اتاق ساکت کفِ نویز
-// ۸ دسی‌بل بالا می‌رفت و همان نویزِ بزرگ‌شده بود که گوگل گاهی از آن کلمه درمی‌آورد.
-// شمارش لازم است تا مکث‌های معمولیِ وسط حرف (کمتر از دو ثانیه) بهره را نریزند،
-// وگرنه اول هر جمله کم‌صدا می‌شد تا دوباره بالا بیاید.
-static const NSUInteger kZGainQuietBlocks = 7;   // حدود دو ثانیه
-static const float kZGainRelax = 0.15f;
+// این دو با هم تناقض ندارند: آنچه ممنوع است بهره‌ی تندِ لحظه‌ایِ AGC است که وسط
+// جمله بالا و پایین می‌پرد و دینامیک را می‌خورد. آنچه لازم است یک بهره‌ی **ثابت**
+// است که سطح دستگاه را یک بار به آن پنجره بیاورد. پس اینجا بهره کالیبره می‌شود نه
+// دنبالِ صدا: آرام حرکت می‌کند، روی یک عدد می‌نشیند، و تا وقتی دستگاه عوض نشود
+// همان می‌ماند. هیچ نویزگیری و هیچ فشرده‌سازی‌ای در کار نیست.
+//
+// چرا اصلا لازم است: اندازه‌گیری روی سه میکروفن همین دستگاه، حینِ حرف زدن.
+//   میکروفن مک   rms ۰.۰۹ تا ۰.۱۱   سالم
+//   ‏Galaxy Buds+  rms ۰.۰۰۴ تا ۰.۰۶  آرام
+//   ‏QCY H3        rms ۰.۰۰۰۱          تقریبا هیچ
+// یعنی هزار برابر فاصله بین دو میکروفنِ همین یک مک. هر عددِ هاردکدی برای یکی از
+// این‌ها درست است و برای بقیه غلط، و همین بود که «دستگاه به دستگاه» می‌شد.
+static const float kZPeakTarget = 0.22f;      // حدود منفی ۱۳ دسی‌بل، وسطِ پنجره‌ی گوگل
+static const float kZPeakCeil = 0.99f;        // محدودکننده؛ بریدن ممنوع است
+static const float kZGainNormal = 12.0f;      // سقفِ حالت عادی
+static const float kZGainSensitive = 160.0f;  // سقفِ حالت حساسیت بالا
+static const float kZGainUpMax = 1.41f;       // حداکثر ۳ دسی‌بل در هر تکه، رو به بالا
+static const float kZGainDownMax = 4.0f;      // و ۱۲ دسی‌بل رو به پایین، چون بریدن ممنوع است
+// دروازه دیگر عددِ ثابت نیست: کفِ نویزِ **همین** دستگاه یاد گرفته می‌شود و حرف یعنی
+// چیزی که به‌قدر کافی از آن کف بالاتر است. تلاش قبلی یک عدد ثابت (۰.۰۰۵) بود که
+// روی Buds+ تنظیم شده بود؛ روی QCY هیچ‌وقت باز نمی‌شد و روی میکروفن مک همیشه.
+static const float kZSpeechOverNoise = 3.0f;
+static const float kZNoiseRise = 1.007f;      // کف اجازه دارد آرام بالا بیاید
+static const float kZSpeechDecay = 0.97f;     // اوجِ حرف آرام فراموش می‌شود
+// زیر این نسبت، میکروفن حرف را از نویزِ خودش جدا نمی‌کند و بزرگ کردنش فقط نویز را
+// بزرگ می‌کند. آن‌وقت سکوت بهتر از دروغ است: یک بار در لاگ گفته می‌شود.
+static const float kZMinSNRdB = 10.0f;
 
 // فرمت به زبان آدم: چند هرتز، چند کانال، شناور یا صحیح، چند بیت.
 static NSString *ZFormatDesc(AVAudioFormat *f) {
@@ -140,8 +189,14 @@ static NSString *ZFormatDesc(AVAudioFormat *f) {
 - (instancetype)init {
     if ((self = [super init])) {
         _engine = [AVAudioEngine new];
-        _outFormat = [[AVAudioFormat alloc] initWithCommonFormat:AVAudioPCMFormatInt16
-                                                      sampleRate:16000 channels:1 interleaved:YES];
+        // خروجیِ مبدل شناور است نه صحیح، و این عمدی است: بهره **پیش از** کوانتیزه
+        // شدن اعمال می‌شود. روی میکروفنی که اوجش ۰.۰۰۹ است، سیگنال فقط شش بیت از
+        // شانزده بیت را پر می‌کند؛ بزرگ کردنِ بعد از تبدیل، نویزِ کوانتیزاسیون را هم
+        // با خودش بزرگ می‌کرد. در شناور این هزینه صفر است.
+        _outFormat = [[AVAudioFormat alloc] initWithCommonFormat:AVAudioPCMFormatFloat32
+                                                      sampleRate:16000 channels:1 interleaved:NO];
+        _gain = 1.0f;
+        _noiseFloor = 1.0f;
     }
     return self;
 }
@@ -212,57 +267,97 @@ static NSString *ZFormatDesc(AVAudioFormat *f) {
         *outStatus = AVAudioConverterInputStatus_HaveData;
         return buffer;
     }];
-    if (st == AVAudioConverterOutputStatus_Error || out.frameLength == 0 || !out.int16ChannelData) return;
+    if (st == AVAudioConverterOutputStatus_Error || out.frameLength == 0 || !out.floatChannelData) return;
 
-    int16_t *p = out.int16ChannelData[0];
+    float *p = out.floatChannelData[0];
     NSUInteger n = out.frameLength;
-    float gain = [self applyGainTo:p count:n];
 
-    // RMS تقریبی با نمونه‌برداری هر هشتم، برای نقطه ضربان. اوج اما از همه‌ی نمونه‌ها:
-    // یک تَقِ کوتاه بین نمونه‌های هشتم گم می‌شود و همان است که «صدا هست یا نه» را
-    // جواب می‌دهد.
-    float acc = 0, peak = 0;
+    // ۱) آشکارساز: اوجِ همین تکه، روی نسخه‌ی بالاگذرشده.
+    float peak = [self detectPeakOf:p count:n];
+    // ۲) کالیبراسیون بهره از روی همان اوج.
+    float gain = [self calibrateForPeak:peak];
+    // ۳) اعمال در شناور، با محدودکننده، و تبدیل به s16.
+    NSMutableData *data = [NSMutableData dataWithLength:n * 2];
+    int16_t *q = data.mutableBytes;
+    float outPeak = 0, acc = 0;
     NSUInteger cnt = 0;
     for (NSUInteger i = 0; i < n; i++) {
-        float v = p[i] / 32768.0f;
+        float v = p[i] * gain;
+        if (v > kZPeakCeil) v = kZPeakCeil;
+        else if (v < -kZPeakCeil) v = -kZPeakCeil;
         float a = fabsf(v);
-        if (a > peak) peak = a;
-        if (i % 8 == 0) {
-            acc += v * v;
-            cnt++;
-        }
+        if (a > outPeak) outPeak = a;
+        if (i % 8 == 0) { acc += v * v; cnt++; }
+        q[i] = (int16_t)lrintf(v * 32767.0f);
     }
     float rms = sqrtf(acc / MAX(1u, (unsigned)cnt));
     if (self.onLevel) self.onLevel(MIN(1.0f, rms * 5));
-    [self noteLevel:rms peak:peak frames:n gain:gain];
-    if (self.onChunk) self.onChunk([NSData dataWithBytes:p length:n * 2]);
+    [self noteLevel:rms peak:outPeak frames:n gain:gain];
+    if (self.onChunk) self.onChunk(data);
 }
 
-// بهره را از روی همین تکه تنظیم می‌کند و روی جا اعمال. برمی‌گرداند چه بهره‌ای خورد.
-// اندازه‌گیریِ rms **پیش از** اعمال است، وگرنه حلقه خودش را دنبال می‌کرد.
-- (float)applyGainTo:(int16_t *)p count:(NSUInteger)n {
-    if (_gain <= 0) _gain = 1.0f;
-    double acc = 0;
+// فیلتر بالاگذرِ یک‌قطبی حدود ۸۰ هرتز، **فقط برای اندازه‌گیری**. صدایی که به گوگل
+// می‌رود دست‌نخورده می‌ماند، چون راهنمای گوگل پردازشِ قبلی را منع می‌کند.
+// چرا لازم است: روی همین هدست‌ها ۹۱ درصد انرژیِ نویزِ اتاق زیر ۵۰۰ هرتز بود، یعنی
+// غرشی که هیچ حرفی در آن نیست. بی این فیلتر، سنجه غرش را «صدا» می‌دید و بهره را
+// از روی چیزی تنظیم می‌کرد که اصلا گفتار نیست.
+- (float)detectPeakOf:(const float *)p count:(NSUInteger)n {
+    const float a = 0.9695f;    // ۸۰ هرتز در ۱۶ کیلوهرتز
+    float peak = 0, prevIn = _hpPrevIn, prevOut = _hpPrevOut;
     for (NSUInteger i = 0; i < n; i++) {
-        double v = p[i] / 32768.0;
-        acc += v * v;
+        float y = a * (prevOut + p[i] - prevIn);
+        prevIn = p[i];
+        prevOut = y;
+        float m = fabsf(y);
+        if (m > peak) peak = m;
     }
-    float rms = (float)sqrt(acc / MAX((NSUInteger)1, n));
-    if (rms > kZGainGate) {
-        _quietBlocks = 0;
-        float want = MIN(kZGainMax, MAX(1.0f, kZGainTarget / rms));
-        float k = want > _gain ? kZGainUp : kZGainDown;
-        _gain += (want - _gain) * k;
-    } else if (++_quietBlocks > kZGainQuietBlocks) {
-        _gain += (1.0f - _gain) * kZGainRelax;
-    }
-    if (_gain <= 1.001f) return _gain;
-    for (NSUInteger i = 0; i < n; i++) {
-        float v = p[i] * _gain;
-        // محدودکننده: بریدنِ سخت به‌جای پیچیدن. نادر است چون هدف rms خیلی زیر سقف است.
-        p[i] = v > 32000.0f ? 32000 : (v < -32000.0f ? -32000 : (int16_t)v);
-    }
+    _hpPrevIn = prevIn;
+    _hpPrevOut = prevOut;
+    return peak;
+}
+
+// بهره را آرام به سمتِ «اوجِ حرف روی هدف» می‌برد. سه چیز اینجا اتفاق می‌افتد و هر
+// سه لازم‌اند: یادگرفتنِ کفِ نویزِ این دستگاه، تشخیص اینکه این تکه حرف است یا کف،
+// و حرکتِ آرامِ بهره.
+- (float)calibrateForPeak:(float)peak {
+    // کف نویز: تند پایین می‌آید (هر سکوتی کف تازه است) و آرام بالا، تا اتاقی که
+    // کم‌کم شلوغ می‌شود هم دنبال شود بی آنکه یک تَق کف را برای همیشه بالا ببرد.
+    if (peak < _noiseFloor) _noiseFloor = peak;
+    else _noiseFloor = MIN(_noiseFloor * kZNoiseRise, peak);
+    if (_noiseFloor < 1e-7f) _noiseFloor = 1e-7f;
+
+    // **بهره فقط وقتی حرف هست تکان می‌خورد.** نسخه‌ی اول اوجِ حرف را در سکوت هم آب
+    // می‌کرد؛ چون هدف تقسیم بر آن است، هرچه آب می‌شد بهره بالاتر می‌رفت و در سکوت
+    // خودش را تا سقف بالا می‌کشید. یعنی همان نویزِ بزرگ‌شده‌ای که گوگل از آن کلمه
+    // درمی‌آورد. حالا سکوت یعنی بهره سر جایش می‌ماند، نه بالا و نه پایین.
+    if (peak <= _noiseFloor * kZSpeechOverNoise) return _gain;
+    _sawSpeech = YES;
+    // حمله‌ی فوری رو به بالا، دنبال‌کردنِ آرام رو به پایین: یک هجای بلند همان لحظه
+    // دیده می‌شود (تا نبُرد)، ولی یک لحظه سکوتِ وسط جمله اوج را پاک نمی‌کند.
+    if (peak > _speechPeak) _speechPeak = peak;
+    else _speechPeak = _speechPeak * 0.98f + peak * 0.02f;
+    if (_speechPeak < 1e-6f) return _gain;
+
+    float ceiling = ZSettings.shared.highSensitivity ? kZGainSensitive : kZGainNormal;
+    float want = MIN(ceiling, MAX(1.0f, kZPeakTarget / _speechPeak));
+    // حرکت در مقیاس دسی‌بل با سرعت سقف‌دار، نه کسری از فاصله. با نسخه‌ی کسری،
+    // رسیدن از یک به بیست برابر سیزده ثانیه طول می‌کشید و جمله‌های کوتاه هیچ‌وقت به
+    // هدف نمی‌رسیدند. بالا رفتن آرام است تا کالیبراسیون بماند نه AGC؛ پایین آمدن
+    // چهار برابر تندتر، چون دیر پایین آمدن یعنی بریدن، و بریدن ممنوع است.
+    float ratio = want / _gain;
+    if (ratio > kZGainUpMax) ratio = kZGainUpMax;
+    else if (ratio < 1.0f / kZGainDownMax) ratio = 1.0f / kZGainDownMax;
+    _gain *= ratio;
+    if (_gain < 1.0f) _gain = 1.0f;
     return _gain;
+}
+
+// نسبت سیگنال به نویزِ همین دستگاه، به دسی‌بل. عددی که می‌گوید بزرگ کردن فایده
+// دارد یا نه: بهره هم سیگنال و هم نویز را با هم بزرگ می‌کند، پس اگر این عدد کوچک
+// باشد هیچ بهره‌ای نجاتش نمی‌دهد.
+- (float)snrDB {
+    if (_speechPeak <= 1e-6f || _noiseFloor <= 1e-7f) return 0;
+    return 20.0f * log10f(_speechPeak / _noiseFloor);
 }
 
 // خلاصه‌ی بلندی صدا، هر ده ثانیه یک خط. سه عدد و هر سه لازم‌اند: rms می‌گوید
@@ -278,11 +373,22 @@ static NSString *ZFormatDesc(AVAudioFormat *f) {
     CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
     if (now - _lvlAt < 10.0 || !_lvlCount) return;
     double avg = sqrt(_lvlSum / _lvlCount);
-    // rms اینجا **بعد** از بهره است، یعنی همان چیزی که واقعا به گوگل می‌رسد. بهره هم
-    // کنارش می‌آید تا معلوم باشد این عدد از خودِ میکروفن آمده یا از جبرانِ ما.
-    ZLog(@"mic: rms %.4f peak %.3f gain %.1f×، %.1f ثانیه صدا%@",
-         avg, _lvlPeak, _gainSum / _lvlCount, _lvlFrames / 16000.0,
-         avg < 0.003 ? @"  ← تقریبا ساکت؛ میکروفن درست انتخاب شده؟" : @"");
+    // rms و peak اینجا **بعد** از بهره‌اند، یعنی همان چیزی که واقعا به گوگل می‌رسد.
+    // بهره کنارشان می‌آید تا معلوم باشد این عدد از خودِ میکروفن آمده یا از جبرانِ ما،
+    // و snr می‌گوید اصلا جبران فایده دارد یا نه.
+    float snr = [self snrDB];
+    ZLog(@"mic: rms %.4f peak %.3f gain %.1f× snr %.0fdB%@، %.1f ثانیه صدا",
+         avg, _lvlPeak, _gainSum / _lvlCount, snr,
+         ZSettings.shared.highSensitivity ? @" [حساسیت بالا]" : @"",
+         _lvlFrames / 16000.0);
+    // یک بار در هر سشن، و فقط وقتی واقعا حرفی شنیده شده: اگر حرف از نویزِ خودِ
+    // میکروفن جدا نمی‌شود، مقصر بلندی نیست و هیچ بهره‌ای درستش نمی‌کند.
+    if (!_warnedSNR && _sawSpeech && snr > 0 && snr < kZMinSNRdB) {
+        _warnedSNR = YES;
+        ZLog(@"mic: ⚠︎ نسبت سیگنال به نویز %.0f دسی‌بل است. این میکروفن حرف را از "
+              "نویز خودش جدا نمی‌کند و بزرگ کردنش هم فقط نویز را بزرگ می‌کند؛ "
+              "میکروفن دیگری را امتحان کن", snr);
+    }
     _lvlSum = 0;
     _lvlPeak = 0;
     _gainSum = 0;

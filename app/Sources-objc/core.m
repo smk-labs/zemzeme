@@ -198,6 +198,12 @@ NSFont *ZFont(CGFloat size, BOOL medium) {
 }
 - (void)setInternalHotkey:(BOOL)v { [self.d setBool:v forKey:@"internalHotkey"]; }
 
+// حساسیت بالا: سقفِ کالیبراسیون بلندی را خیلی بالاتر می‌برد، برای پچ‌پچ کردن در
+// اتاق ساکت و برای میکروفنی که سیگنالش ذاتا کم‌جان است. پیش‌فرض خاموش، چون روی
+// میکروفن سالم لازم نیست و نویزِ میکروفنِ کم‌جان را هم به همان اندازه بزرگ می‌کند.
+- (BOOL)highSensitivity { return [self.d boolForKey:@"highSensitivity"]; }
+- (void)setHighSensitivity:(BOOL)v { [self.d setBool:v forKey:@"highSensitivity"]; }
+
 - (BOOL)polishEnabled {
     NSObject *o = [self.d objectForKey:@"polish"];
     return o ? [self.d boolForKey:@"polish"] : YES;    // پیش‌فرض روشن
