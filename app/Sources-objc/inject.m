@@ -520,15 +520,14 @@ static const CGEventFlags kZModMask = kCGEventFlagMaskCommand | kCGEventFlagMask
                                      | kCGEventFlagMaskControl | kCGEventFlagMaskShift;
 static const CFTimeInterval kZTapWindow = 0.35;   // پنجره دابل/تک‌تپ
 
-// دو مدرکِ بی‌واسطه درباره‌ی Command راست، هر دو ارزان و هیچ‌کدام از حالتِ خودمان:
-// یکی این‌که کلید *واقعا* پایین است (از HID، یعنی خودِ سخت‌افزار)، و دیگری این‌که
-// *سیستم* پایین می‌داندش (حالتِ ترکیبی، که رویدادِ تزریق‌شده هم در آن حساب می‌شود).
-// حالتِ نگه‌داشته‌ی ما می‌تواند کهنه شود؛ این دو هیچ‌وقت نمی‌شوند. همان قاعده‌ی دفتر:
-// هیچ چیزی بی مدرک تزریق یا بلعیده نمی‌شود.
-static BOOL zRightCmdHeldForReal(void) {
-    return CGEventSourceKeyState(kCGEventSourceStateHIDSystemState, (CGKeyCode)kVK_RightCommand);
-}
-
+// «سیستم همین حالا Command راست را پایین می‌داند؟» تنها جایی به کار می‌آید که جوابِ
+// آری معنی‌اش این است که یک پایین‌رفتنِ *تزریق‌شده* رها نشده، چون پایین‌رفتنِ عادی را
+// خودمان بلعیده‌ایم و در این حالت اصلا نمی‌نشیند.
+//
+// جای دیگری از این خانواده نپرسیم: یک بار از HID پرسیده شد «کلید واقعا پایین است؟»
+// و همیشه «نه» گفت، چون پایین‌رفتن را همین تپ بلعیده بود. یعنی آن سوال با این طراحی
+// ذاتا جوابش نه بود، و نتیجه‌اش این شد که Command راست دیگر مالِ زمزمه نبود و مثل
+// Command چپ رد می‌شد. مدرکی که خودت نگذاشته‌ای باشد، مدرک نیست.
 static BOOL zSystemThinksRightCmdHeld(void) {
     return (CGEventSourceFlagsState(kCGEventSourceStateCombinedSessionState) & kRightCmdBit) != 0;
 }
@@ -651,7 +650,13 @@ static CGEventRef zHotkeyCallback(CGEventTapProxy proxy, CGEventType type, CGEve
     // اگر سیستم همین حالا Command راست را پایین می‌داند، یعنی یک پایین‌رفتنِ تزریق‌شده
     // جایی رها نشده؛ بلعیدنِ این رویداد آن مودیفایر را برای همیشه گیر می‌اندازد.
     // آنجا رد می‌شود: یک ⌘ اضافه‌ی دیده‌نشده بهتر از کیبوردی است که تا ریبوت خراب است.
-    return zSystemThinksRightCmdHeld() ? event : NULL;
+    // همین‌جا خودش را درمان می‌کند، پس اگر یک روز مودیفایر گیر کرد، اولین تپِ تنها آزادش
+    // می‌کند و این خط در لاگ می‌گوید که چنین چیزی افتاده بود.
+    if (zSystemThinksRightCmdHeld()) {
+        ZLog(@"hotkey tap: Command راستِ رهانشده آزاد شد");
+        return event;
+    }
+    return NULL;
 }
 
 // نقشه‌ی کلید به کار. یک ورودی دارد و بس: Command راست + حرف. هر دکمه‌ی پنل دقیقا
@@ -695,14 +700,6 @@ static CGEventRef zHotkeyCallback(CGEventTapProxy proxy, CGEventType type, CGEve
 
 - (CGEventRef)handleKeyDown:(CGEventRef)event proxy:(CGEventTapProxy)proxy {
     int64_t code = CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode);
-
-    // مدرک، پیش از اعتماد به حالتِ خودمان: «نگه‌داشته» می‌تواند کهنه باشد و کلید همین
-    // حالا بالا باشد. بی این پرسش، رویدادِ کهنه‌ی پایین‌رفتن تزریق می‌شد و چون هیچ
-    // بالاآمدنی پشتش نمی‌آمد، Command راست تا ابد پایین می‌ماند.
-    if (_physDown && !zRightCmdHeldForReal()) {
-        ZLog(@"hotkey tap: حالت کهنه دور ریخته شد (Command راست دیگر پایین نیست)");
-        [self forgetHeld];
-    }
 
     if (_physDown && !_emitted) {
         CGEventFlags mods = CGEventGetFlags(event) & kZModMask;
