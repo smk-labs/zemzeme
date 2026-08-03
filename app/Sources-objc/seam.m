@@ -156,6 +156,10 @@ static double ZSeamTokenSim(NSString *x, NSString *y) {
 }
 
 // آستانه‌ی میانگینِ پنجره. زیر این یعنی «این دو تکه یک چیز نیستند».
+// ۰.۸۲ امتحان شد و پس داده شد: تست‌های طلایی سه مورد ضبط‌شده‌ی واقعی دارند که
+// بین ۰.۷۰ و ۰.۸۲ درست تطبیق می‌دهند (کلمه‌ی بدشنیده‌شده وسط هم‌پوشانی، تاکردنِ
+// نیم‌فاصله، و یک کلمه‌ی اضافه وسط هم‌پوشانی). با ۰.۸۲ هر سه تکراری درج می‌کردند.
+// سست بودنش برای فارسی سر جای خود می‌ماند، ولی راهش سخت‌گیری روی همین عدد نیست.
 static const double kZSeamMeanSim = 0.70;
 // و دست‌کم یک لنگرِ محکم در پنجره لازم است. بی این، پنجره‌ای از چند کلمه‌ی نیم‌شبیه
 // (که در فارسی فراوان است: می‌کند، می‌کنم، می‌کنی) الکی جوش می‌خورد.
@@ -301,6 +305,20 @@ NSString *ZUncoveredTail(NSString *whole, NSString *covered) {
     NSArray *A = [whole componentsSeparatedByString:@" "];
     NSArray *B = [covered componentsSeparatedByString:@" "];
     if (B.count + 8 > A.count && ZContainsExact(covered, whole)) return @"";
+    // پوشش عینا داخل whole هست: دُم دقیقا همان چیزی است که بعدش می‌آید. این حالت
+    // پیش از DP جواب می‌گیرد، چون DP با شروعِ غیرآزاد نمی‌تواند پیدایش کند و
+    // covered ای که وسط whole شروع شود را «همه‌اش پوشیده» می‌خواند.
+    if (ZContainsExact(whole, covered)) {
+        // آخرین رخداد، نه اولی. عبارتی که در یک پاراگراف دو بار گفته شده (در فارسی
+        // عادی است) با جست‌وجوی رو به جلو به رخدادِ اول می‌چسبید و دُمی برمی‌گشت که
+        // بخشی‌اش از قبل روی صفحه بود. «مدل دیگه» در تست بازپخش دقیقا همین بود.
+        NSRange r = [whole rangeOfString:covered options:NSBackwardsSearch];
+        if (r.location != NSNotFound) {
+            NSString *tail = [[whole substringFromIndex:r.location + r.length]
+                              stringByTrimmingCharactersInSet:ws];
+            return tail;
+        }
+    }
 
     // متنِ بلند در پنجره هم‌تراز می‌شود، نه یک‌جا. لازم هم نیست یک‌جا شود: تنها چیزی
     // که می‌خواهیم بدانیم این است که covered *کجای* whole تمام می‌شود، پس فقط دُمِ
@@ -342,13 +360,17 @@ NSString *ZUncoveredTail(NSString *whole, NSString *covered) {
     NSUInteger bestI = 0;
     double bestCost = 1e9;
     for (NSUInteger i = 0; i <= P; i++) {
-        if (C[i][L] <= bestCost) {
+        if (C[i][L] < bestCost) {
             bestCost = C[i][L];
             bestI = i;
         }
     }
-    double score = 1.0 - bestCost / (double)MAX(L, MAX(bestI, (NSUInteger)1));
+    double score = 1.0 - bestCost / (double)MAX(L, (NSUInteger)1);
     bestI += lo;
+    // امتیاز پایین یعنی این final اصلا به آنچه نشان داده‌ایم ربط ندارد؛ چسباندنش
+    // متن بیگانه درج می‌کند، پس ادعایی ندارد. حالتِ خطرناک (finalی که واقعا ادامه‌ی
+    // همین حرف است ولی از وسط شروع شده) بالاتر و پیش از DP با تطبیق عینی گرفته
+    // می‌شود، چون DP با شروعِ غیرآزاد نمی‌تواند پیدایش کند.
     if (score < 0.60 || bestI >= n) return @"";
     NSArray *rest = [A subarrayWithRange:NSMakeRange(bestI, n - bestI)];
     return [rest componentsJoinedByString:@" "];

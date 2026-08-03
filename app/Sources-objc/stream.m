@@ -224,7 +224,14 @@ static NSString *const kBase = @"https://www.google.com/speech-api/full-duplex/v
     } else if (eventCode == NSStreamEventErrorOccurred) {
         [self failWriter];    // خطای واقعی: بلافاصله لغو کن، منتظر واچ‌داگ نمان
     } else if (eventCode == NSStreamEventEndEncountered) {
-        [self closeOutput];
+        // پایانِ لوله **پیش از** آنکه ما آپلود را تمام کرده باشیم یعنی طرفِ مقابل
+        // قطع کرده، یعنی خطا. با closeOutput ساده، `_uploadDone` و `_cancelled`
+        // دست‌نخورده می‌ماندند، پس `feed:` همچنان قبول می‌کرد و صدا را در `_pending`
+        // می‌ریخت که هیچ‌وقت نوشته نمی‌شد: میکروفن روشن، بایت‌ها می‌رفتند توی چاه،
+        // و چون گوگل هنوز فریم می‌فرستاد واچ‌داگ هم بیدار نمی‌شد. تا چرخشِ بعدی
+        // (هشت تا بیست‌وچهار ثانیه بعد) هرچه گفته می‌شد گم بود.
+        if (_uploadDone) [self closeOutput];
+        else [self failWriter];
     }
 }
 

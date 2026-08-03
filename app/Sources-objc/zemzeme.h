@@ -1012,6 +1012,7 @@ int ZReplayMain(NSArray<NSString *> *args);
 int ZMicDumpMain(NSString *path, double seconds);
 void ZMicDumpReport(NSData *pcm, NSUInteger clipped, NSString *path);
 NSString *ZDefaultInputName(void);
+void ZMicSetHighSensitivity(BOOL on);   // کشِ اتمیک، تا نخ صدا NSUserDefaults نخواند
 
 // ---------- فونت و سلف‌تست ----------
 void ZRegisterFonts(void);

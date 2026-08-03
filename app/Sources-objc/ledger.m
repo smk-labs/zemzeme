@@ -234,6 +234,17 @@ static NSUInteger ZCommonPrefix(NSString *a, NSString *b) {
     }
     NSString *expected = [_owned substringFromIndex:k];
     NSString *with = [target substringFromIndex:k];
+    // **حذفِ بزرگ ممنوع.** این شاخه واقعا از صفحه‌ی کاربر پاک می‌کند، و تا امروز
+    // هیچ کفی نداشت: اگر لایه‌ی بالاتر یک جمله را به یک کلمه تا می‌کرد، همین‌جا
+    // بی‌چون‌وچرا اجرا می‌شد (در لاگ `-59+بدهم`). اثبات مالکیت جلویش را نمی‌گیرد،
+    // چون متن واقعا مالِ ماست. از دست دادنِ مالکیت نهایتا یک تکرار خرج دارد؛ این
+    // یکی یک جمله. پس در این حالت مالکیت را رها می‌کنیم.
+    if (!with.length && expected.length > 8) {
+        ZLog(@"ledger: replace می‌خواست %lu نویسه را با هیچ عوض کند؛ رها شد",
+             (unsigned long)expected.length);
+        [self disown];
+        return YES;
+    }
     [self runOp:^(id<ZTextSink> sink, void (^done)(ZSinkResult)) {
         [sink replaceLast:n expecting:expected with:with done:done];
     } stat:^(ZLedgerStats *st) {

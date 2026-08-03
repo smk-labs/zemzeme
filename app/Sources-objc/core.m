@@ -202,7 +202,10 @@ NSFont *ZFont(CGFloat size, BOOL medium) {
 // اتاق ساکت و برای میکروفنی که سیگنالش ذاتا کم‌جان است. پیش‌فرض خاموش، چون روی
 // میکروفن سالم لازم نیست و نویزِ میکروفنِ کم‌جان را هم به همان اندازه بزرگ می‌کند.
 - (BOOL)highSensitivity { return [self.d boolForKey:@"highSensitivity"]; }
-- (void)setHighSensitivity:(BOOL)v { [self.d setBool:v forKey:@"highSensitivity"]; }
+- (void)setHighSensitivity:(BOOL)v {
+    [self.d setBool:v forKey:@"highSensitivity"];
+    ZMicSetHighSensitivity(v);    // نخ صدا از کش می‌خواند، نه از دیفالتز
+}
 
 - (BOOL)polishEnabled {
     NSObject *o = [self.d objectForKey:@"polish"];

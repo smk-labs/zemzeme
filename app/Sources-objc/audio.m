@@ -2,6 +2,7 @@
 // کال‌بک‌ها روی نخ صدا صدا زده می‌شوند.
 #import "zemzeme.h"
 #import <CoreAudio/CoreAudio.h>
+#import <stdatomic.h>
 
 // نامِ میکروفنی که مک همین حالا پیش‌فرض می‌داند. در لاگ لازم است چون شایع‌ترین
 // خرابیِ دیکته اصلا مالِ ما نیست: مک روی میکروفن دیگری است و کاربر خبر ندارد.
@@ -144,6 +145,7 @@ void ZMicDumpReport(NSData *pcm, NSUInteger clipped, NSString *path) {
     BOOL _warnedSNR;
     BOOL _gainLocked;
     NSUInteger _lockBlocks;
+    NSUInteger _unlockBlocks;
 }
 
 // ---------- کالیبراسیون بلندی (نه AGC) ----------
@@ -174,7 +176,13 @@ static const float kZGainSensitive = 512.0f;  // سقفِ حالت حساسیت 
 // می‌شود و تا آخر سشن همان می‌ماند: یک بهره‌ی ثابت، دقیقا آن چیزی که گوگل می‌خواهد.
 static const float kZLockTolerance = 1.19f;   // تا ±۱.۵ دسی‌بل یعنی رسیدیم
 static const NSUInteger kZLockBlocks = 7;     // حدود دو ثانیه حرفِ پایدار
-static const float kZUnlockDrop = 8.0f;       // این‌قدر دور شد، دوباره کالیبره کن
+// قفل باید **باز شدنی** باشد. با هشت برابر عملا هیچ‌وقت باز نمی‌شد: باز شدن یعنی
+// اوجِ حرف زیر یک‌هشتمِ هدف بماند، و چون اوج با حمله‌ی فوری بالا می‌رفت، هر صدای
+// بمِ کوتاهی دوباره مسلحش می‌کرد. نتیجه‌اش در لاگ: بهره تمام یک سشن روی ۱.۴ برابر
+// چسبیده بود در حالی که صدا افتاده بود به rms ۰.۰۰۰۹. حالا دو و نیم برابرِ پایدار
+// (نه لحظه‌ای) کافی است.
+static const float kZUnlockDrop = 2.5f;
+static const NSUInteger kZUnlockBlocks = 7;
 static const float kZGainUpMax = 1.41f;       // حداکثر ۳ دسی‌بل در هر تکه، رو به بالا
 static const float kZGainDownMax = 4.0f;      // و ۱۲ دسی‌بل رو به پایین، چون بریدن ممنوع است
 // دروازه دیگر عددِ ثابت نیست: کفِ نویزِ **همین** دستگاه یاد گرفته می‌شود و حرف یعنی
@@ -182,10 +190,32 @@ static const float kZGainDownMax = 4.0f;      // و ۱۲ دسی‌بل رو به
 // روی Buds+ تنظیم شده بود؛ روی QCY هیچ‌وقت باز نمی‌شد و روی میکروفن مک همیشه.
 static const float kZSpeechOverNoise = 3.0f;
 static const float kZNoiseRise = 1.007f;      // کف اجازه دارد آرام بالا بیاید
+// و آرام هم پایین برود. نسخه‌ی قبل کمینه‌ی **لحظه‌ای** بود: یک تکه‌ی تقریبا صفر
+// (لحظه‌ی وصل شدن بلوتوث، عوض شدن دستگاه، گرم شدن مبدل) کف را تا کفِ کفِ ممکن
+// می‌چسباند و برگشتن از آنجا با ۰.۷٪ در هر تکه صد ثانیه طول می‌کشید. تا آن موقع
+// دروازه‌ی «این حرف است یا نویز» همیشه باز می‌ماند و نویز هم حرف حساب می‌شد. در
+// لاگ نشانه‌اش snr های ۹۰ تا ۱۱۰ دسی‌بل بود، عددی که برای هیچ میکروفن واقعی ممکن
+// نیست. کفِ حداقلی هم لازم است تا هیچ‌وقت به آن دره نیفتیم.
+static const float kZFloorFall = 0.05f;
+static const float kZFloorMin = 1e-5f;
 static const float kZSpeechDecay = 0.97f;     // اوجِ حرف آرام فراموش می‌شود
 // زیر این نسبت، میکروفن حرف را از نویزِ خودش جدا نمی‌کند و بزرگ کردنش فقط نویز را
 // بزرگ می‌کند. آن‌وقت سکوت بهتر از دروغ است: یک بار در لاگ گفته می‌شود.
 static const float kZMinSNRdB = 10.0f;
+
+// ---------- هیچ کارِ کُند روی نخِ صدا ----------
+// نخِ تپ یک مهلتِ سختِ حدودا صد میلی‌ثانیه‌ای دارد؛ از آن که رد شود CoreAudio تکه‌های
+// ورودی را دور می‌ریزد و آن صدا دیگر برنمی‌گردد. `ZLog` یک open و seek و write و
+// close است، و `NSUserDefaults` می‌تواند تا cfprefsd برود؛ خواندنش در هر تکه یعنی
+// ده بار در ثانیه روی همان نخ. هر دو از اینجا بیرون رفتند.
+static void ZLogAsync(NSString *line) {
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{ ZLog(@"%@", line); });
+}
+
+// نسخه‌ی کش‌شده‌ی «حساسیت بالا». نوشتنش از نخ اصلی است و خواندنش از نخ صدا، پس اتمیک.
+static atomic_bool gZHighSens = ATOMIC_VAR_INIT(false);
+
+void ZMicSetHighSensitivity(BOOL on) { atomic_store(&gZHighSens, on ? true : false); }
 
 // فرمت به زبان آدم: چند هرتز، چند کانال، شناور یا صحیح، چند بیت.
 static NSString *ZFormatDesc(AVAudioFormat *f) {
@@ -219,6 +249,12 @@ static NSString *ZFormatDesc(AVAudioFormat *f) {
                                         userInfo:@{NSLocalizedDescriptionKey: @"میکروفنی در دسترس نیست"}];
         return NO;
     }
+    // **هر سشن از صفر کالیبره می‌شود.** این شیء بین سشن‌ها زنده می‌ماند، و تا امروز
+    // بهره و قفل و کف نویز هم با آن می‌ماندند. یعنی یک سشنِ بدکالیبره تمام سشن‌های
+    // بعدی را تا بسته شدن اپ مسموم می‌کرد، و همین بود آن «گاهی عالی کار می‌کند و
+    // یک‌دفعه وسطش می‌میرد»: قرعه‌ی اولین سشن بعد از هر بار باز شدن اپ.
+    [self resetCalibration];
+    ZMicSetHighSensitivity(ZSettings.shared.highSensitivity);
     [self installTapWithFormat:inFormat];
     [_engine prepare];
     if (![_engine startAndReturnError:err]) return NO;
@@ -240,6 +276,10 @@ static NSString *ZFormatDesc(AVAudioFormat *f) {
             return;
         }
         ZLog(@"mic: configuration change، تپ از نو: %@ in=%@", ZDefaultInputName(), ZFormatDesc(f));
+        // دستگاه عوض شده، پس کالیبراسیونِ دستگاه قبلی بی‌معنی است. بین میکروفن مک و
+        // یک هدست بلوتوث هزار برابر فاصله است؛ بردنِ بهره‌ی یکی روی دیگری یعنی یا
+        // کر شدن یا بریدن.
+        [s resetCalibration];
         [s installTapWithFormat:f];
         if (!s->_engine.isRunning) {
             [s->_engine prepare];
@@ -249,7 +289,24 @@ static NSString *ZFormatDesc(AVAudioFormat *f) {
     return YES;
 }
 
+- (void)resetCalibration {
+    _gain = 1.0f;
+    _gainLocked = NO;
+    _lockBlocks = 0;
+    _unlockBlocks = 0;
+    _speechPeak = 0;
+    _noiseFloor = 1.0f;
+    _hpPrevIn = 0;
+    _hpPrevOut = 0;
+    _sawSpeech = NO;
+    _warnedSNR = NO;
+}
+
 - (void)installTapWithFormat:(AVAudioFormat *)inFormat {
+    // حافظه‌ی فیلتر مالِ دستگاهِ قبلی است؛ با آن، اولین تکه‌ی دستگاه تازه یک گذرای
+    // ساختگی می‌گیرد، دقیقا روی تکه‌ای که باید کف نویز را از نو یاد بگیرد.
+    _hpPrevIn = 0;
+    _hpPrevOut = 0;
     _converter = [[AVAudioConverter alloc] initFromFormat:inFormat toFormat:_outFormat];
     __weak typeof(self) ws = self;
     [_engine.inputNode installTapOnBus:0 bufferSize:4800 format:inFormat
@@ -332,9 +389,9 @@ static NSString *ZFormatDesc(AVAudioFormat *f) {
 - (float)calibrateForPeak:(float)peak {
     // کف نویز: تند پایین می‌آید (هر سکوتی کف تازه است) و آرام بالا، تا اتاقی که
     // کم‌کم شلوغ می‌شود هم دنبال شود بی آنکه یک تَق کف را برای همیشه بالا ببرد.
-    if (peak < _noiseFloor) _noiseFloor = peak;
+    if (peak < _noiseFloor) _noiseFloor += (peak - _noiseFloor) * kZFloorFall;
     else _noiseFloor = MIN(_noiseFloor * kZNoiseRise, peak);
-    if (_noiseFloor < 1e-7f) _noiseFloor = 1e-7f;
+    if (_noiseFloor < kZFloorMin) _noiseFloor = kZFloorMin;
 
     // **بهره فقط وقتی حرف هست تکان می‌خورد.** نسخه‌ی اول اوجِ حرف را در سکوت هم آب
     // می‌کرد؛ چون هدف تقسیم بر آن است، هرچه آب می‌شد بهره بالاتر می‌رفت و در سکوت
@@ -348,16 +405,21 @@ static NSString *ZFormatDesc(AVAudioFormat *f) {
     else _speechPeak = _speechPeak * 0.98f + peak * 0.02f;
     if (_speechPeak < 1e-6f) return _gain;
 
-    float ceiling = ZSettings.shared.highSensitivity ? kZGainSensitive : kZGainNormal;
+    float ceiling = atomic_load(&gZHighSens) ? kZGainSensitive : kZGainNormal;
     float want = MIN(ceiling, MAX(1.0f, kZPeakTarget / _speechPeak));
     // قفل: رسیدیم و ماندیم، پس دیگر تکان نخور. باز شدنش فقط وقتی است که واقعا دور
     // شده باشیم (کاربر فاصله‌اش را عوض کرد، یا میکروفن عوض شد)، نه با هر نوسان.
     if (_gainLocked) {
         float off = want > _gain ? want / _gain : _gain / want;
-        if (off < kZUnlockDrop) return _gain;
+        if (off < kZUnlockDrop) {
+            _unlockBlocks = 0;
+            return _gain;
+        }
+        if (++_unlockBlocks < kZUnlockBlocks) return _gain;   // پایدار باشد، نه یک تَق
         _gainLocked = NO;
         _lockBlocks = 0;
-        ZLog(@"mic: بهره از قفل درآمد (هدف %.0f× شد، قفل روی %.0f×)", want, _gain);
+        _unlockBlocks = 0;
+        ZLogAsync([NSString stringWithFormat:@"mic: بهره از قفل درآمد (هدف %.0f×)", want]);
     }
     // حرکت در مقیاس دسی‌بل با سرعت سقف‌دار، نه کسری از فاصله. با نسخه‌ی کسری،
     // رسیدن از یک به بیست برابر سیزده ثانیه طول می‌کشید و جمله‌های کوتاه هیچ‌وقت به
@@ -372,7 +434,7 @@ static NSString *ZFormatDesc(AVAudioFormat *f) {
     if (off < kZLockTolerance) {
         if (++_lockBlocks >= kZLockBlocks) {
             _gainLocked = YES;
-            ZLog(@"mic: بهره روی %.1f× قفل شد", _gain);
+            ZLogAsync([NSString stringWithFormat:@"mic: بهره روی %.1f× قفل شد", _gain]);
         }
     } else {
         _lockBlocks = 0;
@@ -405,17 +467,18 @@ static NSString *ZFormatDesc(AVAudioFormat *f) {
     // بهره کنارشان می‌آید تا معلوم باشد این عدد از خودِ میکروفن آمده یا از جبرانِ ما،
     // و snr می‌گوید اصلا جبران فایده دارد یا نه.
     float snr = [self snrDB];
-    ZLog(@"mic: rms %.4f peak %.3f gain %.1f× snr %.0fdB%@، %.1f ثانیه صدا",
+    ZLogAsync([NSString stringWithFormat:@"mic: rms %.4f peak %.3f gain %.1f× snr %.0fdB%@، %.1f ثانیه صدا",
          avg, _lvlPeak, _gainSum / _lvlCount, snr,
-         ZSettings.shared.highSensitivity ? @" [حساسیت بالا]" : @"",
-         _lvlFrames / 16000.0);
+         atomic_load(&gZHighSens) ? @" [حساسیت بالا]" : @"",
+         _lvlFrames / 16000.0]);
     // یک بار در هر سشن، و فقط وقتی واقعا حرفی شنیده شده: اگر حرف از نویزِ خودِ
     // میکروفن جدا نمی‌شود، مقصر بلندی نیست و هیچ بهره‌ای درستش نمی‌کند.
     if (!_warnedSNR && _sawSpeech && snr > 0 && snr < kZMinSNRdB) {
         _warnedSNR = YES;
-        ZLog(@"mic: ⚠︎ نسبت سیگنال به نویز %.0f دسی‌بل است. این میکروفن حرف را از "
-              "نویز خودش جدا نمی‌کند و بزرگ کردنش هم فقط نویز را بزرگ می‌کند؛ "
-              "میکروفن دیگری را امتحان کن", snr);
+        ZLogAsync([NSString stringWithFormat:
+            @"mic: ⚠︎ نسبت سیگنال به نویز %.0f دسی‌بل است. این میکروفن حرف را از "
+             "نویز خودش جدا نمی‌کند و بزرگ کردنش هم فقط نویز را بزرگ می‌کند؛ "
+             "میکروفن دیگری را امتحان کن", snr]);
     }
     _lvlSum = 0;
     _lvlPeak = 0;

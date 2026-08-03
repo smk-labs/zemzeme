@@ -701,6 +701,15 @@ static CGEventRef zHotkeyCallback(CGEventTapProxy proxy, CGEventType type, CGEve
 - (CGEventRef)handleKeyDown:(CGEventRef)event proxy:(CGEventTapProxy)proxy {
     int64_t code = CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode);
 
+    // **بیت واقعیِ Command راست، هر بار از نو.** تشخیصِ چپ از راست تماما روی
+    // `_physDown` بود، و آن فقط وقتی پاک می‌شد که بالاآمدنِ کلید را ببینیم. یک
+    // بالاآمدنِ گم‌شده (خواب صفحه، عوض شدن Space، تپِ دیگری جلوتر از ما مثل
+    // Karabiner) یعنی `_physDown` برای همیشه روشن می‌ماند. از آن لحظه هر
+    // ⌘+حرفِ عادیِ کاربر با **Command چپ** میان‌بر ما حساب می‌شد و بلعیده:
+    // ⌘L زبان دیکته را عوض می‌کرد، ⌘E حالت را، ⌘D کل متن را دور می‌ریخت، و اپِ
+    // مقصد هیچ‌کدام را نمی‌دید. حالا خودِ رویداد پرسیده می‌شود، پس حالتِ کهنه در
+    // همان اولین کلید خودش را درمان می‌کند.
+    if (_physDown && !(CGEventGetFlags(event) & kRightCmdBit)) [self forgetHeld];
     if (_physDown && !_emitted) {
         CGEventFlags mods = CGEventGetFlags(event) & kZModMask;
         // گارد سشن داخل خود نقشه است، چون یک کار (F) عمدا بی‌سشن هم کار می‌کند
@@ -749,8 +758,19 @@ static CGEventRef zHotkeyCallback(CGEventTapProxy proxy, CGEventType type, CGEve
     // مدرکی است که در اپِ بی‌خواندن (ریموت دسکتاپ) در دسترس است، پس اول از همه.
     if (CGEventGetIntegerValueField(event, kCGEventSourceUserData) != kZOurEventTag) {
         ZNoteForeignInput();
+    } else {
+        // رویدادِ خودمان است (تایپ، یا Cmd+V). تا امروز مثل ورودی کاربر از همین
+        // ماشین حالت رد می‌شد: تایپِ خود اپ به شاخه‌ی «کلید دیگری آمد» می‌افتاد،
+        // رویدادِ نگه‌داشته‌ی Command راست را دوباره تزریق می‌کرد و تپِ در جریانِ
+        // کاربر را می‌خورد. صدای خودمان را ورودی حساب نکنیم.
+        return event;
     }
-    if (type == kCGEventLeftMouseDown || type == kCGEventRightMouseDown) return event;
+    // ماوس هم «کلید دیگری» است: با Command راست + کلیک، رها کردنِ کلید تپِ تنها
+    // حساب می‌شد و ۰.۳۵ ثانیه بعد سشن بی‌دلیل مکث می‌کرد.
+    if (type == kCGEventLeftMouseDown || type == kCGEventRightMouseDown) {
+        if (_physDown) _emitted = YES;
+        return event;
+    }
     if (type == kCGEventFlagsChanged
         && CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode) == 54) {
         return [self handleFlagsChanged:event];
