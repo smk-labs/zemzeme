@@ -283,6 +283,14 @@
 }
 
 - (void)openStream {
+    // تایمرِ ری‌استارتِ معلق و استریمِ قبلی هر دو باید همین‌جا بمیرند. بی این، یک
+    // ری‌استارتِ زمان‌بندی‌شده بعد از drop یا resume دوباره شلیک می‌شد و استریمِ
+    // دومی می‌ساخت؛ اولی نه لغو می‌شد نه finishUpload می‌گرفت، سوکتش می‌ماند و هر
+    // رویدادش هم دور ریخته می‌شد چون دیگر `_stream` نبود.
+    [_restartTimer invalidate];
+    _restartTimer = nil;
+    if (_paused) return;
+    if (_stream && _stream != _draining) [_stream cancel];
     if (!_running) return;
     ZGoogleStream *s = [[ZGoogleStream alloc] initWithLang:_lang];
     _stream = s;
