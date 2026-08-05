@@ -3,6 +3,8 @@
 // مثل نشانِ Grammarly گوشه‌ی باکس تایپ می‌ایستد. متن از همان مسیر درجِ زنده سر
 // کرسر می‌نشیند.
 #import "zemzeme.h"
+#import <stdatomic.h>
+#import <os/lock.h>
 #import <ApplicationServices/ApplicationServices.h>
 
 static const CGFloat kDotSize = 14;   // بلندی نشان؛ عرضش از ZMarkAspect درمی‌آید
@@ -274,19 +276,40 @@ static NSMutableSet<NSNumber *> *ZPokedPids(void) {
     static NSMutableSet *s;
     static dispatch_once_t once;
     dispatch_once(&once, ^{ s = [NSMutableSet set]; });
-    return s;    // فقط روی صف caret دست می‌خورد، پس قفل لازم ندارد
+    return s;
 }
 
+// کامنت قبلی می‌گفت «فقط روی صف caret دست می‌خورد، پس قفل لازم ندارد». غلط بود:
+// مسیر inject هم از راه ZResolveFocused به همین‌جا می‌رسد و آن صف دیگری است. نتیجه‌اش
+// می‌توانست «collection was mutated while being enumerated» وسط بستن سشن باشد.
+static os_unfair_lock gPokeLock = OS_UNFAIR_LOCK_INIT;
+
 static void ZWakeAccessibility(AXUIElementRef app, pid_t pid) {
-    if ([ZPokedPids() containsObject:@(pid)]) return;
-    [ZPokedPids() addObject:@(pid)];
+    os_unfair_lock_lock(&gPokeLock);
+    BOOL already = [ZPokedPids() containsObject:@(pid)];
+    os_unfair_lock_unlock(&gPokeLock);
+    if (already) return;
     AXError m = AXUIElementSetAttributeValue(app, CFSTR("AXManualAccessibility"), kCFBooleanTrue);
     AXError e = AXUIElementSetAttributeValue(app, CFSTR("AXEnhancedUserInterface"), kCFBooleanTrue);
+    // **فقط موفقیت ثبت می‌شود.** قبلا pid پیش از هر دو نوشتن اضافه می‌شد، پس اپی که
+    // همان لحظه مشغول بالا آمدن بود و تایم‌اوت می‌داد، تا آخر سشن دیگر بیدار نمی‌شد
+    // و کرسرش هیچ‌وقت پیدا نمی‌شد. حالا شکستِ گذرا دفعه‌ی بعد دوباره امتحان می‌شود.
+    if (m != kAXErrorSuccess && e != kAXErrorSuccess) {
+        ZLog(@"caret: بیدارباش pid=%d نگرفت (manual=%d enhanced=%d)؛ دوباره امتحان می‌شود", pid, m, e);
+        return;
+    }
+    os_unfair_lock_lock(&gPokeLock);
+    [ZPokedPids() addObject:@(pid)];
+    os_unfair_lock_unlock(&gPokeLock);
     ZLog(@"caret: woke ax for pid=%d manual=%d enhanced=%d", pid, m, e);
 }
 
 static void ZCaretSleepAll(void) {
-    for (NSNumber *pid in ZPokedPids()) {
+    os_unfair_lock_lock(&gPokeLock);
+    NSArray *pids = ZPokedPids().allObjects;    // عکس، نه خودِ مجموعه
+    [ZPokedPids() removeAllObjects];
+    os_unfair_lock_unlock(&gPokeLock);
+    for (NSNumber *pid in pids) {
         AXUIElementRef app = AXUIElementCreateApplication(pid.intValue);
         if (!app) continue;
         AXUIElementSetMessagingTimeout(app, kAXTimeout);
@@ -294,7 +317,6 @@ static void ZCaretSleepAll(void) {
         AXUIElementSetAttributeValue(app, CFSTR("AXManualAccessibility"), kCFBooleanFalse);
         CFRelease(app);
     }
-    [ZPokedPids() removeAllObjects];
 }
 
 // جهتِ متنِ خودِ فیلد، از روی محتوایش نه از روی زبانِ سشن. هر جا اپ خودش راست‌به‌چپ را
@@ -455,7 +477,21 @@ static AXUIElementRef gFocusCache;
 static pid_t gFocusPid;
 static CFAbsoluteTime gFocusAt;
 
+// **کشِ فوکوس فقط روی یک صف دست‌کاری می‌شود.** قبلا دو نخ به همین اشاره‌گر دست
+// می‌زدند: باطل‌سازی روی نخ اصلی (خبرِ عوض شدن اپ) و خواندن روی صف inject. سه
+// مسابقه‌ی جدا داشت و هر سه بد: تستِ غیرِنال و بعد CFRetain (یعنی CFRetain(NULL) یا
+// روی شیءِ آزادشده)، دو CFRelease هم‌زمان، و ذخیره‌ی اشاره‌گر روی متغیری که نخ اصلی
+// همان لحظه نال کرده (نشتِ یک عنصر به ازای هر بار عوض شدن اپ).
+// حالا نخ اصلی فقط یک شمارنده را جلو می‌برد و تمام کار CF روی همان یک صف می‌ماند.
+static atomic_uint gFocusGen;
+static unsigned gFocusCachedGen;
+
 void ZInvalidateFocusCache(void) {
+    atomic_fetch_add(&gFocusGen, 1);
+}
+
+// فقط از صفی صدا زده می‌شود که کش را می‌سازد و می‌خواند.
+static void ZDropFocusCacheLocal(void) {
     if (gFocusCache) {
         CFRelease(gFocusCache);
         gFocusCache = NULL;
@@ -490,10 +526,23 @@ AXUIElementRef ZCopyFocusedElement(pid_t frontPid) {
                     usingBlock:^(NSNotification *n) { ZInvalidateFocusCache(); }];
     });
     CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
-    if (gFocusCache && gFocusPid == frontPid && now - gFocusAt < kZFocusCacheSec) {
-        return (AXUIElementRef)CFRetain(gFocusCache);
+    unsigned gen = atomic_load(&gFocusGen);
+    if (gen != gFocusCachedGen) {       // اپ جلویی عوض شده بود
+        ZDropFocusCacheLocal();
+        gFocusCachedGen = gen;
     }
-    ZInvalidateFocusCache();
+    if (gFocusCache && gFocusPid == frontPid && now - gFocusAt < kZFocusCacheSec) {
+        // عنصرِ کهنه بی‌خطر نیست: مسیر درجِ مستقیم متن را با انتظار مقایسه نمی‌کند و
+        // فقط جابه‌جا شدنِ نشانگر را می‌بیند، پس یک عنصرِ مرده (اپ‌های Electron سرِ
+        // ارسال، کلِ گره را از نو می‌سازند) یعنی نوشتن در جای عوضی. یک پرسشِ ارزان
+        // قبل از تحویل: هنوز زنده است؟
+        CFTypeRef role = NULL;
+        AXError st = AXUIElementCopyAttributeValue(gFocusCache, kAXRoleAttribute, &role);
+        if (role) CFRelease(role);
+        if (st == kAXErrorSuccess) return (AXUIElementRef)CFRetain(gFocusCache);
+        ZDropFocusCacheLocal();
+    }
+    ZDropFocusCacheLocal();
     AXUIElementRef el = ZResolveFocused(frontPid);
     if (el) {
         gFocusCache = (AXUIElementRef)CFRetain(el);

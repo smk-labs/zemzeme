@@ -198,7 +198,6 @@ static const float kZNoiseRise = 1.007f;      // کف اجازه دارد آرا
 // نیست. کفِ حداقلی هم لازم است تا هیچ‌وقت به آن دره نیفتیم.
 static const float kZFloorFall = 0.05f;
 static const float kZFloorMin = 1e-5f;
-static const float kZSpeechDecay = 0.97f;     // اوجِ حرف آرام فراموش می‌شود
 // زیر این نسبت، میکروفن حرف را از نویزِ خودش جدا نمی‌کند و بزرگ کردنش فقط نویز را
 // بزرگ می‌کند. آن‌وقت سکوت بهتر از دروغ است: یک بار در لاگ گفته می‌شود.
 static const float kZMinSNRdB = 10.0f;

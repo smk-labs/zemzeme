@@ -105,6 +105,9 @@ static void zPostUnicode(const UniChar *units, NSUInteger n) {
     if (leadIn) usleep(kZTypeLeadIn);    // اپ مقصد سرد است؛ اولین رویداد نباید قربانی شود
     while (i < count) {
         NSUInteger n = MIN((NSUInteger)18, count - i);
+        // مرزِ تکه هیچ‌وقت وسط یک جفتِ جانشین نیفتد: نیمه‌ی تنها یا دور ریخته می‌شود
+        // یا به U+FFFD تبدیل، در حالی که دفتر هر دو واحد را «تحویل‌شده» می‌شمارد.
+        if (n > 1 && units[i + n - 1] >= 0xD800 && units[i + n - 1] <= 0xDBFF) n--;
         zPostUnicode(units + i, n);
         usleep(td);
         i += n;
@@ -180,7 +183,18 @@ static NSMutableSet<NSNumber *> *ZNoAXWritePids(void) {
     CFRange after = zSelectedRange(el, &haveAfter);
     CFRelease(el);
     if (!haveAfter) return YES;    // نتوانستیم بخوانیم؛ نوشتن خطا نداد، پس نشسته
-    if (after.location == before.location) return NO;
+    if (after.location == before.location) {
+        // **نوشتن موفق بود، پس متن نشسته.** این تنها جایی بود که با وجودِ
+        // kAXErrorSuccess «نه» برمی‌گرداند، و نتیجه‌اش درجِ دوباره‌ی همان متن بود:
+        // در لاگ کاربر `ax write refused` و بلافاصله `pasting 338 chars`، یعنی
+        // ۳۳۸ نویسه دو بار روی صفحه. اپ‌های مبتنی بر Chromium نشانگر را از راه IPC
+        // می‌دهند و خیلی‌هایشان همیشه {0,0} می‌گویند؛ آن سکوت دلیلِ ننشستن نیست.
+        // یازده خط پایین‌تر همین فایل برای نشانگرِ غیرمنتظره دقیقا همین را می‌گوید
+        // («نوشتنِ AX تجزیه‌ناپذیر است، دوباره نمی‌نویسیم») و آنجا درست بود.
+        ZLog(@"inject: ax write ok but caret did not move on pid=%d, trusting the write", pid);
+        [ZNoAXWritePids() addObject:@(pid)];
+        return YES;
+    }
     if (after.location != before.location + (CFIndex)text.length) {
         // نه سر جایش، نه آنجا که انتظار داشتیم. متن تقریبا حتما نشسته (نوشتنِ AX
         // تجزیه‌ناپذیر است)، پس دوباره نمی‌نویسیم؛ ولی این اپ دیگر قابل اعتماد نیست.
@@ -275,7 +289,7 @@ static BOOL zSetSelectedRange(AXUIElementRef el, CFRange range) {
             if (done) dispatch_async(dispatch_get_main_queue(), ^{ done(ZProofNone, NO); });
             return;
         }
-        if (!viaAX) [self eraseAndType:n text:text delayMicros:d];
+        if (!viaAX) [self eraseAndType:ZEraseSteps(expected, n) text:text delayMicros:d];
         self->_lastWriteAt = CFAbsoluteTimeGetCurrent();
         ZWriteProof p = proof;
         if (done) dispatch_async(dispatch_get_main_queue(), ^{ done(p, viaAX); });
@@ -283,6 +297,20 @@ static BOOL zSetSelectedRange(AXUIElementRef el, CFRange range) {
 }
 
 // فال‌بکِ کلیدی، فقط روی ناحیه‌ای که همین حالا تاییدش کرده‌ایم
+// شمارشِ Backspace بر حسب **نویسه‌ی مرکب**، نه واحد UTF-16. یک ایموجی دو واحد است و
+// یک اعرابِ عربی هم دو واحد، ولی هر کدام با یک Backspace پاک می‌شوند. با شمارشِ
+// واحدی، به ازای هر کدام یکی بیشتر پاک می‌شد و آن یکی از متنِ خودِ کاربر می‌رفت.
+// ‏ZCommonPrefix در دفتر مواظبِ همین مرز است و اینجا آن دقت دور ریخته می‌شد.
+static NSUInteger ZEraseSteps(NSString *owned, NSUInteger units) {
+    if (!owned.length || units == 0) return units;
+    NSUInteger from = owned.length > units ? owned.length - units : 0;
+    __block NSUInteger steps = 0;
+    [owned enumerateSubstringsInRange:NSMakeRange(from, owned.length - from)
+                              options:NSStringEnumerationByComposedCharacterSequences
+                           usingBlock:^(NSString *sub, NSRange r, NSRange e, BOOL *stop) { steps++; }];
+    return steps ?: units;
+}
+
 - (void)eraseAndType:(NSUInteger)n text:(NSString *)text delayMicros:(useconds_t)d {
     useconds_t ed = MAX(d, kZEraseMinDelay);
     for (NSUInteger i = 0; i < n; i++) {
