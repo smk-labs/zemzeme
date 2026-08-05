@@ -98,6 +98,11 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
     ZMarkView *_dot;
     NSView *_grip;
     NSTextField *_text;
+    NSTextFieldCell *_sizingCell;   // نسخه‌ی کنار، فقط برای اندازه‌گیری
+    CGFloat _lineHeightCache;       // قدِ یک خط؛ تا فونت عوض نشود ثابت است
+    NSString *_lastMeasuredText;    // اگر متن عوض نشده، از نو اندازه نگیر
+    CGFloat _lastMeasuredWidth;
+    NSString *_lastVisibleTail;
     NSView *_chipBg;
     NSTextField *_chipLabel;
     ZBarButton *_btnClose, *_btnPause, *_btnCopy, *_btnTrash, *_btnInsert;
@@ -325,6 +330,10 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
 }
 
 - (void)applyColors {
+    // فونت و استایل ممکن است همین‌جا عوض شوند، پس اندازه‌های کش‌شده باطل می‌شوند.
+    _lineHeightCache = 0;
+    _sizingCell = nil;
+    _lastVisibleTail = nil;
     _effect.layer.borderColor = [NSColor.labelColor colorWithAlphaComponent:0.12].CGColor;
     _chipBg.layer.backgroundColor = [NSColor.labelColor colorWithAlphaComponent:0.08].CGColor;
     // CGColor مثل بقیه‌ی رنگ‌های لایه‌ای اینجا، نه NSColor: با عوض شدن روشن و تاریک
@@ -424,6 +433,20 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
 // کاربر می‌خواست ببیند. حالا اندازه می‌گیریم و از سرِ متن کم می‌کنیم تا جا شود.
 - (NSString *)visibleTail:(NSString *)full {
     CGFloat w = [self textWidth];
+    // متنِ موقت ده بار در ثانیه می‌آید ولی اغلب همان است که بود (گوگل همان جمله را
+    // دوباره می‌فرستد). جواب قبلی را نگه می‌داریم تا کلِ جست‌وجوی دودویی و ده
+    // اندازه‌گیریِ همراهش دوباره اجرا نشود.
+    if (_lastVisibleTail && w == _lastMeasuredWidth && [full isEqualToString:_lastMeasuredText]) {
+        return _lastVisibleTail;
+    }
+    NSString *answer = [self computeVisibleTail:full width:w];
+    _lastMeasuredText = [full copy];
+    _lastMeasuredWidth = w;
+    _lastVisibleTail = answer;
+    return answer;
+}
+
+- (NSString *)computeVisibleTail:(NSString *)full width:(CGFloat)w {
     CGFloat cap = [self conveyorMaxTextHeight];
     if ([self heightOf:full width:w] <= cap) return full;
     // جستجوی دودویی روی مرز کلمه: بلندترین دمی که جا می‌شود
@@ -445,19 +468,29 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
 // پس متن «جا می‌شود» تشخیص داده می‌شد و بعد AppKit خط آخر را می‌انداخت. حالا معیارِ
 // بریدن و معیارِ چیدن یکی است. maximumNumberOfLines موقع اندازه‌گیری برداشته می‌شود،
 // وگرنه سلول قد را همان سقف خط گزارش می‌کرد و متنِ سرریز «جا شده» به نظر می‌رسید.
-- (CGFloat)heightOf:(NSString *)s width:(CGFloat)w {
-    NSTextFieldCell *cell = (NSTextFieldCell *)_text.cell;
-    NSString *keep = cell.stringValue;
-    NSInteger keepMax = _text.maximumNumberOfLines;
-    _text.maximumNumberOfLines = 0;
-    cell.stringValue = s;
-    CGFloat h = [cell cellSizeForBounds:NSMakeRect(0, 0, w, 100000)].height;
-    cell.stringValue = keep;
-    _text.maximumNumberOfLines = keepMax;
-    return h;
+// **روی یک نسخه‌ی کنار اندازه می‌گیریم، نه روی سلولِ روی صفحه.** نوشتن در
+// stringValue سلولی که داخل پنجره است، اندازه‌ی ذاتی‌اش را باطل و آن را برای کشیدنِ
+// دوباره علامت می‌زند؛ برگرداندنِ مقدار قبلی آن باطل‌سازی را پس نمی‌گیرد. یعنی هر
+// «فقط اندازه می‌گیرم» خودش یک چیدنِ دوباره می‌ساخت، و این تابع ده بار در هر فریم
+// صدا زده می‌شود.
+- (NSTextFieldCell *)sizingCell {
+    if (!_sizingCell) _sizingCell = [_text.cell copy];
+    _sizingCell.font = _text.font;
+    return _sizingCell;
 }
 
-- (CGFloat)lineHeight { return [self heightOf:@"م" width:10000]; }
+- (CGFloat)heightOf:(NSString *)s width:(CGFloat)w {
+    NSTextFieldCell *cell = [self sizingCell];
+    cell.stringValue = s;
+    return [cell cellSizeForBounds:NSMakeRect(0, 0, w, 100000)].height;
+}
+
+// قدِ یک خط هیچ‌وقت عوض نمی‌شود مگر فونت عوض شود، ولی از صفر حساب می‌شد: در هر
+// فریم چند بار، و هر بار یک چیدنِ کاملِ متنِ فارسی.
+- (CGFloat)lineHeight {
+    if (_lineHeightCache <= 0) _lineHeightCache = [self heightOf:@"م" width:10000];
+    return _lineHeightCache;
+}
 
 // سقف واقعی، همان قدی که فریم لیبل سر سه خط می‌گیرد. با هر عددی بزرگ‌تر از این،
 // AppKit خط سوم را می‌انداخت و درست دم متن گم می‌شد؛ با کوچک‌تر، متن به دو خط قناعت
