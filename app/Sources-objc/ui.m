@@ -1329,6 +1329,7 @@ static NSString *ZModeLabel(ZMode m) {
 - (void)pauseToggle {
     if (_errorState) {
         _errorState = NO;
+        _statusText = @"در حال اتصال…";    // وگرنه پیام خطای قبلی می‌ماند و تلاش دوباره بی‌اثر به نظر می‌رسد
         [self.engine startWithLang:ZSettings.shared.lang];
         ZPlay(ZSoundStart);
         [self render];
@@ -1430,6 +1431,11 @@ static NSString *ZModeLabel(ZMode m) {
 // قرارداد قدیمی سر جایش است: بیرون آمدن از جمع متن را درج می‌کند یا با خودش می‌برد،
 // هیچ‌وقت دور نمی‌ریزد. دور ریختن کار سطل آشغال است.
 - (void)toggleMode {
+    // دکمه‌ی حالت روی نوار در این وضعیت‌ها پنهان است، ولی میان‌بر E مستقیم به اینجا
+    // می‌رسد و هیچ گاردی نداشت. وسط پاس نهایی، _mode از قبل به یادداشت عوض شده و
+    // ادیتور خالی است، پس همین تابع رونوشت را از یک رشته‌ی خالی بازمی‌ساخت: کلِ متن
+    // صفر می‌شد و یک موتور تازه هم روی سشنی که دارد بسته می‌شود راه می‌افتاد.
+    if (_reviewing || _working || _enhancing || _finishing || _finished) return;
     if (_reviewing) return;    // سشن تمام شده؛ چرخاندن حالت اینجا معنایی ندارد
     ZMode next = (ZMode)((_mode + 1) % (ZModeNote + 1));
     NSUInteger delivered = _ledger.deliveredLength;
@@ -1532,7 +1538,20 @@ static NSString *ZModeLabel(ZMode m) {
             __strong typeof(ws) s = ws;
             if (!s) return;
             NSString *t = out.length ? out : raw;
-            if (![t isEqualToString:raw]) {
+            // **هرچه در این فاصله گفته شده باید بماند.** پاس ویرایش تا نُه ثانیه طول
+            // می‌کشد و موتور در تمام آن مدت متن تازه را به همین ادیتور می‌ریزد. قبلا
+            // اینجا کلِ ادیتور با عکسِ *قبل از* پاس بازنویسی می‌شد، یعنی آن چند ثانیه
+            // حرف هم از صفحه پاک می‌شد هم در دفتر «تحویل‌شده» علامت می‌خورد، پس هیچ
+            // راهی برای برگشتش نمی‌ماند. حالا فقط همان تکه‌ی پاس‌خورده جایگزین می‌شود
+            // و دنباله‌ی تازه سر جایش می‌ماند.
+            NSString *nowText = [s->_panel editorText] ?: @"";
+            if (![nowText hasPrefix:raw]) {    // ادیتور از شکلی که پاس دیده بود درآمده
+                done(nowText.length ? nowText : t);
+                return;
+            }
+            NSString *grown = [nowText substringFromIndex:raw.length];
+            if (grown.length) t = [t stringByAppendingString:grown];
+            if (![t isEqualToString:nowText]) {
                 [s->_panel setEditorText:t];
                 // ادیتور از زیر دستِ دفتر عوض شد؛ رونوشت و دفتر باید با آن هم‌تراز شوند
                 NSUInteger cut = MIN(s->_editorStintStart, s->_transcript.length);
@@ -1794,7 +1813,10 @@ static NSString *ZModeLabel(ZMode m) {
 // بعد پاس**. یعنی در حالت زنده و کرسر هرچه قرار بود سر کرسر برود رفته و پاس فقط به
 // ادیتور و کلیپ‌بورد می‌رسد؛ بازویرایشِ متنی که از دست ما خارج شده ممنوع است.
 - (void)finalPassNow {
-    if (_working || _reviewing) return;
+    // _enhancing هم، وگرنه B و بعد N هر دو پاس را با هم می‌برد: نتیجه‌ی بهبود در
+    // ادیتور و کلیپ‌بورد می‌نشیند و بلافاصله پاس نهایی رویش می‌نویسد. کامنت پایین‌تر
+    // ادعا می‌کرد این دو هیچ‌وقت هم‌زمان روشن نمی‌شوند؛ فقط یک طرفش گارد داشت.
+    if (_working || _reviewing || _enhancing) return;
     // بیرون از یادداشت، تاگلِ خاموش یعنی این دکمه کاری ندارد: آنجا متنِ مسیر معمولی
     // از قبل سر جایش است و دوباره شنیدنِ همان صدا فقط خرج است.
     if (!ZSettings.shared.finalPassEnabled && _mode != ZModeNote) {
@@ -2138,6 +2160,7 @@ static NSString *ZModeLabel(ZMode m) {
         [self render];
         return;
     }
+    if (_working || _enhancing) return;    // ادیتورِ پنهان خالی است؛ نسخه را با آن ننویس
     NSMutableArray *vs = [_versions mutableCopy];
     NSString *shown = [_panel editorText] ?: @"";
     NSArray *cur = vs[_versionAt];
