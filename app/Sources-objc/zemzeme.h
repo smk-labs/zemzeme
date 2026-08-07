@@ -136,6 +136,8 @@ NSString *ZInterimRatchet(NSString *best, NSString *cur);
 // پوشش کامل بود یا هم‌ترازی نامطمئن. برای لحظه‌ای که متنِ قطعی کوتاه‌تر از متنِ
 // معلقی می‌رسد که خودمان در دست داریم: باقی‌مانده نباید بی‌صدا دور برود.
 NSString *ZUncoveredTail(NSString *whole, NSString *covered);
+// سرِ whole که covered نپوشانده. برای وقتی متنِ قطعی کلمه‌های اولِ خاکستری را ندارد.
+NSString *ZUncoveredHead(NSString *whole, NSString *covered);
 
 // تندترین گفتارِ معقول، کلمه بر ثانیه. دست‌ودل‌بازانه گرفته شده: پنجره‌ی کمی گشادتر
 // فقط چند کلمه تکرار می‌سازد، پنجره‌ی تنگ‌تر از واقعیت تکرار را اصلا برنمی‌دارد.

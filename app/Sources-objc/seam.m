@@ -314,6 +314,33 @@ NSString *ZInterimRatchet(NSString *best, NSString *cur) {
 // covered را به‌عنوان پیشوندِ فازیِ whole هم‌تراز می‌کند (هر دو از یک لحظه‌ی صوتی
 // شروع شده‌اند) و باقی‌مانده‌ی whole را می‌دهد. هم‌ترازی نامطمئن یعنی خالی: آنجا
 // حکمِ متنِ قطعی بی‌رقیب است و ما چیزی برای ادعا نداریم.
+// ---------- سرِ پوشیده‌نشده ----------
+// ‏ZUncoveredTail ذاتا فقط **پسوند** برمی‌گرداند: می‌پرسد «بعد از آنچه پوشیده شده،
+// چه مانده؟». پس اگر متنِ قطعی چند کلمه‌ی **اول** را نداشته باشد که متنِ خاکستری
+// داشت، آن کلمه‌ها در یک نقطه‌ی کور می‌افتند: نه در متنِ قطعی هستند، نه دُم می‌شوند.
+//
+// و این اتفاق واقعا می‌افتد. سرِ چرخش، گوگل final اش را با یک کلمه کمتر از سرِ
+// interim می‌فرستد. سشن 03-27-03 همین دستگاه: خاکستری «که بعضی از حرف‌های اول…»
+// بود و final «  بعضی از حرف‌های اول…»، پس «که» برای همیشه رفت. کاربر همین را
+// می‌گفت: «حرفِ اولِ شروع یه تیکه‌ی جدید را می‌پرونه».
+//
+// همان الگوریتم است، فقط در آینه: ترتیب کلمه‌ها را برمی‌گردانیم، دُم را می‌گیریم، و
+// دوباره برمی‌گردانیم. یعنی همه‌ی گاردهای آن یکی (متنِ بیگانه ادعایی ندارد، شکِ
+// دوزبانه دُم را نگه می‌دارد) همین‌جا هم مجانی به ارث می‌رسند.
+static NSString *ZReverseWords(NSString *s) {
+    NSArray *w = [s componentsSeparatedByString:@" "];
+    return [[[w reverseObjectEnumerator] allObjects] componentsJoinedByString:@" "];
+}
+
+NSString *ZUncoveredHead(NSString *whole, NSString *covered) {
+    NSCharacterSet *ws = NSCharacterSet.whitespaceAndNewlineCharacterSet;
+    whole = [(whole ?: @"") stringByTrimmingCharactersInSet:ws];
+    covered = [(covered ?: @"") stringByTrimmingCharactersInSet:ws];
+    if (!whole.length || !covered.length) return @"";
+    NSString *rev = ZUncoveredTail(ZReverseWords(whole), ZReverseWords(covered));
+    return rev.length ? ZReverseWords(rev) : @"";
+}
+
 NSString *ZUncoveredTail(NSString *whole, NSString *covered) {
     NSCharacterSet *ws = NSCharacterSet.whitespaceAndNewlineCharacterSet;
     whole = [(whole ?: @"") stringByTrimmingCharactersInSet:ws];
