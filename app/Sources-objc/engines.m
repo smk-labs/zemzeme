@@ -43,6 +43,10 @@ static inline double ZChunkStamp(atomic_llong *slot) {
     // چرخش‌های کوتاه دوباره حرف اول کلمه را خوردند («برای» شد «رای»، «که» شد «ه»).
     NSMutableData *_tailAudio;
     BOOL _voiceInCycle;
+    // بافر بازپخش پر شد و قدیمی‌ترین صدا دور ریخته شد. تا امروز بی‌صدا بود، و این
+    // تنها جایی در کل مسیر است که حرفِ کاربر **برای همیشه** می‌رود: نه در متن است،
+    // نه در بافر. اگر این خط در لاگ دیده شود یعنی گوگل بیشتر از سقف لال مانده.
+    BOOL _replayOverflowWarned;
 
     NSDate *_lastEventAt;
     NSDate *_lastResultAt;       // آخرین فریمِ نتیجه‌دار، نه هر فریمی
@@ -191,9 +195,19 @@ static inline double ZChunkStamp(atomic_llong *slot) {
     _draining = nil;
     [_feedLock lock];
     _feedTarget = nil;
+    // این صدا روی سیم رفته بود ولی گوگل هیچ‌وقت جوابش را نداد، و حالا با بستنِ سشن
+    // برای همیشه می‌رود: نجات فقط متنِ تشخیص‌داده‌شده را برمی‌دارد، و اینجا متنی
+    // در کار نبود. تنها راهِ درستش این است که سرِ توقف مثل مسیر چرخش چند صد
+    // میلی‌ثانیه مهلتِ تخلیه بدهیم، و آن با «Esc باید آنی باشد» معامله دارد؛ پس
+    // فعلا دست‌کم بی‌صدا نیست. فایل صدای سشن کامل است و رونویسیِ دسته‌ای نجاتش می‌دهد.
+    NSTimeInterval unanswered = _replay.length / 32000.0;
     _replay.length = 0;
+    _replayOverflowWarned = NO;
     _tailAudio.length = 0;
     [_feedLock unlock];
+    if (was && unanswered > 1.0) {
+        ZLog(@"engine: stopped with %.1fs of audio google never answered for", unanswered);
+    }
     _overlapStream = nil;
     [self stopMicAndTimers];
     [self emit];
@@ -216,6 +230,7 @@ static inline double ZChunkStamp(atomic_llong *slot) {
     [_feedLock lock];
     _feedTarget = nil;
     _replay.length = 0;
+    _replayOverflowWarned = NO;
     _tailAudio.length = 0;     // «دور بریز» یعنی صدای هم‌پوشان هم نباید برگردد
     _voiceSinceResult = 0;
     [_feedLock unlock];
@@ -257,6 +272,10 @@ static inline double ZChunkStamp(atomic_llong *slot) {
         if (s->_replay.length > kZReplayCapBytes) {
             [s->_replay replaceBytesInRange:NSMakeRange(0, s->_replay.length - kZReplayCapBytes)
                                   withBytes:NULL length:0];
+            // بی‌صدا نه: از اینجا به بعد حرفِ کاربر واقعا از دست می‌رود.
+            BOOL warn = !s->_replayOverflowWarned;
+            s->_replayOverflowWarned = YES;
+            if (warn) ZLog(@"engine: replay buffer full at %ds, oldest audio is now lost", kZReplaySec);
         }
         [s->_tailAudio appendData:pcm];
         if (s->_tailAudio.length > kZOverlapCapBytes) {
@@ -358,7 +377,14 @@ static inline double ZChunkStamp(atomic_llong *slot) {
     // ندارد و پنجره‌ای به عرض همان بازپخش (۸ ثانیه یعنی ۳۲ کلمه) می‌توانست ۳۲ کلمه‌ی
     // کاملا تازه را با یک تطبیق الکی ببلعد. آنجا متنِ معلق را salvage جدا داده است.
     _overlapStream = (pre.length && _rotating) ? s : nil;
-    _tx.weldWords = ZStitchWords(kZRotateOverlapSec);
+    // پنجره‌ی جوش از هم‌پوشانیِ **واقعیِ همین استریم** می‌آید، نه از ثابت. هدر از اول
+    // همین را نوشته بود («همیشه از ثانیه‌های واقعیِ هم‌پوشانی، نه از حدس») ولی کد ثابتِ
+    // ۲ ثانیه را می‌گذاشت. سر چرخش، هم‌پوشانی هرچقدر که _replay بود می‌شود و در گفتارِ
+    // سخت به چند ثانیه می‌رسد (لاگ ۱۰:۴۴:۵۰: «rotate overlap 4.60s» یعنی ~۱۸ کلمه).
+    // با پنجره‌ی ۸ کلمه‌ای، جوش کمتر از نصفِ تکرار را برمی‌داشت و بقیه دو بار در متن
+    // می‌نشست. MAX با ثابت، چون تخلیه‌ی سشنِ قبلی هم از همین پنجره می‌خواند و نباید
+    // از پیش‌فرض تنگ‌تر شود.
+    _tx.weldWords = ZStitchWords(MAX(_streamPrerollSec, kZRotateOverlapSec));
     _rotating = NO;
     // استریمی که با بازپخش شروع می‌شود اول باید همان صدای کهنه را بالا بفرستد و
     // بشنود؛ در آن فاصله نتیجه‌ای نمی‌آید و این «گیر کردن» نیست. بدون این مهلت،
@@ -379,7 +405,11 @@ static inline double ZChunkStamp(atomic_llong *slot) {
             _drainGotFinal = YES;
             [_tx drainFinal:f];
         }
-        if (ev.finals.count) [self emit];
+        // و متنِ معلقش هم، که تا امروز دور ریخته می‌شد. این استریم همان صدایی را
+        // می‌جود که سرِ چرخش نصفه ماند، پس هرچه تازه بفهمد دقیقا همان چیزی است که
+        // استریمِ بعدی نشنیده. فقط می‌تواند carry را درازتر کند.
+        if (ev.hasResults && ev.interim.length) [_tx drainInterim:ev.interim];
+        if (ev.finals.count || ev.interim.length) [self emit];
         return;
     }
     if (s != _stream) return;
@@ -393,7 +423,23 @@ static inline double ZChunkStamp(atomic_llong *slot) {
     // استریم روی این سیگنال یعنی حدس زدن.
     if (ev.endpoint >= 2) ZLog(@"engine: endpointer %ld on pair=%@", (long)ev.endpoint, s.pair);
 
-    if (ev.finals.count || ev.interim.length) {
+    // «نتیجه آمد» با «جلو رفت» یکی نیست، و تا امروز یکی گرفته می‌شدند.
+    //
+    // گوگل سرِ یک واژه‌ی بیرون از واژگانش interim را **پس می‌گیرد**. سشن ۱۰:۴۴:۲۶
+    // همین دستگاه، چهار بار پشت هم: «…اون دیزاین» و بعد دوباره «…اما». هر کدام از آن
+    // فریم‌های عقب‌گرد یک «نتیجه» حساب می‌شد و بیمه‌ی صدا (_replay) را پاک می‌کرد،
+    // درست در همان لحظه‌ای که بیشترین نیاز به آن بود: صدای «تینکینگ» که هنوز هیچ‌جا
+    // نوشته نشده بود از بافر بیرون می‌رفت و استریمِ بعدی دیگر آن را نمی‌شنید. نه در
+    // متن بود، نه در صدا. برای همیشه رفت، و این همان «یک تیکه از حرفم می‌پره» است.
+    //
+    // پس معیار پیشرفت است نه فریم، و داورش همان راچتِ آزموده: اگر ادغامِ interim تازه
+    // با بلندترین چیزی که تا حالا گفته بود درازترش کند، جلو رفته. عقب‌گرد جوابِ گوگل
+    // نیست، پس‌گرفتنِ جوابِ قبلی است. (و راچت پنجره‌ی لغزانِ گوگل را هم درست می‌بیند:
+    // انداختنِ پیشوندِ تثبیت‌شده کوتاه‌تر است ولی عقب‌گرد نیست. مقایسه‌ی سرراستِ طول
+    // این دو را یکی می‌دید و بافر را در گفتار عادی بی‌جهت نگه می‌داشت.)
+    NSString *ratcheted = ev.hasResults ? ZInterimRatchet(_salvageBest, ev.interim) : nil;
+    BOOL progressed = ev.finals.count > 0 || ratcheted.length > _salvageBest.length;
+    if (progressed) {
         _gotResultThisCycle = YES;
         _endsSinceResult = 0;
         _lastResultAt = NSDate.date;
@@ -402,6 +448,7 @@ static inline double ZChunkStamp(atomic_llong *slot) {
         // که هزینه‌اش از ریسک دوباره‌درج شدن یک جمله کمتر است.)
         [_feedLock lock];
         _replay.length = 0;
+        _replayOverflowWarned = NO;
         _voiceSinceResult = 0;
         [_feedLock unlock];
     }
@@ -414,7 +461,11 @@ static inline double ZChunkStamp(atomic_llong *slot) {
     // فقط فریم‌های نتیجه‌دار حق دست زدن به متن خاکستری دارند.
     if (ev.hasResults && (ev.finals.count || ![ev.interim isEqualToString:_lastInterim])) {
         _lastInterim = [ev.interim copy];
-        if (_lastInterim.length > _salvageBest.length) _salvageBest = [_lastInterim copy];
+        // دفترِ نجات هم با همان راچت به‌روز می‌شود، نه با مقایسه‌ی طول: پنجره‌ی لغزان
+        // کوتاه‌تر است ولی متنِ تازه دارد، و مقایسه‌ی طول آن را دور می‌ریخت تا سرِ
+        // نجات دوباره پیدایش کند. حالا همان‌جا که رسید ثبت می‌شود.
+        // بعد از متنِ قطعی دفتر صفر شده، پس راچت همان interim تازه را می‌دهد.
+        _salvageBest = ev.finals.count ? [_lastInterim copy] : [ratcheted copy];
         [_tx setInterim:_lastInterim];
         // اینجا یک بار «پل تخلیه» گذاشته شد (نمایش = معلقِ قدیمی + interim تازه) که
         // جمله‌ی خاکستری سر چرخش آب نشود. در پنل بی‌خطر بود، در حالت کرسر فاجعه:

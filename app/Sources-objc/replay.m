@@ -142,6 +142,7 @@ int ZReplayMain(NSArray<NSString *> *args) {
                 [tx beginDrainWithCarry:fromSalvage ?: ZEvStr(e, @"carry")
                                    weld:[e[@"weld"] boolValue]];
             }
+            else if ([k isEqualToString:@"draininterim"]) [tx drainInterim:ZEvStr(e, @"text")];
             else if ([k isEqualToString:@"drainfinal"]) [tx drainFinal:ZEvStr(e, @"text")];
             else if ([k isEqualToString:@"drainend"]) [tx endDrain];
             else if ([k isEqualToString:@"drop"]) [tx dropPending];
