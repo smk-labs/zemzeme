@@ -231,14 +231,14 @@ static NSString *ZClock(double sec) {
 
     _btnAdd = [self button:@"plus" tip:@"افزودن فایل صوتی یا تصویری (می‌توانی فایل را روی پنل هم بکشی)"
                     action:@selector(tapAdd)];
-    _btnStart = [self button:@"play.fill" tip:@"شروع رونویسی صفِ در انتظار" action:@selector(tapStart)];
+    _btnStart = [self button:@"play.fill" tip:@"شروع رونویسی فایل‌های در صف" action:@selector(tapStart)];
     _btnStop = [self button:@"stop.fill" tip:@"توقف؛ متن هرچه تا اینجا شنیده شده می‌ماند"
                     action:@selector(tapStop)];
     _btnRemove = [self button:@"minus" tip:@"حذف ردیف انتخاب‌شده از صف" action:@selector(tapRemove)];
     _btnJoin = [self button:@"text.append" tip:@"چسباندن متن همه‌ی فایل‌ها، به همین ترتیب صف"
                      action:@selector(tapJoin)];
     _btnPolish = [self button:@"wand.and.stars"
-                          tip:@"پاس هوش مصنوعی روی متن: فرمتینگ و اصلاح واژه‌های غلط"
+                          tip:@"تمیز کردن متن با هوش مصنوعی: نقطه‌گذاری و اصلاح واژه‌های غلط"
                        action:@selector(tapPolish)];
     _btnCopy = [self button:@"doc.on.doc" tip:@"کپی متن یکجا" action:@selector(tapCopy)];
     _btnSave = [self button:@"square.and.arrow.down" tip:@"ذخیره‌ی متن یکجا در یک فایل"
@@ -257,16 +257,16 @@ static NSString *ZClock(double sec) {
     // عدد خالی معنایش پیدا نبود؛ خود گزینه می‌گوید چه چیزی را می‌شمارد
     for (NSInteger n = 1; n <= 4; n++) {
         [_jobsPop addItemWithTitle:[ZFaDigits([NSString stringWithFormat:@"%ld", (long)n])
-                                    stringByAppendingString:@" سشن"]];
+                                    stringByAppendingString:@" هم‌زمان"]];
     }
     NSInteger saved = [NSUserDefaults.standardUserDefaults objectForKey:@"batchJobs"]
         ? [NSUserDefaults.standardUserDefaults integerForKey:@"batchJobs"] : 2;
     [_jobsPop selectItemAtIndex:MAX(1, MIN(4, saved)) - 1];
     _jobsPop.target = self;
     _jobsPop.action = @selector(tapJobs);
-    _jobsPop.toolTip = @"چند سشن هم‌زمان. پیش‌فرض ۲ عمدا محافظه‌کارانه است: کلید گوگل با "
-                        "دیکته‌ی زنده مشترک است و اجرای سنگین برای مدتی «لالش» می‌کند، پس "
-                        "دیکته‌ی زنده هم سهمش را می‌بیند. بالا بردنش سرعت می‌دهد و ریسک.";
+    _jobsPop.toolTip = @"چند فایل هم‌زمان رونویسی شوند. پیش‌فرض ۲ عمدا محافظه‌کارانه است: "
+                        "کلید گوگل با دیکته‌ی زنده مشترک است و کار سنگین سهم آن را هم "
+                        "می‌خورد. بالا بردنش سرعت می‌دهد و ریسک.";
     [_back addSubview:_jobsPop];
 
     // زبان پیش‌فرض صف؛ جدا از زبان دیکته‌ی زنده. عوض کردنش همه‌ی ردیف‌های در انتظار
@@ -626,7 +626,7 @@ static NSString *ZClock(double sec) {
     [NSNotificationCenter.defaultCenter postNotificationName:ZBatchActivity object:self
                                                     userInfo:@{@"running": @YES}];
     [self syncButtons];
-    [self flash:[NSString stringWithFormat:@"شروع شد · %@ فایل · %@ سشن هم‌زمان",
+    [self flash:[NSString stringWithFormat:@"شروع شد · %@ فایل · %@ تا هم‌زمان",
                  ZFaDigits(@(urls.count).stringValue),
                  ZFaDigits(@(job.jobs).stringValue)]];
     ZLog(@"batchui: started %lu file(s) jobs=%ld", (unsigned long)urls.count, (long)job.jobs);
@@ -636,7 +636,7 @@ static NSString *ZClock(double sec) {
     if (!_job) return;
     _stopping = YES;
     [_job cancel];
-    _status.stringValue = @"در حال ایستادن… (سشن در جریان تا آخرش صبر می‌کند)";
+    _status.stringValue = @"در حال ایستادن… (فایلی که در جریان است تا آخر می‌رود)";
     [self syncButtons];
 }
 
@@ -705,7 +705,7 @@ static NSString *ZClock(double sec) {
     [NSUserDefaults.standardUserDefaults setInteger:_jobsPop.indexOfSelectedItem + 1
                                              forKey:@"batchJobs"];
     if (_jobsPop.indexOfSelectedItem + 1 > 2) {
-        [self flash:@"بیشتر از ۲ سشن: سریع‌تر، ولی کلید مشترک با دیکته‌ی زنده زودتر لال می‌شود"];
+        [self flash:@"بیشتر از ۲ فایل هم‌زمان: سریع‌تر، ولی سهم کلید زودتر تمام می‌شود و دیکته‌ی زنده هم گیر می‌کند"];
     }
 }
 
@@ -753,7 +753,7 @@ static NSString *ZClock(double sec) {
         return;
     }
     if (!ZSettings.shared.finalPassEnabled) {
-        [self flash:@"پاس هوش مصنوعی خاموش است؛ از منوی زمزمه روشنش کن"];
+        [self flash:@"تمیز کردن متن خاموش است؛ از منوی زمزمه روشنش کن"];
         return;
     }
     if (!ZFinalPass.hasKey) {
@@ -762,7 +762,7 @@ static NSString *ZClock(double sec) {
     }
     _polishing = YES;
     [self syncButtons];
-    _status.stringValue = @"پاس هوش مصنوعی…";
+    _status.stringValue = @"در حال تمیز کردن متن…";
     NSString *lang = ZSettings.shared.batchLang;
     __weak typeof(self) ws = self;
     [ZFinalPass.shared runOnText:raw second:nil lang:lang done:^(NSString *out, NSString *err) {
@@ -774,8 +774,8 @@ static NSString *ZClock(double sec) {
         BOOL changed = out.length > 0;
         if (changed) [s setEditorText:out];
         ZPlay(ZSoundPolish);
-        [s flash:changed ? @"پاس هوش مصنوعی انجام شد"
-                         : (err.length ? err : @"پاس چیزی برنگرداند؛ متن قبلی سر جایش است")];
+        [s flash:changed ? @"متن تمیز شد"
+                         : (err.length ? err : @"چیزی برنگشت؛ متن قبلی سر جایش است")];
         if (!changed) ZLog(@"batchui: پاس نهایی چیزی نداد: %@", err ?: @"?");
         [s syncButtons];
     }];
@@ -1023,7 +1023,7 @@ static NSDictionary<NSString *, NSString *> *ZBatchHistoryIndex(void) {
         [menu addItem:mi];
     }
     if (!menu.numberOfItems) {
-        NSMenuItem *mi = [[NSMenuItem alloc] initWithTitle:@"هنوز اجرایی تمام نشده"
+        NSMenuItem *mi = [[NSMenuItem alloc] initWithTitle:@"هنوز رونویسی‌ای تمام نشده"
                                                     action:nil keyEquivalent:@""];
         mi.enabled = NO;
         [menu addItem:mi];
@@ -1038,7 +1038,7 @@ static NSDictionary<NSString *, NSString *> *ZBatchHistoryIndex(void) {
     NSURL *u = sender.representedObject;
     NSString *t = [NSString stringWithContentsOfURL:u encoding:NSUTF8StringEncoding error:nil];
     if (!t.length) {
-        [self flash:@"این فایل تاریخچه خالی یا ناخوانا بود"];
+        [self flash:@"این فایلِ تاریخچه خالی یا ناخوانا بود"];
         return;
     }
     [self setEditorText:t];
@@ -1211,7 +1211,7 @@ static NSDictionary<NSString *, NSString *> *ZBatchHistoryIndex(void) {
                        @[@"voice.ogg", @363.0, @(ZRowRunning), @""],
                        @[@"مصاحبه-بخش-دوم.mp3", @1840.0, @(ZRowQueued), @""],
                        @[@"clip.mkv", @0.0, @(ZRowError),
-                         @"قالب .mkv را macOS باز نمی‌کند؛ اول به m4a یا wav تبدیلش کن"],
+                         @"مک قالب .mkv را باز نمی‌کند. اول به m4a یا wav تبدیلش کن."],
                        @[@"یادداشت-صوتی.amr", @95.0, @(ZRowStopped), @""]];
     for (NSArray *sp in specs) {
         ZBatchRow *r = [ZBatchRow new];
@@ -1230,7 +1230,7 @@ static NSDictionary<NSString *, NSString *> *ZBatchHistoryIndex(void) {
     [self setEditorText:
         @"سلام، این متن نمونه است تا ببینیم ادیتور متن یکجا چطور دیده می‌شود. "
         @"متن هر فایل به ترتیب صف اینجا می‌نشیند و همین‌جا قابل ویرایش است، "
-        @"بعد پاس نهایی را می‌زنی و آخرش کپی یا ذخیره می‌کنی.\n\n"
+        @"بعد متن را تمیز می‌کنی و آخرش کپی یا ذخیره می‌کنی.\n\n"
         @"پاره‌ی دوم از فایل بعدی، با یک خط خالی فاصله، که معلوم باشد کجا عوض شد."];
     _status.stringValue = @"در حال کار · ۲:۳۰ از ۶:۰۳ · voice.ogg";
     [self syncButtons];

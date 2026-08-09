@@ -77,8 +77,10 @@ static NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کر
     _engine.recorder = _recorder;
     _engine.delegate = self;
 
+    [self wirePanel];
+
     if (!ZInjector.accessibilityOK) {
-        _warning = @"دسترسی اکسسبیلیتی نیست؛ متن درج نمی‌شود";
+        _warning = @"مک هنوز اجازه نداده؛ متن جای کرسر نوشته نمی‌شود";
         [ZInjector promptAccessibility];
     }
 
@@ -114,6 +116,39 @@ static NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کر
     _clock = nil;
 }
 
+// دکمه‌های نوار به همین سشن وصل می‌شوند، نه به دلیگیتِ اپ: کارشان مالِ سشن است و
+// بی‌سشن معنی ندارند. سه تای دیگر (فایل، راهنما، تمیز کردن متن) در دلیگیت وصل‌اند
+// چون بی‌سشن هم کار می‌کنند.
+//
+// این یک بار جا افتاد و گران بود: موقع جدا کردن پنل از سشن، همین چند خط نیامد و
+// **هشت دکمه‌ی نوار بی‌صدا مرده بودند**. میان‌برهای کیبورد کار می‌کردند، پس خرابی
+// خوب قایم شده بود: کاربر فقط می‌دید که کلیک روی دکمه هیچ کاری نمی‌کند.
+//
+// ضعیف، چون پنل از سشن عمر بیشتری دارد و بلاکِ قوی یعنی سشن هیچ‌وقت آزاد نشود.
+- (void)wirePanel {
+    __weak typeof(self) ws = self;
+    _panel.onClose      = ^{ [ws finish]; };
+    _panel.onPauseToggle = ^{ [ws togglePause]; };
+    _panel.onCopyNow    = ^{ [ws copyNow]; };
+    _panel.onInsertAll  = ^{ [ws insertHere]; };
+    _panel.onTrash      = ^{ [ws dropPending]; };
+    _panel.onLangSwitch = ^{ [ws switchLang]; };
+    _panel.onModeToggle = ^{ [ws toggleMode]; };
+    _panel.onSensToggle = ^{ [ws toggleSensitivity]; };
+}
+
+// و سرِ پایان باز می‌شوند: پنل زنده می‌ماند و نباید دکمه‌هایش به سشنِ مرده اشاره کنند.
+- (void)unwirePanel {
+    _panel.onClose = nil;
+    _panel.onPauseToggle = nil;
+    _panel.onCopyNow = nil;
+    _panel.onInsertAll = nil;
+    _panel.onTrash = nil;
+    _panel.onLangSwitch = nil;
+    _panel.onModeToggle = nil;
+    _panel.onSensToggle = nil;
+}
+
 // ---------- موتور ----------
 
 - (void)engineState:(ZEngineState)state message:(NSString *)msg {
@@ -127,10 +162,10 @@ static NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کر
             // و همین‌جا، هر بار: تا وقتی می‌شنویم، جمله‌ی پایان جلوی چشم است.
             _statusText = [@"در حال گوش کردن ﹒ " stringByAppendingString:ZStopHint];
             break;
-        case ZEnginePaused: _statusText = @"مکث؛ تک‌تپ Command راست برای ادامه"; break;
+        case ZEnginePaused: _statusText = @"مکث. برای ادامه یک بار Command راست را بزن"; break;
         case ZEngineGaveUp:
             _errorState = YES;
-            _statusText = msg.length ? msg : @"خطای موتور";
+            _statusText = msg.length ? msg : @"تشخیص گفتار قطع شد";
             break;
     }
     [self render];
@@ -162,7 +197,7 @@ static NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کر
     if (_engine.cappedOut) {
         // سقف پنج دقیقه: صریح بگو چه شد و کجا باید برود. سکوت در این لحظه یعنی
         // کاربر فکر کند اپ خراب شده، در حالی که متنش همین‌جاست.
-        _warning = @"پنج دقیقه شد و سشن تمام شد؛ صدای بلندتر را با Command راست + F رونویسی کن";
+        _warning = @"پنج دقیقه شد و دیکته تمام شد؛ برای صدای بلندتر از رونویسی فایل استفاده کن (Command راست + F)";
     }
     // پاس هوش مصنوعی، فقط روی متن و فقط اگر خودت خواسته باشی. هیچ‌وقت بلوکه‌کننده
     // نیست: نتیجه‌اش که نیامد، همین متن خام تحویل می‌شود.
@@ -187,7 +222,7 @@ static NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کر
                     s->_text = before.length ? [NSString stringWithFormat:@"%@ %@", before, fresh] : fresh;
                 }
                 if (err.length) {
-                    s->_warning = [NSString stringWithFormat:@"تمیز کردن نشد (%@)؛ متن خام", err];
+                    s->_warning = [NSString stringWithFormat:@"تمیز نشد (%@)؛ همان متن خام ماند", err];
                     ZLog(@"session: پاس رد شد: %@", err);
                 }
             }
@@ -210,7 +245,7 @@ static NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کر
         return;
     }
     if (ZSettings.shared.finalPassEnabled) {
-        _warning = @"کلید هوش مصنوعی نیست؛ متن خام";
+        _warning = @"کلید Gemini نیست؛ متن تمیز نشد";
     }
     [self deliver];
 }
@@ -232,7 +267,7 @@ static NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کر
         // هیچ حرفی شنیده نشد. این دلیل بستنِ پنل نیست: کاربر شاید تازه دارد فکر
         // می‌کند. قبلا همین‌جا سشن بسته می‌شد و کسی که یک لحظه ساکت مانده بود،
         // پنل را از دست می‌داد.
-        _statusText = @"چیزی شنیده نشد؛ تک‌تپ بزن و دوباره حرف بزن";
+        _statusText = @"چیزی نشنیدم. یک بار Command راست را بزن و دوباره حرف بزن";
         ZPlay(ZSoundTrash);
         if (_closing) [self endNow];
         else { _paused = YES; [self render]; }
@@ -269,8 +304,8 @@ static NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کر
     }
     _paused = YES;
     _statusText = _mode == ZModeCursor
-        ? @"درج شد. تک‌تپ یعنی ادامه بده، Esc یعنی تمام"
-        : @"متن اینجاست و قابل ویرایش. تک‌تپ یعنی ادامه بده، Esc یعنی درج و تمام";
+        ? @"درج شد. برای ادامه یک بار بزن، برای تمام کردن Esc"
+        : @"متن اینجاست و می‌توانی ویرایشش کنی. برای ادامه یک بار بزن، Esc برای درج و پایان";
     [self render];
 }
 
@@ -424,14 +459,14 @@ static NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کر
     ZPlay(ZSoundLang);
     // زبان سر سشن بعدی اثر می‌کند و نه همین یکی: تکه‌های در پرواز زبانشان تعیین شده
     // و عوض کردنش وسط راه یعنی نصف متن با یک موتور و نصفش با موتور دیگر.
-    [_panel flash:[next hasPrefix:@"fa"] ? @"زبان سشن بعد: فارسی" : @"زبان سشن بعد: English"];
+    [_panel flash:[next hasPrefix:@"fa"] ? @"زبان دیکته‌ی بعدی: فارسی" : @"زبان دیکته‌ی بعدی: English"];
     [self render];
 }
 
 - (void)toggleSensitivity {
     BOOL on = !ZSettings.shared.highSensitivity;
     ZSettings.shared.highSensitivity = on;
-    [_panel flash:on ? @"حساسیت بالا روشن (بتا)" : @"حساسیت بالا خاموش"];
+    [_panel flash:on ? @"حساسیت بالای میکروفن روشن شد" : @"حساسیت بالای میکروفن خاموش شد"];
     [self render];
 }
 
@@ -478,6 +513,7 @@ static NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کر
     if (_finished) return;
     _finished = YES;
     [self stopClock];
+    [self unwirePanel];
     [_dot hide];
     [_panel hide];
     [_panel clearEditor];

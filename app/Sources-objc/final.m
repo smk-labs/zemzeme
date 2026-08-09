@@ -229,9 +229,7 @@ static NSString *ZKeyFromSecurityTool(void) {
     // مسیر اصلی حالا داخل خود اپ است: منوی زمزمه، «کلید Gemini…» (کلیدسنج پایین همین
     // فایل). ترمینال فقط برای کسی می‌ماند که با دست می‌خواهد Keychain را دستکاری کند؛
     // `-T` آنجا هنوز لازم است چون سازنده‌ی آیتم آنجا `security` است نه خودِ اپ.
-    return @"کلید جمینای پیدا نشد. از منوی زمزمه «کلید Gemini…» را بزن، یا در ترمینال: "
-            "security add-generic-password -a \"$USER\" -s zemzeme-gemini "
-            "-T /Applications/Zemzeme.app -T /usr/bin/security -w";
+    return @"کلید Gemini نیست. از منوی زمزمه «کلید Gemini…» را بزن.";
 }
 
 // ---------- نوشتن (از منو، «کلید Gemini…») ----------
@@ -403,14 +401,14 @@ static NSString *ZHumanError(NSString *label, NSInteger st, NSData *raw) {
     NSString *body = [[NSString alloc] initWithData:raw ?: [NSData data] encoding:NSUTF8StringEncoding] ?: @"";
     if (st == 429) {
         return [body rangeOfString:@"free_tier"].location != NSNotFound
-            ? @"سهم مجانی کلید جمینای تمام شد (۲۰ درخواست در روز، هر پاس ۲ تا). "
-               "فردا، یا کلید با بیلینگ."
-            : @"سرور جمینای فعلا جواب نمی‌دهد (سقف درخواست). چند دقیقه بعد دوباره بزن.";
+            ? @"سهم رایگان کلید Gemini برای امروز تمام شد (۲۰ درخواست در روز). "
+               "فردا دوباره امتحان کن."
+            : @"سرور Gemini فعلا جواب نمی‌دهد. چند دقیقه بعد دوباره بزن.";
     }
-    if (st == 403 || st == 401) return @"کلید جمینای پذیرفته نشد؛ یک کلید تازه در Keychain بگذار.";
-    if (st == 400) return [NSString stringWithFormat:@"درخواست %@ را سرور نپسندید (۴۰۰)", label];
-    if (st < 0) return @"شبکه در دسترس نیست؛ پاس نهایی اجرا نشد";
-    return [NSString stringWithFormat:@"%@ شکست خورد (HTTP %ld)", label, (long)st];
+    if (st == 403 || st == 401) return @"کلید Gemini پذیرفته نشد؛ از منوی زمزمه یک کلید تازه بگذار.";
+    if (st == 400) return @"سرور Gemini این درخواست را نپذیرفت (۴۰۰)";
+    if (st < 0) return @"اینترنت نیست؛ متن تمیز نشد";
+    return [NSString stringWithFormat:@"تمیز کردن متن نشد (HTTP %ld)", (long)st];
 }
 
 // ---------- بیرون کشیدن متن از پاسخ ----------
@@ -520,7 +518,7 @@ static NSString *ZDropPreamble(NSString *t) {
     }
     ZLog(@"final: %@ در %.1f ثانیه، %lu نویسه", label, dt, (unsigned long)text.length);
     if (!text.length) {
-        if (err) *err = [label stringByAppendingString:@" متنی برنگرداند"];
+        if (err) *err = @"جوابی برنگشت";
         return nil;
     }
     return ZDropPreamble(text);
@@ -600,7 +598,7 @@ static NSUInteger ZWordCount(NSString *s) {
                 // پرامپت در بسته نبود. تا امروز همین نیل تا داخل بدنه‌ی درخواست
                 // می‌رفت و اپ با NSInvalidArgumentException می‌مرد، یعنی یک فایلِ
                 // جامانده در بسته کل اپ را می‌کشت.
-                err = @"پرامپت در بسته نیست";
+                err = @"یک فایل داخلی زمزمه گم شده؛ نسخه‌ی تازه را نصب کن";
             } else {
                 NSMutableDictionary *usage = [NSMutableDictionary dictionary];
                 NSString *aerr = nil;
@@ -616,7 +614,7 @@ static NSUInteger ZWordCount(NSString *s) {
                     // به‌وضوح کوتاه‌تر رد می‌شود.
                     ZLog(@"final: %@ متن را کوتاه کرد (ورودی %lu کلمه، خروجی %lu کلمه)",
                          promptName, (unsigned long)inWords, (unsigned long)outWords);
-                    err = @"متن کوتاه شد، پس رد شد";
+                    err = @"جواب ناقص بود، پس رد شد";
                 } else {
                     out = result;
                     ZLog(@"final: %@ در %.1f ثانیه، %ld+%ld توکن", promptName,

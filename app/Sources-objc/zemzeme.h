@@ -550,8 +550,8 @@ extern NSString *const ZStopHint;   // «حرفت که تمام شد، یک با
 @property (nonatomic, strong, readonly) ZEngine *engine;
 - (instancetype)initWithEngine:(ZEngine *)engine panel:(ZPanel *)panel;
 - (void)start;
-- (void)pauseToggle;      // تک‌تپ Command راست: پایان
-- (void)togglePause;      // دکمه‌ی مکث و Command راست + Space
+- (void)pauseToggle;      // تک‌تپ Command راست و دکمه‌ی مکثِ نوار: پایان
+- (void)togglePause;      // فقط Command راست + Space: مکثِ ساده
 - (void)copyNow;
 - (void)insertHere;       // درج در همین اپ جلویی
 - (void)dropPending;      // دور ریختن: در بازبینی متن، وگرنه صدای تا اینجا

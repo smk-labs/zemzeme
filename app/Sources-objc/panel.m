@@ -192,10 +192,10 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
 
         // همه‌ی دکمه‌ها آیکون‌اند و یک اندازه، و هر تولتیپ حرف میان‌بر خودش را می‌گوید.
         // میان‌بر هر کدام «Command راست + همان حرف» است، و تنها همان.
-        _btnClose = [self makeButton:@"xmark" key:@"esc" tip:@"پایان و درج همه (Esc)"
+        _btnClose = [self makeButton:@"xmark" key:@"esc" tip:@"پایان دیکته و درج متن (Esc)"
                               action:@selector(closeTap)];
         _btnPause = [self makeButton:@"pause.fill" key:@"⌘"
-                                 tip:@"مکث و ادامه (Command راست + Space)"
+                                 tip:@"بایست و متن تا اینجا را تحویل بده"
                               action:@selector(pauseTap)];
         _btnCopy = [self makeButton:@"doc.on.doc" key:@"C" tip:@"کپی متن تا اینجا"
                              action:@selector(copyTap)];
@@ -203,7 +203,7 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
                               action:@selector(trashTap)];
         _btnLang = [self makeButton:@"globe" key:@"L" tip:@"" action:@selector(langTap)];
         _btnMode = [self makeButton:@"square.and.pencil" key:@"E" tip:@"" action:@selector(modeTap)];
-        _btnInsert = [self makeButton:@"text.insert" key:@"I" tip:@"درج سر کرسر همین اپ"
+        _btnInsert = [self makeButton:@"text.insert" key:@"I" tip:@"درج متن سر کرسر، در برنامه‌ای که پشت پنل است"
                                action:@selector(insertTap)];
         // رونویسی فایل: در هر دو حالتِ پنل‌دار پیداست، چون به سشن ربطی ندارد. راه سوم
         // دسترسی است، کنار آیتم منوبار و میان‌بر، و همان یک صف را باز می‌کند.
@@ -221,7 +221,7 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
         _btnAI = [self makeButton:@"sparkles" key:@"A"
                               tip:@"" action:@selector(aiTap)];
         _btnFile = [self makeButton:@"arrow.up.doc" key:@"F"
-                                tip:@"رونویسی فایل صوتی: صف، پیشرفت و متن یکجا (Command راست + F)"
+                                tip:@"رونویسی فایل صوتی: چند فایل پشت هم، با متن قابل ویرایش (Command راست + F)"
                              action:@selector(fileTap)];
         // در نسخه دو یک تک‌تپ Command راست یعنی پایان سشن، نه مکث؛ کاربر باید همین را
         // از جایی بداند وگرنه فکر می‌کند اپ گیر کرده. کارت راهنما تنها جایی است که
@@ -569,20 +569,19 @@ static NSString *ZClock(NSTimeInterval sec) {
     BOOL key = ZFinalPass.hasKey;
     _btnAI.contentTintColor = ai ? (key ? NSColor.systemBlueColor : NSColor.systemOrangeColor) : nil;
     _btnAI.toolTip = !key
-        ? @"پاس هوش مصنوعی: کلید جمینای نیست. از منوی زمزمه «کلید Gemini…» را بزن (A)"
-        : ai ? @"پاس هوش مصنوعی روشن است: سر پایان، متن برای فرمتینگ و اصلاح واژه‌های "
-                "غلط به جمینای می‌رود. صدا هیچ‌وقت فرستاده نمی‌شود. برای خاموش کردن بزن (A)"
-             : @"پاس هوش مصنوعی خاموش است: متن خامِ تشخیص گفتار تحویل می‌شود. برای "
+        ? @"تمیز کردن متن: کلید Gemini نیست. از منوی زمزمه «کلید Gemini…» را بزن (A)"
+        : ai ? @"تمیز کردن متن روشن است: سر پایان، متن برای نقطه‌گذاری و اصلاح واژه‌های "
+                "غلط به Gemini می‌رود. صدا هیچ‌وقت فرستاده نمی‌شود. برای خاموش کردن بزن (A)"
+             : @"تمیز کردن متن خاموش است: متن همان‌طور که شنیده شده تحویل می‌شود. برای "
                 "روشن کردن بزن (A)";
 
     // **هیچ دکمه‌ای غیب نمی‌شود.** قبلا سرِ مکث نصفشان می‌رفتند، با این استدلال که
     // «دکمه‌ای که کار نمی‌کند دروغ است». ولی در نسخه دو مکث یعنی سشن هنوز زنده است
     // و همه‌ی آن دکمه‌ها واقعا کار می‌کنند، پس آن استدلال اینجا اصلا صدق نمی‌کرد و
     // نتیجه‌اش نواری بود که زیر دست کاربر نصف می‌شد. نوارِ ثابت، حافظه‌ی عضلانی.
-    _btnClose.toolTip = m.working ? @"لغو؛ صدا سر جایش می‌ماند (Esc)"
-                      : m.review ? @"بستن (Esc)" : @"پایان و درج همه (Esc)";
-    _btnTrash.toolTip = m.working ? @"لغو و پاک کردن صدا و متن (D)"
-                      : @"دور ریختن هرچه هنوز درج نشده، و صدای ضبط‌شده (D)";
+    _btnClose.toolTip = m.working ? @"متن دارد تمیز می‌شود؛ چند لحظه صبر کن"
+                      : m.review ? @"بستن (Esc)" : @"پایان دیکته و درج متن (Esc)";
+    _btnTrash.toolTip = @"دور ریختن هرچه هنوز درج نشده، و صدای ضبط‌شده (D)";
     _btnInsert.hidden = NO;
 
     // چیپ: فقط ساعتِ ضبط، و در هر سشنِ زنده‌ای نشان داده می‌شود، نه فقط یک حالت خاص.
@@ -639,13 +638,13 @@ static NSString *ZClock(NSTimeInterval sec) {
     // دکمه مکث سه چهره دارد: مکث، ادامه، تلاش دوباره بعد از خطا
     if (m.error) {
         [self setButton:_btnPause symbol:@"arrow.clockwise"];
-        _btnPause.toolTip = @"تلاش دوباره (تک‌تپ Command راست)";
+        _btnPause.toolTip = @"دوباره تلاش کن (یک بار Command راست را بزن)";
     } else if (m.paused) {
         [self setButton:_btnPause symbol:@"play.fill"];
-        _btnPause.toolTip = @"ادامه شنیدن (تک‌تپ Command راست)";
+        _btnPause.toolTip = @"ادامه بده (یک بار Command راست را بزن)";
     } else {
         [self setButton:_btnPause symbol:@"pause.fill"];
-        _btnPause.toolTip = @"مکث شنیدن (تک‌تپ Command راست)";
+        _btnPause.toolTip = @"بایست و متن تا اینجا را تحویل بده (یک بار Command راست را بزن)";
     }
 
     _dot.color = ZStatusColor(m);
@@ -701,22 +700,22 @@ static NSString *ZClock(NSTimeInterval sec) {
 // اسکرین‌شات برای بازبینی طراحی (بدون نیاز به اجازه ضبط صفحه)
 - (void)makeShots:(NSString *)dir {
     ZPanelModel *listening = [ZPanelModel new];
-    listening.status = @"دارم گوش می‌کنم";
+    listening.status = [@"در حال گوش کردن ﹒ " stringByAppendingString:ZStopHint];
     listening.listening = YES;
 
     ZPanelModel *paused = [ZPanelModel new];
-    paused.status = @"مکث؛ تک‌تپ Command راست برای ادامه";
+    paused.status = @"مکث. برای ادامه یک بار Command راست را بزن";
     paused.paused = YES;
 
     ZPanelModel *error = [ZPanelModel new];
-    error.status = @"شبکه ناپایداره؛ دکمه تلاش دوباره یا تک‌تپ Command راست";
+    error.status = @"اینترنت قطع و وصل می‌شود؛ برای تلاش دوباره یک بار Command راست را بزن";
     error.error = YES;
 
     // بازبینی: سشن تمام شده و متن نهایی در ادیتور نشسته
     ZPanelModel *review = [ZPanelModel new];
     review.mode = ZModeCollect;
     review.review = YES;
-    review.status = @"متن نهایی نشست و در کلیپ‌بورد هم هست";
+    review.status = @"متن آماده است و در کلیپ‌بورد هم هست";
 
     NSArray *states = @[@[@"listening", listening], @[@"paused", paused],
                         @[@"error", error], @[@"review", review]];
@@ -725,8 +724,8 @@ static NSString *ZClock(NSTimeInterval sec) {
         ZPanelModel *m = pair[1];
         [self clearEditor];
         if (m.review) {
-            [self setEditorText:@"متن قطعی‌شده اینجا جمع می‌شود و با کیبورد خودت قابل ویرایش است. "
-                                @"تهش با دکمه درج، یکجا سر کرسر می‌نشیند."];
+            [self setEditorText:@"متن آماده اینجا جمع می‌شود و با کیبورد خودت قابل ویرایش است. "
+                                @"تهش با دکمه‌ی درج، یکجا سر کرسر می‌نشیند."];
         }
         [self render:m];
         [_effect layoutSubtreeIfNeeded];

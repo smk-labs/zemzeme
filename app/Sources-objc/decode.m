@@ -34,7 +34,7 @@ static NSArray<NSString *> *ZUnsupportedExts(void) {
     NSString *ext = url.path.pathExtension.lowercaseString;
     if (![ZUnsupportedExts() containsObject:ext]) return nil;
     return [NSString stringWithFormat:
-            @"قالب .%@ را macOS باز نمی‌کند (دیمکسری برایش ندارد). "
+            @"مک قالب .%@ را باز نمی‌کند. "
             @"اول به m4a یا wav تبدیلش کن.", ext];
 }
 
@@ -93,7 +93,7 @@ static NSArray<NSString *> *ZUnsupportedExts(void) {
     _out.alwaysCopiesSampleData = NO;
     if (![_reader canAddOutput:_out]) {
         if (err) *err = [NSError errorWithDomain:@"zemzeme.decode" code:15 userInfo:@{
-            NSLocalizedDescriptionKey: @"کدک این فایل به پی‌سی‌ام تبدیل نمی‌شود"}];
+            NSLocalizedDescriptionKey: @"صدای این فایل خوانده نمی‌شود؛ اول به m4a یا wav تبدیلش کن"}];
         return nil;
     }
     [_reader addOutput:_out];
@@ -112,7 +112,7 @@ static NSArray<NSString *> *ZUnsupportedExts(void) {
     if (st != noErr || !_ext) {
         if (err) *err = [NSError errorWithDomain:@"zemzeme.decode" code:20 userInfo:@{
             NSLocalizedDescriptionKey: [NSString stringWithFormat:
-                @"این فایل باز نشد (کد %d). قالبش را macOS نمی‌شناسد یا فایل خراب است.",
+                @"این فایل باز نشد (کد %d). مک قالبش را نمی‌شناسد یا فایل خراب است.",
                 (int)st]}];
         return nil;
     }
@@ -143,7 +143,7 @@ static NSArray<NSString *> *ZUnsupportedExts(void) {
     if (ExtAudioFileSetProperty(_ext, kExtAudioFileProperty_ClientDataFormat,
                                 sizeof(want), &want) != noErr) {
         if (err) *err = [NSError errorWithDomain:@"zemzeme.decode" code:22 userInfo:@{
-            NSLocalizedDescriptionKey: @"کدک این فایل به پی‌سی‌ام تبدیل نمی‌شود"}];
+            NSLocalizedDescriptionKey: @"صدای این فایل خوانده نمی‌شود؛ اول به m4a یا wav تبدیلش کن"}];
         return nil;
     }
     if (!(_duration > 0)) {
@@ -166,7 +166,7 @@ static NSArray<NSString *> *ZUnsupportedExts(void) {
     if (st != noErr) {
         _done = YES;
         if (err) *err = [NSError errorWithDomain:@"zemzeme.decode" code:24 userInfo:@{
-            NSLocalizedDescriptionKey: [NSString stringWithFormat:@"دیکد وسط فایل شکست (کد %d)",
+            NSLocalizedDescriptionKey: [NSString stringWithFormat:@"خواندن فایل وسط کار قطع شد (کد %d)",
                                         (int)st]}];
         return nil;
     }
@@ -192,7 +192,7 @@ static NSArray<NSString *> *ZUnsupportedExts(void) {
         _done = YES;
         if (_reader.status == AVAssetReaderStatusFailed && err) {
             *err = _reader.error ?: [NSError errorWithDomain:@"zemzeme.decode" code:17 userInfo:@{
-                NSLocalizedDescriptionKey: @"دیکد وسط فایل شکست"}];
+                NSLocalizedDescriptionKey: @"خواندن فایل وسط کار قطع شد"}];
         }
         return nil;
     }
@@ -204,7 +204,7 @@ static NSArray<NSString *> *ZUnsupportedExts(void) {
     if (st != kCMBlockBufferNoErr) {
         _done = YES;
         if (err) *err = [NSError errorWithDomain:@"zemzeme.decode" code:18 userInfo:@{
-            NSLocalizedDescriptionKey: @"کپی نمونه‌های صدا شکست"}];
+            NSLocalizedDescriptionKey: @"خواندن صدای فایل نشد"}];
         return nil;
     }
     return d;

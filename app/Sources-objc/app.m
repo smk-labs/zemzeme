@@ -203,6 +203,19 @@ int ZSelfTest(NSString *file, NSString *lang) {
     // کارِ سشن، و کاربر باید بتواند قبل از شروع حرف زدن تصمیمش را بگیرد.
     _panel.onAIToggle = ^{ [ws toggleAIPass]; };
     _hotkeys.onAIPass = ^{ [ws toggleAIPass]; };
+    // بقیه‌ی دکمه‌های نوار، همان کارِ میان‌بر خودشان. تا امروز هیچ‌کدام وصل نبود و
+    // کلیک روی نوار هیچ کاری نمی‌کرد؛ فقط Command راست + حرف کار می‌کرد. نوار و
+    // میان‌بر باید یک چیز باشند، پس هر دو از همین `sessionDo:` رد می‌شوند و نقشه‌شان
+    // همان نقشه‌ی actionForCode در inject.m است. اینجا ست می‌شود و نه در startSession،
+    // چون پنل یکی است و تا عمر اپ زنده می‌ماند؛ بی‌سشن هم `sessionDo:` بی‌صدا رد می‌شود.
+    _panel.onClose = ^{ [ws sessionDo:@selector(finish)]; };        // X: همان کارِ Esc
+    _panel.onPauseToggle = ^{ [ws sessionDo:@selector(pauseToggle)]; };  // همان تک‌تپ Command راست
+    _panel.onCopyNow = ^{ [ws sessionDo:@selector(copyNow)]; };
+    _panel.onInsertAll = ^{ [ws sessionDo:@selector(insertHere)]; };
+    _panel.onTrash = ^{ [ws sessionDo:@selector(dropPending)]; };
+    _panel.onLangSwitch = ^{ [ws sessionDo:@selector(switchLang)]; };
+    _panel.onModeToggle = ^{ [ws sessionDo:@selector(toggleMode)]; };
+    _panel.onSensToggle = ^{ [ws sessionDo:@selector(toggleSensitivity)]; };
 
 
     // رنگ آیتم منوبار در طول کار دسته‌ای: آبی، فقط تا وقتی کار در جریان است، و فقط
@@ -270,11 +283,12 @@ int ZSelfTest(NSString *file, NSString *lang) {
     NSAlert *a = [NSAlert new];
     a.messageText = @"به زمزمه خوش آمدی";
     a.informativeText =
-        @"دیکته: دابل‌تپ Command راست و حرف بزن. **در حین حرف زدن هیچ متنی نشان داده "
-         "نمی‌شود**؛ حرفت که تمام شد یک بار Command راست را بزن و متن یک‌جا می‌آید.\n\n"
-         "الان یک پنجره‌ی اجازه‌ی Accessibility از مک می‌بینی؛ اجازه بده تا زمزمه بتواند "
-         "متن را جای کرسر بنویسد. میکروفن هم سرِ اولین دیکته پرسیده می‌شود.\n\n"
-         "«پاس هوش مصنوعی» اختیاری است و یک کلید رایگان از Google AI Studio می‌خواهد؛ "
+        @"دیکته: Command راست را دو بار پشت هم بزن و حرف بزن. **تا وقتی حرف می‌زنی هیچ "
+         "متنی نشان داده نمی‌شود**؛ حرفت که تمام شد یک بار Command راست را بزن و متن "
+         "یک‌جا می‌آید.\n\n"
+         "الان مک یک پنجره‌ی اجازه باز می‌کند (اسمش Accessibility است)؛ اجازه بده تا "
+         "زمزمه بتواند متن را جای کرسر بنویسد. میکروفن هم سرِ اولین دیکته پرسیده می‌شود.\n\n"
+         "«تمیز کردن متن» اختیاری است و یک کلید رایگان از Google AI Studio می‌خواهد؛ "
          "هر وقت خواستی، از منوی زمزمه «کلید Gemini…» را بزن.\n\n"
          "راهنمای کامل میان‌برها: Command راست + H.";
     // تیک‌خورده می‌آید و عمدا: زمزمه‌ی بسته هیچ کلیدی را نمی‌شنود، پس اپی که بعد از
@@ -439,19 +453,19 @@ int ZSelfTest(NSString *file, NSString *lang) {
     BOOL paused = active && _session.engine.paused;
 
     // بالا: ۴ اقدام اصلی (فقط وقتی سشن فعال است بیشتر از شروع معنا دارد)
-    [self icon:[self item:menu title:active ? @"پایان و درج (Esc)" : @"شروع دیکته"
+    [self icon:[self item:menu title:active ? @"پایان دیکته و درج متن (Esc)" : @"شروع دیکته"
                     action:@selector(menuToggle) key:@""]
         symbol:active ? @"stop.circle" : @"mic.fill"];
     if (active) {
-        NSMenuItem *pause = [self item:menu title:@"مکث/ادامه" action:@selector(menuPauseToggle) key:@" "];
+        NSMenuItem *pause = [self item:menu title:@"مکث و ادامه" action:@selector(menuPauseToggle) key:@" "];
         [self icon:pause symbol:paused ? @"play.circle" : @"pause.circle"];
-        pause.toolTip = paused ? @"ادامه شنیدن" : @"مکث شنیدن";
+        pause.toolTip = paused ? @"دوباره گوش کن" : @"بایست و متن تا اینجا را تحویل بده";
         NSMenuItem *copy = [self item:menu title:@"کپی متن" action:@selector(menuCopyNow) key:@"c"];
         [self icon:copy symbol:@"doc.on.doc"];
-        copy.toolTip = @"کپی کل متن دیکته‌شده تا الان";
+        copy.toolTip = @"هرچه تا الان گفته‌ای، در کلیپ‌بورد";
         NSMenuItem *ins = [self item:menu title:@"درج همینجا" action:@selector(menuInsertHere) key:@"i"];
         [self icon:ins symbol:@"text.insert"];
-        ins.toolTip = @"درج در اپی که پشت پنل باز است";
+        ins.toolTip = @"متن را در همان برنامه‌ای بنویس که پشت پنل باز است";
     }
     // رونویسی فایل: کنار «شروع دیکته» می‌نشیند چون هم‌رده‌ی آن است، دو راه رسیدن به متن.
     // همیشه فعال است: به سشن ربطی ندارد و وسط دیکته هم می‌شود بازش کرد.
@@ -468,8 +482,8 @@ int ZSelfTest(NSString *file, NSString *lang) {
     NSMenuItem *batch = [self icon:[self item:menu title:@"رونویسی فایل…"
                                        action:@selector(menuBatch) key:@""]
                              symbol:@"arrow.up.doc"];
-    batch.toolTip = @"فایل صوتی یا تصویری را به متن تبدیل کن: صف، پیشرفت زنده، "
-                     "متن یکجای قابل ویرایش (Command راست + F)";
+    batch.toolTip = @"فایل صوتی یا تصویری را به متن تبدیل کن. چند فایل پشت هم، با پیشرفت "
+                     "زنده و یک متن قابل ویرایش (Command راست + F)";
     [menu addItem:NSMenuItem.separatorItem];
 
     // رادیوی حالت‌ها از اینجا برداشته شد و با آمدن حالت سوم (کرسر) هم برنمی‌گردد:
@@ -485,44 +499,44 @@ int ZSelfTest(NSString *file, NSString *lang) {
     // کلید Gemini: یک شیت کوچک به‌جای ترمینال. بالای هر دو ردیفی می‌نشیند که به آن
     // نیاز دارند، چون کلید مشترک است (همان `ZFinalPass`، همان `zemzeme-gemini`).
     NSMenuItem *key = [self icon:[self item:menu
-                                       title:hasKey ? @"کلید Gemini (تنظیم‌شده)"
-                                           : keyLocked ? @"کلید Gemini (کی‌چین اجازه نمی‌دهد)"
+                                       title:hasKey ? @"کلید Gemini (ذخیره شده)"
+                                           : keyLocked ? @"کلید Gemini (مک اجازه‌ی خواندنش را نمی‌دهد)"
                                                        : @"کلید Gemini…"
                                      action:@selector(menuSetKey) key:@""]
                            symbol:@"key.fill"];
     key.toolTip = keyLocked
-        ? @"کلیدی در Keychain هست ولی این نسخه‌ی اپ اجازه‌ی خواندنش را ندارد. "
+        ? @"کلیدی در Keychain هست ولی این نسخه‌ی زمزمه اجازه‌ی خواندنش را ندارد. "
            "همین‌جا کلید را دوباره بگذار تا صاحبش خودِ زمزمه شود و دیگر پرسیده نشود."
         : @"کلید رایگان از Google AI Studio؛ فقط در Keychain همین دستگاه ذخیره می‌شود. "
-           "فقط لازمِ «پاس هوش مصنوعی» است؛ بدون آن، اصلا لازم نیست.";
-    NSMenuItem *fin = [self icon:[self item:menu title:hasKey ? @"پاس هوش مصنوعی (روی متن)"
-                                                              : @"پاس هوش مصنوعی (کلید نیست)"
+           "فقط برای «تمیز کردن متن» لازم است؛ بدون آن، اصلا لازم نیست.";
+    NSMenuItem *fin = [self icon:[self item:menu title:hasKey ? @"تمیز کردن متن با هوش مصنوعی"
+                                                              : @"تمیز کردن متن (کلید ندارد)"
                                      action:@selector(menuToggleFinalPass) key:@""]
                            symbol:@"sparkles"];
     fin.state = ZSettings.shared.finalPassEnabled ? NSControlStateValueOn : NSControlStateValueOff;
     fin.toolTip = hasKey
-        ? @"سر پایان، **متنِ** رونویسی به جمینای می‌رود و تمیزتر برمی‌گردد: فرمتینگ، و "
-           "اصلاح واژه‌ای که صد در صد غلط است. صدا هیچ‌وقت فرستاده نمی‌شود. جواب نیامد، "
-           "همان متن خام می‌نشیند."
+        ? @"سر پایان، **متنِ** دیکته به Gemini می‌رود و تمیزتر برمی‌گردد: نقطه‌گذاری و "
+           "پاراگراف‌بندی، و اصلاح واژه‌ای که صد در صد غلط است. صدا هیچ‌وقت فرستاده "
+           "نمی‌شود. جواب نیامد، همان متن خام می‌نشیند."
         : ZFinalPass.missingKeyHint;
     // پاس دوم انگلیسی روی همان صدا. رایگان و موازی، ولی پیش‌فرض خاموش چون سودش فقط
     // روی متنِ پر از اصطلاح فنی دیده می‌شود و در عوض یک سشن به ازای هر تکه خرج دارد.
-    NSMenuItem *sec = [self icon:[self item:menu title:@"پاس دوم انگلیسی"
+    NSMenuItem *sec = [self icon:[self item:menu title:@"همین صدا را انگلیسی هم بشنو"
                                      action:@selector(menuToggleSecondPass) key:@""]
                            symbol:@"character.book.closed"];
     sec.state = ZSettings.shared.secondPass ? NSControlStateValueOn : NSControlStateValueOff;
     sec.toolTip = @"همان صدا را هم‌زمان یک بار انگلیسی هم می‌شنود، تا اصطلاح‌های فنی از "
-                   "دست نروند. رایگان است ولی دو برابر سشن می‌خواهد. روی گفتار روزمره "
-                   "تقریبا هیچ فرقی نمی‌کند؛ برای متنِ پر از اصطلاح روشنش کن.";
+                   "دست نروند. رایگان است ولی دو برابر سهم کلید را می‌برد. روی گفتار "
+                   "روزمره تقریبا هیچ فرقی نمی‌کند؛ برای متنِ پر از اصطلاح روشنش کن.";
     // ماندنِ صدا روی دیسک، نه خودِ ضبط: ضبط در طول سشن همیشه انجام می‌شود چون فایل
     // مرجع همه‌چیز است. پیش‌فرض خاموش، چون نگه داشتنِ ناخواسته بدترین پیش‌فرض ممکن است.
-    NSMenuItem *rec = [self icon:[self item:menu title:@"ضبط صدای سشن"
+    NSMenuItem *rec = [self icon:[self item:menu title:@"نگه داشتن صدای دیکته"
                                      action:@selector(menuToggleRecord) key:@""]
                            symbol:@"record.circle"];
     rec.state = ZSettings.shared.recordSessions ? NSControlStateValueOn : NSControlStateValueOff;
-    rec.toolTip = @"صدای سشن بعد از آماده شدن متن هم روی دیسک بماند (هفت روز، بعد خودکار "
-                   "پاک می‌شود). خاموش یعنی همان لحظه پاک شود. در هر دو حالت، در طول "
-                   "خودِ سشن ضبط انجام می‌شود تا اگر شبکه بمیرد حرفی گم نشود.";
+    rec.toolTip = @"صدای دیکته بعد از آماده شدن متن هم روی دیسک بماند (هفت روز، بعد خودکار "
+                   "پاک می‌شود). خاموش یعنی همان لحظه پاک شود. در هر دو حالت، در طول خودِ "
+                   "دیکته ضبط انجام می‌شود تا اگر اینترنت قطع شد حرفی گم نشود.";
     NSMenuItem *snd = [self icon:[self item:menu title:@"صدا" action:@selector(menuToggleSounds) key:@""]
                            symbol:@"speaker.wave.2"];
     snd.state = ZSettings.shared.soundsEnabled ? NSControlStateValueOn : NSControlStateValueOff;
@@ -549,18 +563,18 @@ int ZSelfTest(NSString *file, NSString *lang) {
     NSMenuItem *flac = [self icon:[self item:adv title:@"فشرده‌سازی صدا (FLAC)" action:@selector(menuToggleFLAC) key:@""]
                             symbol:@"waveform.circle"];
     flac.state = ZSettings.shared.upstreamFLAC ? NSControlStateValueOn : NSControlStateValueOff;
-    flac.toolTip = @"حجم آپلود صدا را تا نصف کم می‌کند؛ اگر جور نشد خودش موقع اتصال به حالت خام برمی‌گردد";
+    flac.toolTip = @"حجم صدایی که فرستاده می‌شود را تا نصف کم می‌کند؛ اگر جواب نداد، خودش به حالت عادی برمی‌گردد";
     [adv addItem:NSMenuItem.separatorItem];
 
     NSArray *modes = @[@[@"تایپ مستقیم", @(ZInsertType), @"keyboard"],
-                       @[@"پیست تکه‌ای", @(ZInsertPaste), @"doc.on.clipboard"]];
+                       @[@"چسباندن از کلیپ‌بورد", @(ZInsertPaste), @"doc.on.clipboard"]];
     for (NSArray *m in modes) {
         NSMenuItem *mi = [self icon:[self item:adv title:m[0] action:@selector(menuInsertMode:) key:@""]
                               symbol:m[2]];
         mi.representedObject = m[1];
         mi.state = ZSettings.shared.insertMode == [m[1] integerValue]
             ? NSControlStateValueOn : NSControlStateValueOff;
-        mi.toolTip = @"روش پیش‌فرض همه‌ی اپ‌ها؛ Windows App استثنای خودش را دارد (ردیف بعد)";
+        mi.toolTip = @"روش نوشتن متن در همه‌ی برنامه‌ها؛ Windows App استثنای خودش را دارد (ردیف بعد)";
     }
     // استثنای Windows App جدا و دیدنی، نه پنهان در کد: پیست آنجا به کلیپ‌بورد ریموت
     // وابسته است و کلیپ‌بورد ریموت گیر می‌کند، ولی تایپ مستقیم فقط وقتی جواب می‌دهد
@@ -572,25 +586,25 @@ int ZSelfTest(NSString *file, NSString *lang) {
     rdp.toolTip = @"اول در نوار منوی Windows App: Keyboard Mode ← Unicode. بی آن، فارسی در ریموت درست تایپ نمی‌شود";
     [adv addItem:NSMenuItem.separatorItem];
 
-    NSMenuItem *hk = [self icon:[self item:adv title:@"هاتکی داخلی" action:@selector(menuToggleHotkey) key:@""]
+    NSMenuItem *hk = [self icon:[self item:adv title:@"میان‌بر داخلی زمزمه" action:@selector(menuToggleHotkey) key:@""]
                           symbol:@"command"];
     hk.state = ZSettings.shared.internalHotkey ? NSControlStateValueOn : NSControlStateValueOff;
     // دیگر «آزمایشی» نیست و دیگر با Karabiner دعوا ندارد: رول Karabiner کلید را پاس
     // می‌دهد و قبل از هر کاری با pgrep می‌پرسد اپ بالاست یا نه. بالا که باشد، هیچ.
-    hk.toolTip = @"دابل‌تپ Command راست، از داخل خود اپ. رول Karabiner فقط وقتی زمزمه "
-                  "بسته است کاری می‌کند، پس خاموش کردن دستی‌اش لازم نیست";
+    hk.toolTip = @"دو بار زدن Command راست، از داخل خود زمزمه. رول Karabiner فقط وقتی "
+                  "زمزمه بسته است کاری می‌کند، پس خاموش کردن دستی‌اش لازم نیست";
 
     // کنارِ هاتکی می‌نشیند چون در عمل شرطِ کار کردنِ آن است: اپِ بسته کلید نمی‌شنود.
     NSMenuItem *li = [self icon:[self item:adv title:@"اجرا در ورود به مک"
                                      action:@selector(menuToggleLoginItem) key:@""]
                           symbol:@"power"];
     li.state = ZLoginItemOn() ? NSControlStateValueOn : NSControlStateValueOff;
-    li.toolTip = @"زمزمه بعد از روشن شدن مک خودش بالا می‌آید. با این، هاتکی داخلی به "
+    li.toolTip = @"زمزمه بعد از روشن شدن مک خودش بالا می‌آید. با این، میان‌بر داخلی به "
                   "تنهایی کافی است و به Karabiner یا هیچ ابزار جانبی دیگری نیازی نیست";
     [adv addItem:NSMenuItem.separatorItem];
 
-    [self icon:[self item:adv title:@"پوشه سشن‌ها" action:@selector(menuOpenSessions) key:@""] symbol:@"folder"];
-    [self icon:[self item:adv title:@"دسترسی‌ها" action:@selector(menuOpenAccessibility) key:@""] symbol:@"lock.shield"];
+    [self icon:[self item:adv title:@"پوشه‌ی دیکته‌ها" action:@selector(menuOpenSessions) key:@""] symbol:@"folder"];
+    [self icon:[self item:adv title:@"اجازه‌های مک" action:@selector(menuOpenAccessibility) key:@""] symbol:@"lock.shield"];
     advItem.submenu = adv;
     [menu addItem:advItem];
 
@@ -658,7 +672,7 @@ int ZSelfTest(NSString *file, NSString *lang) {
     NSAlert *a = [NSAlert new];
     a.messageText = @"کلید Gemini";
     a.informativeText =
-        @"«پاس هوش مصنوعی» یک کلید رایگان از Google AI Studio می‌خواهد. "
+        @"«تمیز کردن متن» یک کلید رایگان از Google AI Studio می‌خواهد. "
          "کلید فقط روی همین دستگاه، در Keychain، "
          "می‌ماند؛ نه در ریپو، نه روی هیچ سروری از طرف زمزمه.\n\n"
          "پیش از گرفتن کلید، بخش «داده و حریم خصوصی» در README را بخوان: در سهم "
@@ -699,8 +713,8 @@ int ZSelfTest(NSString *file, NSString *lang) {
     BOOL on = !ZSettings.shared.finalPassEnabled;
     ZSettings.shared.finalPassEnabled = on;
     if (on) [ZFinalPass.shared prefetchKey];
-    [_panel flash:on ? @"پاس هوش مصنوعی روشن شد؛ سر پایان روی متن اجرا می‌شود"
-                     : @"پاس هوش مصنوعی خاموش شد"];
+    [_panel flash:on ? @"تمیز کردن متن روشن شد؛ سر پایان انجام می‌شود"
+                     : @"تمیز کردن متن خاموش شد"];
     ZPlay(ZSoundMode);
     // هشدارِ «کلید نیست» عمدا با تاخیر: `hasKey` روی نخ اصلی محافظه‌کار است و تا
     // جوابِ Keychain نرسیده «نه» می‌گوید. بی این تاخیر، هر بار که کاربر تاگل را
@@ -723,18 +737,18 @@ int ZSelfTest(NSString *file, NSString *lang) {
 - (void)offerKey {
     if ([NSUserDefaults.standardUserDefaults boolForKey:@"keyOfferDismissed"]) return;
     NSAlert *a = [NSAlert new];
-    a.messageText = @"پاس هوش مصنوعی روشن است، ولی کلید جمینای نیست";
-    a.informativeText = @"بی کلید، این پاس هیچ کاری نمی‌کند و متن خام تحویل می‌شود. "
-                         "کلید رایگان است و فقط در Keychain همین دستگاه می‌ماند.";
+    a.messageText = @"تمیز کردن متن روشن است، ولی کلید Gemini نیست";
+    a.informativeText = @"بی کلید هیچ تمیزکاری‌ای انجام نمی‌شود و متن همان‌طور که شنیده "
+                         "شده تحویل می‌شود. کلید رایگان است و فقط در Keychain همین دستگاه می‌ماند.";
     NSButton *set = [a addButtonWithTitle:@"کلید را بگذار"];
-    NSButton *off = [a addButtonWithTitle:@"پاس را خاموش کن"];
+    NSButton *off = [a addButtonWithTitle:@"خاموشش کن"];
     NSButton *later = [a addButtonWithTitle:@"بعدا"];
     NSModalResponse r = [a runModal];
     if (r == [a.buttons indexOfObject:set] + NSAlertFirstButtonReturn) {
         [self menuSetKey];
     } else if (r == [a.buttons indexOfObject:off] + NSAlertFirstButtonReturn) {
         ZSettings.shared.finalPassEnabled = NO;
-        [_panel flash:@"پاس هوش مصنوعی خاموش شد"];
+        [_panel flash:@"تمیز کردن متن خاموش شد"];
     } else if (r == [a.buttons indexOfObject:later] + NSAlertFirstButtonReturn) {
         [NSUserDefaults.standardUserDefaults setBool:YES forKey:@"keyOfferDismissed"];
     }
