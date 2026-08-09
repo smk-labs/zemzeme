@@ -863,7 +863,7 @@ static NSRect ZFromAX(CGRect r) {
     [_win setFrameOrigin:p];
 }
 
-// سه پله‌ی فروکاست، به همین ترتیب. هیچ پله‌ای پنجره را پنهان نمی‌کند: تا سشن زنده
+// چهار پله‌ی فروکاست، به همین ترتیب. هیچ پله‌ای پنجره را پنهان نمی‌کند: تا سشن زنده
 // است کاربر باید بتواند ببیند که دیکته روشن است.
 - (NSPoint)originFor:(ZCaretHit)hit {
     if (hit.src == ZCaretExact) {
@@ -879,6 +879,25 @@ static NSRect ZFromAX(CGRect r) {
         // ته صفحه جا نیست: همان‌جا برمی‌گردد بالای کرسر، باز هم مثل خود مک
         CGFloat y = below >= NSMinY([self screenNear:ref].frame)
             ? below : NSMaxY(c) + kGapY - kPadY;
+        return [self clamp:NSMakePoint(cx - kWinW / 2, y) near:ref];
+    }
+    if (hit.src == ZCaretEmptyField) {
+        // فیلدِ خالی: کرسر آنجاست که متن شروع می‌شود، نه آنجا که تمام می‌شود. آغاز یعنی
+        // لبه‌ی راستِ داخلی برای فارسی و لبه‌ی چپِ داخلی برای انگلیسی، و خطِ اول یعنی از
+        // بالای باکس یک خط پایین‌تر، نه کفِ باکس که نشانِ گوشه‌ای می‌نشیند. فرورفتگی
+        // همان kBadgeInset است تا با نشانِ گوشه‌ای یک‌دست بماند.
+        // جهت: متن ندارد که از رویش بخوانیم، پس همان فال‌بکِ همیشگی، زبانِ سشن.
+        NSRect f = ZFromAX(hit.rect);
+        BOOL rtl = hit.rtl < 0 ? _rtl : hit.rtl == 1;
+        CGFloat cx = rtl ? NSMaxX(f) - kBadgeInset : NSMinX(f) + kBadgeInset;
+        // کفِ خطِ اول. باکسِ تک‌خطی از یک خط بلندتر نیست و آنجا کفِ خط همان کفِ باکس
+        // می‌شود، یعنی همان جایی که کرسرِ واقعیِ یک فیلد تک‌خطی نشان را می‌برد.
+        CGFloat lineBottom = MAX(NSMinY(f), NSMaxY(f) - kBadgeInset - kEmptyLine);
+        NSPoint ref = NSMakePoint(cx, lineBottom);
+        CGFloat below = lineBottom - kGapY - kPadY - kDotSize;
+        // ته صفحه جا نباشد، بالای خط؛ همان قاعده‌ی پله‌ی کرسرِ دقیق.
+        CGFloat y = below >= NSMinY([self screenNear:ref].frame)
+            ? below : NSMaxY(f) - kBadgeInset + kGapY - kPadY;
         return [self clamp:NSMakePoint(cx - kWinW / 2, y) near:ref];
     }
     if (hit.src == ZCaretField) {
