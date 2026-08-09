@@ -173,17 +173,17 @@ int ZSelfTest(NSString *file, NSString *lang) {
         return YES;
     };
     _hotkeys.onHelp = ^{ [ZCheatSheet toggle]; };
+    // تک‌تپ Command راست حالا یعنی **پایان**، نه مکث. در نسخه یک متن حین حرف زدن
+    // می‌آمد و کاربر هیچ‌وقت لازم نبود چیزی را علامت بدهد؛ حالا لازم است، و آن علامت
+    // باید همان کلیدی باشد که دستش رویش است. مکث سر جایش می‌ماند، روی Space.
     _hotkeys.onPauseToggle = ^{ [ws sessionDo:@selector(pauseToggle)]; };
+    _hotkeys.onPause = ^{ [ws sessionDo:@selector(togglePause)]; };
     _hotkeys.onCopyNow = ^{ [ws sessionDo:@selector(copyNow)]; };
     _hotkeys.onInsertHere = ^{ [ws sessionDo:@selector(insertHere)]; };
     _hotkeys.onSensToggle = ^{ [ws sessionDo:@selector(toggleSensitivity)]; };
     _hotkeys.onTrash = ^{ [ws sessionDo:@selector(dropPending)]; };
     _hotkeys.onLangSwitch = ^{ [ws sessionDo:@selector(switchLang)]; };
     _hotkeys.onModeToggle = ^{ [ws sessionDo:@selector(toggleMode)]; };
-    _hotkeys.onPolishNow = ^{ [ws sessionDo:@selector(polishCollected)]; };
-    _hotkeys.onFinalPass = ^{ [ws sessionDo:@selector(finalPassNow)]; };
-    _hotkeys.onRotateText = ^{ [ws sessionDo:@selector(rotateText)]; };
-    _hotkeys.onEnhance = ^{ [ws sessionDo:@selector(enhancePrompt)]; };
     // بی‌سشن هم کار می‌کند، پس مثل بقیه از sessionDo رد نمی‌شود. تاگل است نه فقط باز
     // کردن: پنل رونویسی با همان F می‌رود پس‌زمینه و با همان F برمی‌گردد، و کار در
     // جریان با پنهان شدنش نمی‌ایستد.
@@ -191,6 +191,9 @@ int ZSelfTest(NSString *file, NSString *lang) {
     // دکمه‌ی «رونویسی فایل» روی نوار پنل شناور: سومین راه دسترسی. اینجا ست می‌شود نه
     // در ZSession، چون به سشن ربطی ندارد و باید حتی بین دو سشن هم زنده باشد.
     _panel.onFilePanel = ^{ [ws openBatchPanel]; };
+    // راهنما از خود نوار هم باز می‌شود. در نسخه یک اختیاری بود چون کاربر لازم نبود
+    // چیزی بداند؛ حالا باید بداند تک‌تپ یعنی پایان، پس کارت باید از خودِ پنل پیدا شود.
+    _panel.onHelp = ^{ [ZCheatSheet toggle]; };
 
 
     // رنگ آیتم منوبار در طول کار دسته‌ای: آبی، فقط تا وقتی کار در جریان است، و فقط
@@ -207,14 +210,13 @@ int ZSelfTest(NSString *file, NSString *lang) {
 
     [self showFirstRunWelcomeIfNeeded];
     [self watchAccessibility];
-    // دیمن پاس از همین حالا گرم شود که تکه اول اولین سشن سرد نخورد
-    if (ZSettings.shared.polishEnabled) [ZPolish.shared prepare];
     // و کلید پاس نهایی هم همین حالا، در پس‌زمینه: منو و کارت راهنما باید از اولین بار
     // درست بگویند کلید هست یا نه، و پرسشِ Keychain حق ندارد نخ اصلی را نگه دارد.
     if (ZSettings.shared.finalPassEnabled) [ZFinalPass.shared prefetchKey];
-    ZLog(@"app: launched res=%@ data=%@ ax=%d polish=%d",
-         ZRes().path, ZSupport().path,
-         [ZInjector accessibilityOK], ZSettings.shared.polishEnabled);
+    // سشن‌های قدیمی‌تر از هفت روز همین‌جا و بی‌صدا جارو می‌شوند
+    ZSweepOldSessions();
+    ZLog(@"app: launched res=%@ data=%@ ax=%d", ZRes().path, ZSupport().path,
+         [ZInjector accessibilityOK]);
 
     // حالا پنل هست و آدرسِ در صف می‌تواند اجرا شود. اگر کارابینر اپ را با
     // `zemzeme://start` بالا آورده باشد، سشن دقیقا از همین‌جا شروع می‌شود.
@@ -317,10 +319,6 @@ int ZSelfTest(NSString *file, NSString *lang) {
         // همان کار سطل آشغال (D). از بیرون هم لازم بود: تنها راهِ سنجیدنِ «صدا هم دور
         // ریخته شود» بی‌دست‌زدن به کیبورد، و برای Karabiner و Shortcuts هم به کار می‌آید.
         [self sessionDo:@selector(dropPending)];
-    } else if ([url isEqualToString:@"zemzeme://final"]) {
-        [self sessionDo:@selector(finalPassNow)];
-    } else if ([url isEqualToString:@"zemzeme://enhance"]) {
-        [self sessionDo:@selector(enhancePrompt)];
     } else if ([url isEqualToString:@"zemzeme://files"]) {
         [self openBatchPanel];
     } else if ([url isEqualToString:@"zemzeme://keys"]) {
@@ -350,7 +348,8 @@ int ZSelfTest(NSString *file, NSString *lang) {
 - (void)startSession {
     // موتور از حالت می‌آید، نه فقط از تنظیم: حالت یادداشت موتور ضبط را می‌خواهد و
     // همان یک تابع هر دو راه (شروع سشن، و چرخش حالت وسط سشن) را یکی نگه می‌دارد.
-    ZSession *s = [[ZSession alloc] initWithEngine:ZMakeEngine(ZSettings.shared.mode) panel:_panel];
+    ZSession *s = [[ZSession alloc] initWithEngine:[[ZEngine alloc] initWithLang:ZSettings.shared.lang]
+                                            panel:_panel];
     _session = s;
     __weak typeof(self) ws = self;
     s.onFinish = ^{
@@ -441,16 +440,6 @@ int ZSelfTest(NSString *file, NSString *lang) {
     // رادیوی حالت‌ها از اینجا برداشته شد و با آمدن حالت سوم (کرسر) هم برنمی‌گردد:
     // دکمه‌ی E وسط سشن بین هر سه می‌چرخد و با حفظ متن، و دو جای تنظیم برای یک چیز
     // فقط گیج‌کننده بود. حالت شروع همان حالتی است که آخرین بار با E انتخاب شده.
-    NSMenuItem *pol = [self icon:[self item:menu title:@"ویرایش فارسی" action:@selector(menuTogglePolish) key:@""]
-                           symbol:@"wand.and.stars"];
-    pol.state = ZSettings.shared.polishEnabled ? NSControlStateValueOn : NSControlStateValueOff;
-    pol.toolTip = @"نیم‌فاصله، ارقام فارسی، نقطه‌گذاری و املای مطمئن روی هر تکه قطعی فارسی";
-    NSMenuItem *lat = [self icon:[self item:menu title:@"واژه‌های فنی لاتین"
-                                     action:@selector(menuToggleLatinTerms) key:@""]
-                           symbol:@"textformat"];
-    lat.state = ZSettings.shared.latinTerms ? NSControlStateValueOn : NSControlStateValueOff;
-    lat.toolTip = @"وام‌واژه‌های فنی به لاتین برمی‌گردند (کامیت ← commit). فقط واژه‌های "
-                   "فهرست app/py/terms.txt، بدون هیچ حدسی؛ واژه‌های دوپهلو عمدا در فهرست نیستند";
     // پاس نهایی: کنار پاس ویرایش می‌نشیند چون هم‌رده‌ی آن است، ولی کارِ دیگری می‌کند و
     // تولتیپش همین را می‌گوید. تا کلید ست نشده باشد، ردیف خودش خبر می‌دهد: روشن بودنش
     // بی‌کلید فقط یک پیام خطا در پایان هر سشن است.
@@ -481,28 +470,6 @@ int ZSelfTest(NSString *file, NSString *lang) {
         ? @"سر پایان سشن، کل صدا یک‌جا به جمینای می‌رود و یک متن تمیز و کامل برمی‌گردد "
            "(Command راست + N). مسیر زنده دست‌نخورده می‌ماند. در زنده/جمع/کرسر به ردیف "
            "«ضبط صدای سشن» هم نیاز دارد، وگرنه صدایی برای شنیدن نیست."
-        : ZFinalPass.missingKeyHint;
-    if (ZSettings.shared.finalPassEnabled) {
-        NSMenuItem *plain = [self icon:[self item:menu title:@"همیشه ساده (بی‌بولت)"
-                                           action:@selector(menuTogglePlainNotes) key:@""]
-                                 symbol:@"text.alignright"];
-        plain.state = ZSettings.shared.plainNotes ? NSControlStateValueOn : NSControlStateValueOff;
-        plain.toolTip = @"شکل خروجی را خودِ گفتار تعیین می‌کند: فهرست شمرده بولت می‌شود و "
-                         "روایت پاراگراف می‌ماند. این تاگل بولت را کلا خاموش می‌کند.";
-    }
-    // بهبود پرامپت: بتا، و برچسبش واقعی است نه تعارف. تاگل جدا، پیش‌فرض خاموش، و
-    // ردیفش زیر پاس نهایی چون همان کلید و همان انتقال را استفاده می‌کند. با این حال
-    // کارِ دیگری است: آن سه روی «متن چه شکلی دربیاید» کار می‌کنند، این یکی متن را به
-    // چیز دیگری تبدیل می‌کند، و به صدا و به پایان سشن هیچ ربطی ندارد.
-    NSMenuItem *enh = [self icon:[self item:menu title:hasKey ? @"بهبود پرامپت (بتا)"
-                                                              : @"بهبود پرامپت (بتا، کلید نیست)"
-                                     action:@selector(menuToggleEnhance) key:@""]
-                           symbol:@"curlybraces"];
-    enh.state = ZSettings.shared.enhanceEnabled ? NSControlStateValueOn : NSControlStateValueOff;
-    enh.toolTip = hasKey
-        ? @"متنِ آماده را به یک پرامپت درست تبدیل می‌کند، از همان چیزی که دیکته کرده‌ای "
-           "(Command راست + B). هیچ‌وقت خودکار نیست و هیچ‌وقت به اپ مقصد تایپ نمی‌شود؛ "
-           "متن دیکته می‌ماند و R بین دو نسخه می‌چرخد."
         : ZFinalPass.missingKeyHint;
     // ضبط صدا در سه حالت دیکته. جدا از تاگل بالا و پیش‌فرض خاموش: ضبطِ ناخواسته بدترین
     // پیش‌فرض ممکن است. حالت یادداشت به این ردیف کاری ندارد و همیشه ضبط می‌کند.
@@ -535,20 +502,6 @@ int ZSelfTest(NSString *file, NSString *lang) {
                                symbol:@"gearshape"];
     NSMenu *adv = [NSMenu new];
     adv.autoenablesItems = NO;
-
-    NSMenuItem *g = [self icon:[self item:adv title:@"گوگل مستقیم" action:@selector(menuEngineGoogle) key:@""]
-                         symbol:@"bolt.fill"];
-    g.state = [ZSettings.shared.engineName isEqualToString:@"google"]
-        ? NSControlStateValueOn : NSControlStateValueOff;
-    g.enabled = !active;
-    NSMenuItem *c = [self icon:[self item:adv title:@"صفحه کروم (فال‌بک)" action:@selector(menuEngineChrome) key:@""]
-                         symbol:@"arrow.triangle.2.circlepath"];
-    c.state = [ZSettings.shared.engineName isEqualToString:@"chrome"]
-        ? NSControlStateValueOn : NSControlStateValueOff;
-    c.enabled = !active;
-    [self icon:[self item:adv title:@"باز کردن صفحه موتور" action:@selector(menuOpenChromePage) key:@""]
-        symbol:@"arrow.up.right.square"];
-    [adv addItem:NSMenuItem.separatorItem];
 
     NSMenuItem *flac = [self icon:[self item:adv title:@"فشرده‌سازی صدا (FLAC)" action:@selector(menuToggleFLAC) key:@""]
                             symbol:@"waveform.circle"];
@@ -643,13 +596,9 @@ int ZSelfTest(NSString *file, NSString *lang) {
 - (void)menuBatch { [self openBatchPanel]; }
 - (void)menuLangFa { [self setLang:@"fa-IR"]; }
 - (void)menuLangEn { [self setLang:@"en-US"]; }
-- (void)setLang:(NSString *)l {
-    ZSettings.shared.lang = l;
-    [_session.engine setLang:l];
-}
-- (void)menuEngineGoogle { ZSettings.shared.engineName = @"google"; }
-- (void)menuEngineChrome { ZSettings.shared.engineName = @"chrome"; }
-- (void)menuOpenChromePage { [ZChromeRelayEngine openPage]; }
+// زبان از سشن **بعد** اثر می‌کند. عوض کردنش وسط کار یعنی نصف تکه‌ها با یک زبان و
+// نصفشان با زبان دیگر رونویسی شوند، و متن حاصل دو تکه‌ی ناجور می‌شد.
+- (void)setLang:(NSString *)l { ZSettings.shared.lang = l; }
 - (void)menuToggleFLAC { ZSettings.shared.upstreamFLAC = !ZSettings.shared.upstreamFLAC; }
 - (void)menuInsertMode:(NSMenuItem *)sender {
     ZSettings.shared.insertMode = [sender.representedObject integerValue];
@@ -658,11 +607,6 @@ int ZSelfTest(NSString *file, NSString *lang) {
     ZInsertMode now = [ZSettings.shared insertModeForBundleId:kZRDPBundleId];
     [ZSettings.shared setInsertMode:(now == ZInsertType ? ZInsertPaste : ZInsertType) forBundleId:kZRDPBundleId];
 }
-- (void)menuTogglePolish {
-    ZSettings.shared.polishEnabled = !ZSettings.shared.polishEnabled;
-    if (ZSettings.shared.polishEnabled) [ZPolish.shared prepare];
-}
-- (void)menuToggleLatinTerms { ZSettings.shared.latinTerms = !ZSettings.shared.latinTerms; }
 // شیتِ کلید: جای دستورِ ترمینال. سه دکمه‌ی همیشگی به‌علاوه‌ی «پاک کردن» وقتی کلیدی
 // از قبل هست. جواب دکمه‌ها با شیء خودشان مقایسه می‌شود، نه با عددِ ثابت NSAlert، چون
 // ترتیب دکمه‌ها این‌جا شرطی است (کلید بود/نبود) و اندیس‌شان جابه‌جا می‌شود.
@@ -714,15 +658,7 @@ int ZSelfTest(NSString *file, NSString *lang) {
     [ZFinalPass.shared prefetchKey];
     if (!ZFinalPass.hasKey) ZLog(@"final: %@", ZFinalPass.missingKeyHint);
 }
-- (void)menuTogglePlainNotes { ZSettings.shared.plainNotes = !ZSettings.shared.plainNotes; }
-- (void)menuToggleEnhance {
-    ZSettings.shared.enhanceEnabled = !ZSettings.shared.enhanceEnabled;
-    if (!ZSettings.shared.enhanceEnabled) return;
-    // همان کلیدِ پاس نهایی، پس همان پرسشِ پس‌زمینه: کاربر همان لحظه‌ای که تاگل را زده
-    // جواب پنجره‌ی Keychain را می‌دهد، نه وسط کار.
-    [ZFinalPass.shared prefetchKey];
-    if (!ZFinalPass.hasKey) ZLog(@"enhance: %@", ZFinalPass.missingKeyHint);
-}
+
 - (void)menuToggleRecord { ZSettings.shared.recordSessions = !ZSettings.shared.recordSessions; }
 - (void)menuToggleSounds {
     ZSettings.shared.soundsEnabled = !ZSettings.shared.soundsEnabled;
@@ -791,22 +727,16 @@ int main(int argc, const char *argv[]) {
         // چون گارد «یک نمونه» در applicationDidFinishLaunching است و اینجا
         // هیچ‌وقت به آن نمی‌رسیم.
         if ([args containsObject:@"--transcribe"]) return ZBatchMain(args);
-        // پاس نهایی روی یک فایل صوتی، بی‌رابط. مثل حالت دسته‌ای پیش از NSApplication
-        // برمی‌گردد، پس اپ منوبارِ در حال اجرا دست‌نخورده می‌ماند.
-        if ([args containsObject:@"--finalpass"]) return ZFinalPassMain(args);
-        // بهبود پرامپت روی یک متن، بی‌رابط و بی‌صدا. مثل دو حالت بالا پیش از
-        // NSApplication برمی‌گردد؛ دلیل وجودش ست طلایی است.
-        if ([args containsObject:@"--enhance"]) return ZEnhanceMain(args);
+        // یک WAV از **کل** مسیر زنده، بی‌میکروفن و بی‌آدم. شرط سخت نسخه دو: هر ادعای
+        // سرتاسری باید تکرارپذیر باشد. مثل حالت دسته‌ای پیش از NSApplication برمی‌گردد.
+        if ([args containsObject:@"--livewav"]) return ZLiveWavMain(args);
+        if ([args containsObject:@"--aipass"]) return ZAIPassMain(args);
         // آیکون بسته برای build.sh؛ مثل حالت دسته‌ای قبل از NSApplication برمی‌گردد
         NSUInteger ic = [args indexOfObject:@"--appicon"];
         if (ic != NSNotFound && ic + 1 < args.count) return ZMarkIconMain(args[ic + 1]);
         // اندازه‌گیری نردبان کرسر: مثل دو حالت بالا پیش از NSApplication برمی‌گردد، پس
         // اپ منوبارِ در حال اجرا دست نمی‌خورد و هیچ سشن دیکته‌ای باز نمی‌شود.
         if ([args containsObject:@"--caretprobe"]) return ZCaretProbeMain(args);
-        // بازپخشِ یک سشنِ ضبط‌شده از همان خط لوله، با مقصدِ در حافظه. مثل دو حالت
-        // بالا پیش از NSApplication برمی‌گردد: نه اپ در حال اجرا دست می‌خورد، نه
-        // میکروفنی باز می‌شود، نه بایتی روی شبکه می‌رود.
-        if ([args containsObject:@"--replay"]) return ZReplayMain(args);
         // خودآزمای میکروفن: چند ثانیه از **همان** مسیری که دیکته از آن می‌خورد
         // (ZMic، تبدیل به ۱۶ کیلوهرتز مونو s16) در یک WAV می‌ریزد. دلیل وجودش این
         // بود که «صدا بد ضبط می‌شود» تا امروز فقط یک حس بود و هیچ عددی نداشت؛ با یک

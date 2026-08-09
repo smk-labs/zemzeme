@@ -40,16 +40,6 @@ CFAbsoluteTime ZLastForeignInputAt(void) { return gLastForeignInputAt; }
     return IsSecureEventInputEnabled();
 }
 
-// سقف پاک‌کن. دُم یک پاره است، نه یک سند؛ عددی بزرگ‌تر از این یعنی دفترداریِ دُم به هم
-// ریخته، و آن‌وقت هر Backspace اضافه می‌رود سراغ متن خود کاربر. جلوی فرار را می‌گیرد.
-static const NSUInteger kZMaxErase = 256;
-
-// کف فاصله‌ی بین Backspace ها. تایپ ۱۸ نویسه در یک رویداد می‌رود ولی پاک‌کن یک رویداد
-// به ازای هر نویسه می‌فرستد؛ با ۱ میلی‌ثانیه، اپ‌های سنگین (کروم، الکترون) رویداد
-// می‌انداختند و شمارشِ دُم از واقعیت جدا می‌شد. افتادنِ یک تایپ فقط زشت است، افتادنِ
-// یک Backspace متنِ کاربر را می‌خورد؛ پس این سمت گران‌تر ولی محکم‌تر بسته می‌شود.
-static const useconds_t kZEraseMinDelay = 2500;
-
 // مهلت پیش از اولین رویدادِ یک رگبار تایپ، و کف فاصله‌ی بین رویدادها.
 // اندازه‌گیری، نه حدس: در یک درجِ حالت زنده دقیقا ۱۸ واحد UTF-16 از اول تکه نرسید
 // («انگار قاطی می‌کنه » که سر سوزن ۱۸ واحد است)، یعنی درست یک رویداد کامل، و بقیه
@@ -204,10 +194,6 @@ static NSMutableSet<NSNumber *> *ZNoAXWritePids(void) {
     return YES;
 }
 
-// ---------- جایگزینیِ تاییدشده ----------
-// قاعده‌ی سفت: هیچ Backspace ای بی مدرک نمی‌رود. مدرک یا خواندنِ متن واقعی است، یا
-// (در اپی که خواندن نمی‌دهد) این‌که از آخرین نوشتنِ ما هیچ ورودیِ غیرِ خودمان نیامده.
-
 static CFRange zSelectedRange(AXUIElementRef el, BOOL *ok) {
     *ok = NO;
     CFRange r = {0, 0};
@@ -218,140 +204,6 @@ static CFRange zSelectedRange(AXUIElementRef el, BOOL *ok) {
         && AXValueGetValue((AXValueRef)v, kAXValueCFRangeType, &r)) *ok = YES;
     CFRelease(v);
     return r;
-}
-
-static NSString *zStringForRange(AXUIElementRef el, CFRange range) {
-    AXValueRef rv = AXValueCreate(kAXValueCFRangeType, &range);
-    if (!rv) return nil;
-    CFTypeRef out = NULL;
-    AXError e = AXUIElementCopyParameterizedAttributeValue(
-        el, kAXStringForRangeParameterizedAttribute, rv, &out);
-    CFRelease(rv);
-    if (e != kAXErrorSuccess || !out) return nil;
-    NSString *s = CFGetTypeID(out) == CFStringGetTypeID() ? [(__bridge NSString *)out copy] : nil;
-    CFRelease(out);
-    return s;
-}
-
-static BOOL zSetSelectedRange(AXUIElementRef el, CFRange range) {
-    AXValueRef rv = AXValueCreate(kAXValueCFRangeType, &range);
-    if (!rv) return NO;
-    AXError e = AXUIElementSetAttributeValue(el, kAXSelectedTextRangeAttribute, rv);
-    CFRelease(rv);
-    return e == kAXErrorSuccess;
-}
-
-- (void)replaceLast:(NSUInteger)n expecting:(NSString *)expected with:(NSString *)text
-        delayMicros:(useconds_t)d pid:(pid_t)pid
-               done:(void (^)(ZWriteProof proof, BOOL viaAX))done {
-    // روی همان صف سریالِ درج، پس هرچه قبلا فرستاده‌ایم نشسته و خواندن با واقعیت
-    // می‌خواند. خواندنِ AX پیش از خالی شدن این صف، متنِ یک لحظه قبل را می‌داد.
-    dispatch_async(_q, ^{
-        BOOL viaAX = NO;
-        ZWriteProof proof = ZProofNone;
-        AXUIElementRef el = ZCopyFocusedElement(pid);
-        if (el) {
-            BOOL haveSel = NO;
-            CFRange sel = zSelectedRange(el, &haveSel);
-            // انتخابِ باز یعنی کاربر چیزی را نشان کرده؛ دست زدن به آن کارِ ما نیست
-            if (haveSel && sel.length == 0 && sel.location >= (CFIndex)n) {
-                CFRange tail = {sel.location - (CFIndex)n, (CFIndex)n};
-                NSString *actual = zStringForRange(el, tail);
-                if (actual && [actual isEqualToString:expected]) {
-                    proof = ZProofRead;
-                    // یک عمل: رنجِ انتخاب را روی همان دم بگذار و متن تازه را بنویس.
-                    // بی Backspace یعنی نه رویدادی می‌افتد، نه مودیفایرِ همان لحظه
-                    // معنی‌اش را عوض می‌کند، نه شمارشِ دم از واقعیت جدا می‌شود.
-                    if (zSetSelectedRange(el, tail)) {
-                        AXError w = AXUIElementSetAttributeValue(
-                            el, kAXSelectedTextAttribute, (__bridge CFStringRef)text);
-                        if (w == kAXErrorSuccess) {
-                            viaAX = YES;
-                        } else {
-                            // نوشتن نپذیرفت. کرسر را سر جایش برگردان، وگرنه انتخابِ
-                            // باز می‌ماند و اولین Backspace فال‌بک کلِ آن را می‌خورد.
-                            zSetSelectedRange(el, (CFRange){sel.location, 0});
-                        }
-                    }
-                }
-            }
-            CFRelease(el);
-        }
-        if (proof == ZProofNone) {
-            // مدرکِ سطح دو: از آخرین نوشتنِ ما هیچ کلید و کلیکی از کاربر نیامده.
-            // ضعیف‌تر از خواندن است، ولی مدرک است نه حدس، و تنها چیزی است که در
-            // ریموت دسکتاپ در دسترس است (آنجا اپ اصلا نمی‌داند چه متنی آن‌طرف است).
-            if (self->_lastWriteAt > 0 && ZLastForeignInputAt() < self->_lastWriteAt) {
-                proof = ZProofUntouched;
-            }
-        }
-        if (proof == ZProofNone) {
-            if (done) dispatch_async(dispatch_get_main_queue(), ^{ done(ZProofNone, NO); });
-            return;
-        }
-        if (!viaAX) [self eraseAndType:ZEraseSteps(expected, n) text:text delayMicros:d];
-        self->_lastWriteAt = CFAbsoluteTimeGetCurrent();
-        ZWriteProof p = proof;
-        if (done) dispatch_async(dispatch_get_main_queue(), ^{ done(p, viaAX); });
-    });
-}
-
-// فال‌بکِ کلیدی، فقط روی ناحیه‌ای که همین حالا تاییدش کرده‌ایم
-// شمارشِ Backspace بر حسب **نویسه‌ی مرکب**، نه واحد UTF-16. یک ایموجی دو واحد است و
-// یک اعرابِ عربی هم دو واحد، ولی هر کدام با یک Backspace پاک می‌شوند. با شمارشِ
-// واحدی، به ازای هر کدام یکی بیشتر پاک می‌شد و آن یکی از متنِ خودِ کاربر می‌رفت.
-// ‏ZCommonPrefix در دفتر مواظبِ همین مرز است و اینجا آن دقت دور ریخته می‌شد.
-static NSUInteger ZEraseSteps(NSString *owned, NSUInteger units) {
-    if (!owned.length || units == 0) return units;
-    NSUInteger from = owned.length > units ? owned.length - units : 0;
-    __block NSUInteger steps = 0;
-    [owned enumerateSubstringsInRange:NSMakeRange(from, owned.length - from)
-                              options:NSStringEnumerationByComposedCharacterSequences
-                           usingBlock:^(NSString *sub, NSRange r, NSRange e, BOOL *stop) { steps++; }];
-    return steps ?: units;
-}
-
-- (void)eraseAndType:(NSUInteger)n text:(NSString *)text delayMicros:(useconds_t)d {
-    useconds_t ed = MAX(d, kZEraseMinDelay);
-    for (NSUInteger i = 0; i < n; i++) {
-        for (int down = 1; down >= 0; down--) {
-            zPostPlain(CGEventCreateKeyboardEvent(NULL, (CGKeyCode)kVK_Delete, down != 0));
-        }
-        usleep(ed);
-    }
-    // lead-in لازم نیست: پاک‌کن همین حالا رویداد فرستاده، پس اپ گرم است
-    [self typeNow:text delayMicros:d leadIn:NO];
-}
-
-// جای دُم موقت را عوض می‌کند: n نویسه‌ی آخر پاک و متن تازه تایپ می‌شود، هر دو در یک
-// بلاک روی همان صف سریال. یکی نشدنشان یعنی کاربر یک لحظه متن نصفه ببیند، یا بدتر،
-// تایپِ بعدی وسط پاک کردنِ قبلی بنشیند. فقط برای نویسه‌هایی به کار می‌رود که خودمان
-// همین حالا تایپشان کرده‌ایم؛ متن خودِ کاربر هیچ‌وقت از اینجا پاک نمی‌شود.
-- (void)replaceLast:(NSUInteger)n with:(NSString *)text delayMicros:(useconds_t)d {
-    NSData *utf16 = [text dataUsingEncoding:NSUTF16LittleEndianStringEncoding];
-    if (n > kZMaxErase) {
-        ZLog(@"inject: erase %lu clamped to %lu (tail bookkeeping suspect)",
-             (unsigned long)n, (unsigned long)kZMaxErase);
-        n = kZMaxErase;
-    }
-    useconds_t ed = MAX(d, kZEraseMinDelay);
-    dispatch_async(_q, ^{
-        for (NSUInteger i = 0; i < n; i++) {
-            for (int down = 1; down >= 0; down--) {
-                zPostPlain(CGEventCreateKeyboardEvent(NULL, (CGKeyCode)kVK_Delete, down != 0));
-            }
-            usleep(ed);
-        }
-        const UniChar *units = utf16.bytes;
-        NSUInteger count = utf16.length / 2, i = 0;
-        // اینجا lead-in لازم نیست: پاک‌کن همین حالا رویداد فرستاده، پس اپ گرم است
-        while (i < count) {
-            NSUInteger k = MIN((NSUInteger)18, count - i);
-            zPostUnicode(units + i, k);
-            usleep(MAX(d, kZTypeMinDelay));
-            i += k;
-        }
-    });
 }
 
 // فلیکِ پنجره‌ی کلید فقط مالِ کلاینتِ ریموت است. در یک اپ مک گرفتنِ لحظه‌ایِ کلید
@@ -457,80 +309,6 @@ static void zPostModifier(CGKeyCode key, CGEventFlags flags) {
     NSPasteboard *pb = NSPasteboard.generalPasteboard;
     [pb declareTypes:@[NSPasteboardTypeString] owner:nil];
     [pb setString:text forType:NSPasteboardTypeString];
-}
-
-@end
-
-// ---------- ZCaretSink ----------
-// مقصدِ سر کرسر. حالت «درج زنده» و حالت «کنار کرسر» هر دو از این می‌خورند و تنها
-// فرقشان renderPending است. همان یک بولین است که حالت زنده را ذاتا بدون هیچ عملیات
-// مخربی نگه می‌دارد: دُمِ ناپایدار آنجا اصلا نوشته نمی‌شود، پس چیزی برای پاک کردن نیست.
-
-@implementation ZCaretSink {
-    ZInjector *_injector;
-    ZLedgerStats *_stats;
-}
-
-- (instancetype)initWithInjector:(ZInjector *)injector {
-    if ((self = [super init])) _injector = injector;
-    return self;
-}
-
-- (void)useStats:(ZLedgerStats *)stats { _stats = stats; }
-
-- (BOOL)targetIsFront {
-    NSRunningApplication *f = NSWorkspace.sharedWorkspace.frontmostApplication;
-    return _target && f && _target.processIdentifier == f.processIdentifier;
-}
-
-// می‌شود همین حالا نوشت؟ اپ باید جلو باشد و اجازه‌ها سر جایشان.
-- (BOOL)writable {
-    return [self targetIsFront] && [ZInjector accessibilityOK] && ![ZInjector secureInputActive];
-}
-
-- (BOOL)typing {
-    return [ZSettings.shared insertModeForBundleId:_target.bundleIdentifier] == ZInsertType;
-}
-
-// دُم فقط جایی نوشته می‌شود که هم بی‌خطر باشد هم برگشت‌پذیر: مسیر پیست هیچ‌کدام نیست
-// (هر رفت‌وبرگشتش کند و نامطمئن است و بازنویسی‌اش راهی ندارد).
-- (BOOL)rendersPending { return _renderPending && [self typing]; }
-- (BOOL)canRewrite { return [self typing] && [self writable]; }
-
-- (void)appendText:(NSString *)text done:(void (^)(ZSinkResult))done {
-    if (![self writable]) {
-        done(ZSinkUnavailable);
-        return;
-    }
-    if (![self typing]) {
-        [_injector paste:text delayMicros:ZSettings.shared.pasteDelayMicros];
-        done(ZSinkOK);    // پیست خبرِ نشستن ندارد؛ آنجا بازنویسی هم در کار نیست
-        return;
-    }
-    // دُمِ زنده پیست نمی‌شود: هر تکه یک رفت‌وبرگشتِ کند به کلیپ‌بورد است و دفتر باید
-    // بتواند بازنویسی‌اش کند. اینجا تکه‌ها کوچک‌اند و دفتر حسابشان را دارد.
-    [_injector insert:text pid:_target.processIdentifier
-          delayMicros:ZSettings.shared.typeDelayMicros
-       pasteIfRefused:NO
-                 done:^(BOOL viaAX) { done(ZSinkOK); }];
-}
-
-- (void)replaceLast:(NSUInteger)n expecting:(NSString *)expected with:(NSString *)text
-               done:(void (^)(ZSinkResult))done {
-    if (![self canRewrite]) {
-        done(ZSinkUnavailable);
-        return;
-    }
-    ZLedgerStats *stats = _stats;
-    [_injector replaceLast:n expecting:expected with:text
-               delayMicros:ZSettings.shared.typeDelayMicros
-                       pid:_target.processIdentifier
-                      done:^(ZWriteProof proof, BOOL viaAX) {
-        stats.axReads = stats.axReads + 1;
-        if (proof == ZProofRead) stats.verifiedByRead = stats.verifiedByRead + 1;
-        if (proof == ZProofUntouched) stats.verifiedByEpoch = stats.verifiedByEpoch + 1;
-        done(proof == ZProofNone ? ZSinkDisowned : ZSinkOK);
-    }];
 }
 
 @end
@@ -702,22 +480,11 @@ static CGEventRef zHotkeyCallback(CGEventTapProxy proxy, CGEventType type, CGEve
     if (code == 4) return self.onHelp;        // H، همیشه، حتی بی‌سشن
     if (!self.sessionActive) return nil;      // بقیه فقط در حین سشن
     switch (code) {
-        case 49: return self.onPauseToggle;   // Space
+        case 49: return self.onPause;         // Space: مکث. تک‌تپ دیگر مکث نیست، پایان است
         case 8:  return self.onCopyNow;       // C
         case 2:  return self.onTrash;         // D
         case 37: return self.onLangSwitch;    // L
         case 14: return self.onModeToggle;    // E
-        case 35: return self.onPolishNow;     // P
-        // N و R تازه‌اند و مثل بقیه فقط در حین سشن: N پایان و پاس نهایی، R چرخش بین
-        // نسخه‌های متن. عمدا بیرون از سشن کار نمی‌کنند، چون Command راست + N و + R در
-        // اپ‌های دیگر معنی دارند (پنجره‌ی نو، بازخوانی) و یک تپ سراسری هر ترکیبی را که
-        // همیشه بگیرد، همیشه از همه می‌دزدد.
-        case 45: return self.onFinalPass;     // N
-        case 15: return self.onRotateText;    // R
-        // B مثل «بهبود». بتاست، ولی کلیدش مثل بقیه فقط در حین سشن کار می‌کند: Command
-        // راست + B در اپ‌های دیگر «بولد» است و یک تپ سراسری هر ترکیبی را که همیشه
-        // بگیرد، همیشه از همه می‌دزدد.
-        case 11: return self.onEnhance;       // B
         // I نه V: روی ⌥V سه چیز نشسته بود. مککی (تاریخچه‌ی کلیپ‌بورد مک) و، داخل
         // ریموت، رول کارابینر که ⌥V را به Win+V می‌برد (تاریخچه‌ی کلیپ‌بورد ویندوز).
         // آن دو یک معنی‌اند در دو دنیا و کلیدشان مال خودشان است؛ درجِ زمزمه راه‌های

@@ -1,111 +1,31 @@
-// رونویسی دسته‌ای فایل با همان نقطه‌ی مجانی گوگل که مسیر زنده استفاده می‌کند.
+// رونویسی دسته‌ای فایل: همان خط لوله‌ی دیکته‌ی زنده، فقط با یک منبع صدای دیگر.
 //
-// چرا این شکل و نه شکل مسیر زنده: بازپخش فایل قطعی است، بایت هر نمونه معلوم است.
-// پس نه واچ‌داگ میکروفن لازم است، نه واچ‌داگ گیر کردن، نه دور ریختن بک‌لاگ، نه نجات
-// بازپخشی. در عوض یک برش‌زن قطعی داریم: فایل روی سکوت به پاره‌های ~۲۰ ثانیه‌ای با
-// ۲٫۵ ثانیه هم‌پوشانی بریده می‌شود، هر پاره یک سشن تازه‌ی خودش را می‌گیرد، و درزها با
-// ادغام هم‌پوشانی (ZStitchOverlap، نسخه‌ی بامدارای ZMergeInterim) جوش می‌خورند.
+// در نسخه یک این فایل موتور دومِ کاملی بود: برش‌زن خودش، هم‌پوشانی خودش، دوختِ
+// خودش. یعنی هر باگ باید دو بار درست می‌شد و عملا نمی‌شد. حالا برش (`ZSegFind`) و
+// رونویسیِ یک تکه (`ZTranscribeSegment`) مشترک‌اند و اینجا فقط چیزی می‌ماند که
+// واقعا مالِ فایل است: دیکد کردن، موازی‌سازی، زیرنویس، و صف چند فایلی.
 //
-// چرا پاره‌ی ۲۰ ثانیه‌ای (اندازه‌گیری tools/probe_markers.py روی همین نقطه):
-// یک سشن ~۳۰ ثانیه صدای پیوسته را می‌شنود و بعد ~۳۰ ثانیه کر می‌شود و همین‌طور
-// نوبتی ادامه می‌دهد؛ روی ۲۱۷ ثانیه صدای پیوسته فقط ۲۳ تا از ۶۰ نشانه برگشت. این
-// سقف روی «ثانیه‌ی صدا» است نه ساعت دیوار: همان فایل با سرعت ۱x و یک‌جا (burst)
-// دقیقا همان نشانه‌ها را می‌اندازد. پس تغذیه‌ی سریع بی‌خطر است و چرخش اجباری.
+// دو چیز از نسخه یک اینجا هم رفت و دلیلش همان است که سر pipe.m نوشته شده: هم‌پوشانی
+// و دوخت. اندازه‌گیری روی ضبط ۰۱ نشان داد همان دو تا پنج کلمه را بی‌صدا می‌خوردند.
+// تکه‌ها با یک فاصله به هم می‌چسبند و تمام.
+//
+// تفاوت واقعی با مسیر زنده فقط زمان‌بندی است: آنجا یک سشن در هر لحظه (کاربر منتظر
+// است و نقطه‌ی رایگان نباید اذیت شود)، اینجا چند تا با هم، چون فایل نود دقیقه‌ای با
+// سشن تک‌به‌تک تمام نمی‌شود.
 #import "zemzeme.h"
-
-#define kZPcmBytesPerSec 32000.0
-
-// هدف برش و پنجره‌ی گشتن سکوت. هدف ۲۰ ثانیه، همان عددی که موتور زنده (kZRotateSec)
-// از روی همین سقف سرور انتخاب کرده؛ پنجره باز است که تقریبا همیشه سکوتی پیدا شود.
-#define kZBatchSegSec 20.0
-#define kZBatchSegMinSec 10.0
-#define kZBatchSegMaxSec 26.0
-#define kZBatchOverlapSec 2.5
-
-// سکوت: میانگین توان کمتر از این (مقیاس ۰ تا ۱، مثل audio.m قبل از ضریب ۵) دست‌کم
-// به این طول. آستانه دست‌ودل‌بازتر از حد شنوایی است که نویز زمینه‌ی ضبط واقعی هم
-// «سکوت» به حساب بیاید.
-#define kZBatchSilenceRMS 0.02
-#define kZBatchSilenceMs 180
-
-// بعد از پایان آپلود، این‌قدر ثانیه هیچ فریمی نیاید یعنی سرور کارش تمام است.
-// قبلا منتظر بسته شدن /down می‌ماندیم و گاهی سرور آن را باز نگه می‌داشت: دو پاره از
-// سی پاره ۴۵ ثانیه معطل شدند و یک‌چهارم کل زمان اجرا را خوردند. معیار «سکوت فریم»
-// همان چیزی را می‌سنجد که واقعا مهم است و پاره‌های سالم را هم زودتر آزاد می‌کند.
-#define kZBatchQuietSec 8.0
 
 // ---------- یک پاره ----------
 
 @interface ZBatchPiece : NSObject
 @property (nonatomic) NSInteger index;
 @property (nonatomic, strong) NSData *pcm;
-@property (nonatomic) double startSec;     // زمان صدای اولین بایت pcm (شامل هم‌پوشانی)
-@property (nonatomic) double newFromSec;   // از اینجا به بعد محتوای تازه است
+@property (nonatomic) double startSec;     // زمان صدای اولین بایت pcm
 @property (nonatomic) double endSec;       // زمان صدای آخرین بایت pcm
 @property (nonatomic, copy) NSString *text;
 @end
 
 @implementation ZBatchPiece
 @end
-
-// ---------- کمکی‌ها ----------
-
-// توان یک فریم ۲۰ میلی‌ثانیه‌ای، صفر تا یک. نمونه‌برداری هر چهارم، مثل audio.m که هر
-// هشتم را می‌گیرد: برای تشخیص سکوت به‌قدر کافی دقیق و چند برابر ارزان‌تر.
-static float ZFrameRMS(const int16_t *p, NSUInteger n) {
-    float acc = 0;
-    NSUInteger cnt = 0;
-    for (NSUInteger i = 0; i < n; i += 4) {
-        float v = p[i] / 32768.0f;
-        acc += v * v;
-        cnt++;
-    }
-    return sqrtf(acc / MAX(1u, (unsigned)cnt));
-}
-
-// نزدیک‌ترین سکوت به target را پیدا کن و وسطش را برگردان (بایت، زوج). صفر یعنی
-// سکوتی در پنجره نبود و فراخوان باید برش سخت بزند.
-static NSUInteger ZFindSilenceCut(NSData *buf, NSUInteger target, NSUInteger lo, NSUInteger hi) {
-    const NSUInteger frame = (NSUInteger)(0.020 * kZPcmBytesPerSec);    // ۲۰ms = ۶۴۰ بایت
-    const NSUInteger need = (NSUInteger)(kZBatchSilenceMs / 20);        // چند فریم پیوسته
-    hi = MIN(hi, buf.length);
-    if (lo + frame * need >= hi) return 0;
-    const int16_t *s = (const int16_t *)buf.bytes;
-
-    // از هدف به هر دو طرف قدم‌به‌قدم بگرد؛ اولین برخورد نزدیک‌ترین است
-    NSUInteger maxStep = MAX(hi - target, target - lo) / frame + 1;
-    for (NSUInteger step = 0; step <= maxStep; step++) {
-        for (int dir = 0; dir < 2; dir++) {
-            NSInteger start = (NSInteger)target + (dir ? -1 : 1) * (NSInteger)(step * frame);
-            if (start < (NSInteger)lo || start + (NSInteger)(frame * need) > (NSInteger)hi) continue;
-            BOOL quiet = YES;
-            for (NSUInteger k = 0; k < need && quiet; k++) {
-                NSUInteger off = (NSUInteger)start + k * frame;
-                if (ZFrameRMS(s + off / 2, frame / 2) > kZBatchSilenceRMS) quiet = NO;
-            }
-            if (!quiet) continue;
-            // وسط سکوت را ببر، نه لبه‌اش: هیچ کلمه‌ای دو نیم نمی‌شود
-            NSUInteger mid = (NSUInteger)start + frame * need / 2;
-            return mid - (mid % 2);
-        }
-    }
-    return 0;
-}
-
-// دم متن (چند کلمه‌ی آخر) را جدا می‌کند؛ ادغام درز فقط با همین دم انجام می‌شود.
-// اگر با کل متن ادغام می‌کردیم، یک عبارت تکراری از دقیقه‌های قبل می‌توانست الکی
-// «هم‌پوشانی» به حساب بیاید و پاره‌ی تازه را بخورد.
-static void ZSplitTail(NSString *all, NSUInteger words, NSString **head, NSString **tail) {
-    NSArray *w = [all componentsSeparatedByString:@" "];
-    if (w.count <= words) {
-        *head = @"";
-        *tail = all;
-        return;
-    }
-    NSUInteger cut = w.count - words;
-    *head = [[w subarrayWithRange:NSMakeRange(0, cut)] componentsJoinedByString:@" "];
-    *tail = [[w subarrayWithRange:NSMakeRange(cut, words)] componentsJoinedByString:@" "];
-}
 
 // ---------- رونویس ----------
 
@@ -128,6 +48,7 @@ static void ZSplitTail(NSString *all, NSUInteger words, NSString **head, NSStrin
     unsigned long long _bytesUp;
     double _secDone;
     NSInteger _deafStreak;      // پاره‌های پشت‌سرهمی که سشنشان لال برگشت
+    NSInteger _degraded;        // برش‌هایی که مکثی پیدا نکردند
     NSDate *_lastCooldownLog;
 }
 
@@ -177,10 +98,7 @@ static void ZSplitTail(NSString *all, NSUInteger words, NSString **head, NSStrin
     return v;
 }
 
-- (BOOL)pieceHasVoice:(ZBatchPiece *)p {
-    if (p.pcm.length < 2) return NO;
-    return ZFrameRMS(p.pcm.bytes, MIN(p.pcm.length / 2, (NSUInteger)320000)) > kZBatchSilenceRMS;
-}
+- (BOOL)pieceHasVoice:(ZBatchPiece *)p { return ZSegHasVoice(p.pcm); }
 
 // یک پاره، با تا سه تلاش و عقب‌کشیدن بین تلاش‌ها. بهترین نتیجه‌ی تلاش‌ها برمی‌گردد،
 // نه آخری: تلاش دوم هم ممکن است لال باشد.
@@ -215,100 +133,15 @@ static void ZSplitTail(NSString *all, NSUInteger words, NSString **head, NSStrin
     return best;
 }
 
-// یک تلاش: یک سشن تازه. متن معلق آخر (interim که هیچ‌وقت قطعی نشد) هم با
-// ZMergeInterim به دم متن می‌چسبد، وگرنه آخر هر پاره چند کلمه می‌افتاد.
+// یک تلاش: یک سشن تازه، همان تابعی که مسیر زنده هم صدا می‌زند.
 - (NSString *)attemptPiece:(ZBatchPiece *)p {
     if (self.cancelled) return @"";
-    ZGoogleStream *s = [[ZGoogleStream alloc] initWithLang:self.lang];
-    // FLAC پیش‌فرض است، مثل مسیر زنده: روی وویس ۶ دقیقه‌ای واقعی حجم آپلود از ۱۳ به
-    // ۷ مگابایت رسید و متن ۹۹٫۴٪ همان بود (۷۷۹ کلمه در برابر ۷۸۱، یعنی در حد نوسان
-    // خود تشخیص). ته‌مانده‌ی ~۲۵۰ میلی‌ثانیه‌ای انکودر سر پایان آپلود را هم هم‌پوشانی
-    // ۲٫۵ ثانیه‌ای پاره‌ی بعدی می‌پوشاند. --raw فقط برای عیب‌یابی است.
-    s.rawUpload = self.rawUp;
-    NSMutableArray<NSString *> *finals = [NSMutableArray array];
-    __block NSString *interim = @"";
-    __block NSString *bestInterim = @"";
-    __block NSDate *lastEvent = NSDate.date;
-    NSLock *lock = [NSLock new];
-    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
-    s.onEvent = ^(ZSpeechEvent *ev) {
-        [lock lock];
-        lastEvent = NSDate.date;
-        for (NSString *f in ev.finals) {
-            if (f.length) [finals addObject:f];
-            interim = @"";
-            bestInterim = @"";
-        }
-        if (ev.hasResults && ev.interim.length) {
-            interim = ev.interim;
-            if (interim.length > bestInterim.length) bestInterim = interim;
-        }
-        [lock unlock];
-    };
-    __block NSString *closeReason = nil;
-    s.onClose = ^(NSString *reason) {
-        closeReason = reason;
-        dispatch_semaphore_signal(sem);
-    };
-    [s connect];
-
-    double sec = p.pcm.length / kZPcmBytesPerSec;
-    if (self.speed > 0) {
-        // تغذیه با ضریب سرعت: تکه‌های ۱۰۰ میلی‌ثانیه‌ای، همان دانه‌بندی مسیر زنده
-        NSUInteger step = 3200;
-        NSDate *t0 = NSDate.date;
-        for (NSUInteger off = 0; off < p.pcm.length && !self.cancelled; off += step) {
-            NSUInteger n = MIN(step, p.pcm.length - off);
-            [s feed:[p.pcm subdataWithRange:NSMakeRange(off, n)]];
-            double due = (off + n) / (kZPcmBytesPerSec * self.speed);
-            double behind = due - [NSDate.date timeIntervalSinceDate:t0];
-            if (behind > 0) usleep((useconds_t)(behind * 1e6));
-        }
-    } else {
-        [s feed:p.pcm];    // اندازه‌گیری شده: یک‌جا دادن هم همان متن را می‌دهد
-    }
-    [s finishUpload];
-
-    // زهکشی: تا بسته شدن /down، یا تا وقتی سرور kZBatchQuietSec ثانیه هیچ فریمی
-    // نفرستد. سقف سخت هم داریم که یک سشن نامتعارف کل اجرا را گرو نگیرد.
-    NSDate *hard = [NSDate dateWithTimeIntervalSinceNow:25.0 + sec];
-    NSDate *uploadEnd = NSDate.date;
-    // ساعت سکوت از پایان آپلود شروع می‌شود، نه از ساخت استریم. با --speed ۱ آپلود
-    // خودش ۲۰ ثانیه طول می‌کشد و اگر سرور در آن فاصله فریمی نداده باشد، همان لحظه‌ی
-    // finishUpload «ته‌نشین‌شده» به نظر می‌رسید و سشن قبل از رسیدن نتیجه لغو می‌شد.
-    [lock lock];
-    if ([lastEvent compare:uploadEnd] == NSOrderedAscending) lastEvent = uploadEnd;
-    [lock unlock];
-    while (dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW,
-                                                      (int64_t)(0.4 * NSEC_PER_SEC)))) {
-        [lock lock];
-        NSTimeInterval quiet = [NSDate.date timeIntervalSinceDate:lastEvent];
-        [lock unlock];
-        BOOL settled = quiet > kZBatchQuietSec &&
-                       [NSDate.date timeIntervalSinceDate:uploadEnd] > 2.0;
-        if (settled || self.cancelled || [NSDate.date compare:hard] != NSOrderedAscending) {
-            if (!settled && !self.cancelled) {
-                ZLog(@"batch: piece %ld hit the hard deadline, cancelling pair=%@",
-                     (long)p.index, s.pair);
-            }
-            [s cancel];
-            dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC));
-            break;
-        }
-    }
-
-    [lock lock];
-    NSString *text = [finals componentsJoinedByString:@" "];
-    // دو snapshot از یک استریم: همان پرسشِ راچت، نه چسباندنِ دو تکه‌ی جدا
-    NSString *hanging = ZInterimRatchet(bestInterim, interim);
-    [lock unlock];
-    if (hanging.length) text = ZMergeInterim(text, hanging);
-    text = [text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-
+    unsigned long long up = 0;
+    NSString *text = ZTranscribeSegment(p.pcm, self.lang, self.rawUp, &up);
     [_stateLock lock];
-    _bytesUp += s.bytesFed;
+    _bytesUp += up;
     [_stateLock unlock];
-    if (!text.length) ZLog(@"batch: piece %ld silent session (%@)", (long)p.index, closeReason ?: @"?");
+    if (!text.length) ZLog(@"batch: پاره‌ی %ld سشنِ لال داد", (long)p.index);
     return text;
 }
 
@@ -323,10 +156,8 @@ static void ZSplitTail(NSString *all, NSUInteger words, NSString **head, NSStrin
             // ۲۰ ثانیه‌ای (~۶۴۰ کیلوبایت) تا آخر اجرا می‌ماند و فایل ۹۰ دقیقه‌ای
             // چند صد مگابایت می‌شد. زمان‌های SRT از عددهای پاره می‌آیند، نه از صدا.
             p.pcm = nil;
-            // پیشرفت از «محتوای تازه»ی پاره حساب می‌شود نه از طولش، پس هم‌پوشانی دو
-            // بار شمرده نمی‌شود و جمعِ همه دقیقا طول فایل است.
             [self->_stateLock lock];
-            self->_secDone += MAX(0.0, p.endSec - p.newFromSec);
+            self->_secDone += MAX(0.0, p.endSec - p.startSec);
             double done = self->_secDone;
             [self->_stateLock unlock];
             if (self.onPieceDone) self.onPieceDone(done);
@@ -341,16 +172,12 @@ static void ZSplitTail(NSString *all, NSUInteger words, NSString **head, NSStrin
 // لغو وسط کار: هرچه تا اینجا رونویسی شده برمی‌گردد (نیمه، ولی همان است که واقعا
 // شنیده شده). فراخوان خودش می‌داند لغو کرده، پس نیازی به خطای جداگانه نیست.
 - (NSArray<ZBatchPiece *> *)transcribe:(ZFileDecoder *)dec error:(NSError **)err {
-    const NSUInteger overlapBytes = (NSUInteger)(kZBatchOverlapSec * kZPcmBytesPerSec);
-    const NSUInteger target = (NSUInteger)(kZBatchSegSec * kZPcmBytesPerSec);
-    const NSUInteger lo = (NSUInteger)(kZBatchSegMinSec * kZPcmBytesPerSec);
-    const NSUInteger hi = (NSUInteger)(kZBatchSegMaxSec * kZPcmBytesPerSec);
+    const NSUInteger hi = (NSUInteger)(kZSegMaxSec * kZPcmBytesPerSec);
 
     NSMutableArray<ZBatchPiece *> *all = [NSMutableArray array];
     NSMutableArray<ZBatchPiece *> *pending = [NSMutableArray array];
     NSMutableData *buf = [NSMutableData data];
     double bufStartSec = 0;        // زمان صدای buf[0]
-    double newFromSec = 0;         // اولین ثانیه‌ی محتوای تازه در buf
     BOOL eof = NO;
 
     while ((!eof || buf.length) && !self.cancelled) {
@@ -368,30 +195,23 @@ static void ZSplitTail(NSString *all, NSUInteger words, NSString **head, NSStrin
             [buf appendData:chunk];
         }
 
-        NSUInteger cut = buf.length;
-        if (buf.length > hi) {
-            cut = ZFindSilenceCut(buf, target, lo, hi);
-            if (!cut) cut = target;    // سکوتی نبود: برش سخت، هم‌پوشانی درز را می‌گیرد
+        ZSegCut c = ZSegFind(buf.bytes, buf.length, eof);
+        if (!c.cut) break;         // فقط وقتی buf خالی است ممکن است
+        if (c.degraded) {
+            _degraded++;
+            ZLog(@"batch: برش تحمیلی سر %.0f ثانیه، مکثی نبود و rms=%.4f", bufStartSec, c.rms);
         }
 
         ZBatchPiece *p = [ZBatchPiece new];
         p.index = _nextIndex++;
-        p.pcm = [buf subdataWithRange:NSMakeRange(0, cut)];
+        p.pcm = [buf subdataWithRange:NSMakeRange(0, c.cut)];
         p.startSec = bufStartSec;
-        p.newFromSec = newFromSec;
-        p.endSec = bufStartSec + cut / kZPcmBytesPerSec;
+        p.endSec = bufStartSec + c.cut / kZPcmBytesPerSec;
         [pending addObject:p];
         [all addObject:p];
 
-        // دم را برای هم‌پوشانی نگه دار: کلمه‌ی سر درز در هر دو پاره هست، پس یکی از
-        // دو سشن قطعا کاملش را می‌شنود و ادغام تکراری‌اش را می‌اندازد. «آخرین پاره»
-        // باید قبل از دست زدن به buf سنجیده شود؛ وگرنه طول کوتاه‌شده‌ی buf با cut
-        // مقایسه می‌شد و هر دور دم فایل را دور می‌ریخت.
-        BOOL last = cut >= buf.length;
-        NSUInteger keep = last ? 0 : MIN(overlapBytes, cut);
-        newFromSec = bufStartSec + cut / kZPcmBytesPerSec;
-        bufStartSec += (cut - keep) / kZPcmBytesPerSec;
-        [buf replaceBytesInRange:NSMakeRange(0, cut - keep) withBytes:NULL length:0];
+        bufStartSec = p.endSec;
+        [buf replaceBytesInRange:NSMakeRange(0, c.cut) withBytes:NULL length:0];
 
         if (pending.count >= (NSUInteger)self.jobs || (eof && !buf.length)) {
             [self runBatch:pending];
@@ -400,63 +220,27 @@ static void ZSplitTail(NSString *all, NSUInteger words, NSString **head, NSStrin
         if (eof && !buf.length) break;
     }
     if (pending.count && !self.cancelled) [self runBatch:pending];
-    if (_retries) ZLog(@"batch: %ld piece(s) needed a retry", (long)_retries);
+    if (_retries) ZLog(@"batch: %ld پاره تلاش دوباره خواست", (long)_retries);
+    if (_degraded) ZLog(@"batch: %ld برش تحمیلی از %lu", (long)_degraded, (unsigned long)all.count);
     return all;
 }
+
+- (NSInteger)degradedCuts { return _degraded; }
 
 @end
 
 // ---------- سرهم کردن متن ----------
 
-// پاره‌ها را به ترتیب جوش بده. هم‌پوشانی ۲٫۵ ثانیه‌ای یعنی چند کلمه‌ی سر هر پاره
-// تکراری‌اند؛ ZMergeInterim روی دم متن (نه کلش) همان‌ها را می‌اندازد.
+// پاره‌ها را به ترتیب به هم بچسبان، با یک فاصله. **این کل الگوریتم است.**
+// نسخه یک اینجا هم‌پوشانی ۲٫۵ ثانیه‌ای داشت و درزها را با ZStitchOverlapMax جوش
+// می‌داد. اندازه‌گیری روی ضبط ۰۱: همان جوش پنج کلمه را بی‌صدا و تکرارپذیر خورد، در
+// حالی که همان صدا در یک پنجره‌ی جدا سالم رونویسی می‌شد.
 static NSString *ZBatchJoin(NSArray<ZBatchPiece *> *pieces) {
-    NSMutableString *out = [NSMutableString string];
+    NSMutableArray<NSString *> *out = [NSMutableArray array];
     for (ZBatchPiece *p in pieces) {
         NSString *t = [p.text stringByTrimmingCharactersInSet:
                        NSCharacterSet.whitespaceAndNewlineCharacterSet];
-        if (!t.length) continue;
-        if (!out.length) {
-            [out appendString:t];
-            continue;
-        }
-        NSString *head = nil, *tail = nil;
-        ZSplitTail(out, 25, &head, &tail);
-        NSString *merged = ZStitchOverlapMax(tail, t, ZStitchWords(kZBatchOverlapSec));
-        [out setString:head.length ? [NSString stringWithFormat:@"%@ %@", head, merged] : merged];
-    }
-    return out;
-}
-
-// پاس ویرایش فارسی روی متن نهایی، تکه‌تکه (~۴۰ کلمه) که هم‌اندازه‌ی تکه‌های مسیر
-// زنده باشد. ترتیب مهم است: اول جوش خام، بعد ویرایش. برعکسش، نیم‌فاصله و نقطه‌گذاری
-// دو پاره‌ی هم‌پوشان را ناهم‌شکل می‌کرد و ادغام درز را کور می‌کرد.
-// عمومی است چون دکمه‌ی «پاس نهایی» پنل رونویسی هم دقیقا همین را روی متن یکجا می‌خواهد،
-// و دو پیاده‌سازی از یک قاعده یعنی دو رفتار واگرا.
-NSString *ZBatchPolishText(NSString *raw, NSString *lang) {
-    if (!raw.length || [lang hasPrefix:@"en"]) return raw;
-    NSArray *w = [raw componentsSeparatedByString:@" "];
-    NSMutableArray *out = [NSMutableArray array];
-    const NSUInteger per = 40;
-    NSInteger slow = 0;
-    BOOL gaveUp = NO;
-    for (NSUInteger i = 0; i < w.count; i += per) {
-        NSRange r = NSMakeRange(i, MIN(per, w.count - i));
-        NSString *chunk = [[w subarrayWithRange:r] componentsJoinedByString:@" "];
-        if (gaveUp) {
-            [out addObject:chunk];
-            continue;
-        }
-        NSDate *t0 = NSDate.date;
-        [out addObject:[ZPolish.shared polishSync:chunk lang:lang]];
-        // فایل ۹۰ دقیقه‌ای ~۴۰۰ تکه دارد؛ دیمن کند یعنی ویرایش از خودِ رونویسی
-        // طولانی‌تر شود. سه تکه‌ی کند پشت‌سرهم و بی‌خیالِ ویرایش می‌شویم: متن خام
-        // بدترین حالتِ قابل قبول است، معطلی نیم‌ساعته نه.
-        slow = [NSDate.date timeIntervalSinceDate:t0] > 3.0 ? slow + 1 : 0;
-        if (slow >= 3) {
-            gaveUp = YES;
-            ZLog(@"batch: polish daemon too slow, leaving the rest of the text raw");
-        }
+        if (t.length) [out addObject:t];
     }
     return [out componentsJoinedByString:@" "];
 }
@@ -471,8 +255,7 @@ static NSString *ZBatchSRT(NSArray<ZBatchPiece *> *pieces) {
         NSString *t = [p.text stringByTrimmingCharactersInSet:
                        NSCharacterSet.whitespaceAndNewlineCharacterSet];
         if (!t.length) continue;
-        // فقط بازه‌ی محتوای تازه؛ هم‌پوشانی سر پاره مال پاره‌ی قبلی است
-        double from = p.newFromSec;
+        double from = p.startSec;
         double to = p.endSec;
         if (to <= from) to = from + 0.5;
         NSArray *w = [t componentsSeparatedByString:@" "];
@@ -575,10 +358,6 @@ static NSString *ZBatchSRT(NSArray<ZBatchPiece *> *pieces) {
 }
 
 - (void)loop {
-    // دیمن ویرایش را از همین حالا گرم کن؛ نبودنش خطا نیست، فقط متن خام می‌ماند
-    if (self.polishFiles && [_lang hasPrefix:@"fa"] && ZSettings.shared.polishEnabled) {
-        [ZPolish.shared prepare];
-    }
     for (NSUInteger i = 0; i < _files.count; i++) {
         if ([self isCancelled]) break;
         [self runFile:_files[i] lang:i < self.langs.count ? self.langs[i] : _lang];
@@ -639,7 +418,6 @@ static NSString *ZBatchSRT(NSArray<ZBatchPiece *> *pieces) {
         return;
     }
     NSString *text = ZBatchJoin(pieces);
-    if (self.polishFiles) text = ZBatchPolishText(text, lang);
     double el = [NSDate.date timeIntervalSinceDate:t0];
     ZLog(@"batch: done %@ pieces=%ld chars=%lu wall=%.0fs ratio=%.1fx up=%.1fMB (%@)",
          url.lastPathComponent, (long)pieces.count, (unsigned long)text.length, el,
@@ -741,7 +519,6 @@ int ZBatchMain(NSArray<NSString *> *args) {
     job.speed = speed;
     job.rawUpload = rawUp;
     job.writeSRT = srt;
-    job.polishFiles = YES;    // یک فایل یعنی یک خروجی، پس پاس همین‌جا آخرِ کار است
     job.outDir = outDir;
 
     __block int failed = 0;

@@ -149,7 +149,7 @@ void ZMarkShot(NSString *dir) {
     ZPanelModel *listening = [ZPanelModel new];
     listening.listening = YES;
     ZPanelModel *trouble = [ZPanelModel new];
-    trouble.trouble = YES;
+    trouble.error = YES;
     ZPanelModel *connecting = [ZPanelModel new];
     ZPanelModel *paused = [ZPanelModel new];
     paused.paused = YES;

@@ -41,14 +41,10 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/zemzeme "$APP/Contents/MacOS/zemzeme"
 cp Info.plist "$APP/Contents/Info.plist"
-# اسکریپت‌های همراه داخل بسته: نسخه‌دار، خواندنی، هرجا اپ برود با آن می‌روند.
-# venv و مدل‌ها (~۵۰۰ مگ) عمدا بیرون می‌مانند؛ setup.sh آن‌ها را در
-# ~/Library/Application Support/Zemzeme/py می‌گذارد.
-cp ../serve.py ../index.html py/polish.py py/terms.txt "$APP/Contents/Resources/"
 # پرامپت‌ها: فایل‌اند نه رشته‌ی هاردکد، چون هر دو روی متن واقعی تیون شده‌اند و باید
 # بی‌بیلد قابل ویرایش باشند. یکی‌شان (enhance) مالِ بهبود پرامپت است، نه پاس نهایی.
 mkdir -p "$APP/Contents/Resources/prompts"
-cp prompts/transcribe.md prompts/enhance.md "$APP/Contents/Resources/prompts/"
+cp prompts/ai-pass.md prompts/ai-pass-two.md "$APP/Contents/Resources/prompts/"
 
 # آیکون بسته از خود باینری تازه می‌آید (نشان یک بار در mark.m تعریف شده، بیت‌مپی در
 # ریپو نیست) و iconutil سیستم به icns تبدیلش می‌کند. قبل از امضا، چون داخل بسته است.

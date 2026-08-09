@@ -1,22 +1,18 @@
-// پاس نهایی: صدای یک سشن، در یک تماس، تا یک متن تمیز.
+// پاس نهایی: فرمت‌دهی روی متنِ رونویسی‌شده، هیچ‌وقت روی خودِ صدا.
 //
-// چرا این مسیر اصلا هست (اندازه‌گیری، نه سلیقه): متن خام همین اپ روی یک ویس ۳۶۷
-// ثانیه‌ای فارسیِ واقعی فقط ۷۷٪ کلمه‌های گفته‌شده را داشت. یازده تکه‌ی محتوا در آن
-// نبودند: یک جمله‌ی کامل، اسم یک شرکت، «اپ اسنپ»، «با کمک هوش مصنوعی». پاس متنی روی
-// آن متن صفر از یازده را برگرداند، چون چیزی که در ورودی نیست برنمی‌گردد. مدلی که خودش
-// صدا را بشنود ده تا یازده از یازده.
+// قاعده‌ی سختِ نسخه‌ی دو: صدا به مدل نمی‌رود، در هیچ حالتی، هیچ‌وقت. نسخه‌ی قبلیِ این
+// فایل صدای سشن را به Files API جمینای آپلود می‌کرد، چون اندازه‌گیری‌اش روشن بود: روی
+// یک ویسِ ۳۶۷ ثانیه‌ایِ فارسی که متنِ خام فقط ۷۷٪ کلمه‌ها را داشت، پاسِ متنیِ صرف صفر
+// از یازده تکه‌ی گم‌شده را برگرداند و مدلی که خودش صدا را شنید ده تا یازده از یازده را.
+// آن مزیت هنوز واقعی است؛ فقط دیگر مجاز نیست. این فایل حالا با همین محدودیت کار
+// می‌کند، نه با نادیده گرفتنش.
 //
-// یک تماس، نه دو. تا امروز دو تماس بود (رونویسی مو‌به‌مو، بعد پاس متنی روی همان) چون
-// یک تماسِ اولیه متنِ درهم و دوباره‌نویسی‌شده داده بود. ولی قیمتش را کاربر می‌داد:
-// روی سشن‌های واقعی ۱۵ تا ۱۸ ثانیه، و متنِ کامل دو بار تولید می‌شد. یک تماس یک
-// رفت‌وبرگشت است و یک بار خروجی. مهار آن شکستِ قدیمی رفت داخل خودِ پرامپت
-// (`prompts/transcribe.md`): سقفِ خروجی خودِ گفتار است و جمله دو بار نوشته نمی‌شود.
-//
-// قاعده‌های سختی که این فایل رعایت می‌کند:
-//   · مسیر زنده هیچ‌وقت به اینجا وابسته نمی‌شود. ZPolish و بودجه‌ی ۳۰۰ میلی‌ثانیه‌اش
-//     دست‌نخورده‌اند و هیچ LLM مولدی در پاس زنده نیست.
-//   · هیچ چیز گم نمی‌شود: صدا و متن نهایی هر دو روی دیسک می‌مانند، و متن خام سشن
-//     همیشه به عنوان یک نسخه‌ی جدا در پنل هست.
+// دو چیز جای آن مزیتِ ازدست‌رفته را پر می‌کنند. یکی: اگر پاسِ دومِ انگلیسیِ همان صدا
+// هم موجود باشد، `prompts/ai-pass-two.md` اسکلتِ جمله را از متنِ فارسی می‌گیرد و
+// اصطلاح‌های فنی را از متنِ انگلیسی؛ یک متن که باشد `prompts/ai-pass.md` کافی است.
+// دوم: تورِ ایمنیِ شمارشِ کلمه در `runOnText:`. بازنویسیِ مولد می‌تواند بی‌سروصدا یک
+// جمله را ببلعد؛ چون دیگر صدایی برای تطبیق نداریم، خروجیِ زیرِ ۷۰٪ کلمه‌های ورودی رد
+// می‌شود و متنِ خامِ فراخوان به‌جایش می‌ماند.
 #import "zemzeme.h"
 #import <Security/Security.h>
 
@@ -42,33 +38,20 @@ static NSString *ZGThinking(void) {
     NSString *t = NSProcessInfo.processInfo.environment[@"ZEMZEME_FINAL_THINKING"];
     return t.length ? t : @"minimal";
 }
-// زیر این حجم، صدا درون‌خطی (base64) در همان تماس می‌رود. بالاتر، Files API.
-// چرا نه همیشه Files API: روی یک فایل ۶٫۳ مگابایتی، آپلود و ACTIVE شدنش ۸۴ ثانیه
-// گرفت، در حالی که همان بایت‌ها درون‌خطی ۶ ثانیه رفتند. معیار پذیرش «۱۵ ثانیه بعد از
-// Esc» است، پس یادداشت‌های معمولی (تا ~۲۰ دقیقه گفتار) از راه درون‌خطی می‌روند.
-#define kGInlineMaxBytes (15 * 1024 * 1024)
 #define kGTimeout 300.0
-
-// `key` در هدر نیست و نباید هم باشد (کلید از این فایل بیرون نمی‌رود)، ولی مسیر خط
-// فرمان همین پایین لازمش دارد: آنجا پرسشِ بلوکه درست است.
-@interface ZFinalPass (ZBlockingKey)
-- (NSString *)key;
-@end
-
-@implementation ZFinalPassResult
-@end
 
 @implementation ZFinalPass {
     NSString *_key;
     BOOL _keyChecked;    // یک بار پرسیده شد؛ «نبود» هم جواب است و دوباره پرسیده نمی‌شود
     BOOL _keyBlocked;    // پرسشِ بی‌پنجره خورد به ACL: کلید شاید هست، ولی اجازه‌اش نه
-    NSLock *_keyLock;    // فقط کلید. لغو و تسکِ در پرواز رفتند زیر `_pass`
+    NSLock *_keyLock;    // فقط کلید
     // ...و این یکی فقط دور خودِ *پرسش*. جدا از `_keyLock` و عمدا: آن قفل نباید در طول
     // یک پرسشِ چندثانیه‌ای گرفته بماند.
     NSLock *_fetchLock;
     NSLock *_logLock;
-    // نوبتِ کل پاس، و مشترک با `ZEnhance`: انتقال یکی است، پس نگهبان هم باید یکی باشد.
-    ZPassLock *_pass;
+    // نوبتِ کل پاس. دیگر قفلِ مشترکی با ZEnhance نیست: آپلودِ چندمگابایتیِ صدا که لغو
+    // بخواهد از میان رفت، یک تماسِ متنیِ کوتاه ماند، پس یک بولینِ ساده کافی است.
+    BOOL _busy;
 }
 
 + (instancetype)shared {
@@ -83,7 +66,6 @@ static NSString *ZGThinking(void) {
         _keyLock = [NSLock new];
         _fetchLock = [NSLock new];
         _logLock = [NSLock new];
-        _pass = [ZPassLock new];
     }
     return self;
 }
@@ -324,9 +306,6 @@ static NSString *ZKeyFromSecurityTool(void) {
 // پس ۴۲۹ فقط **یک** تلاش دوباره دارد و آن هم با سقف ۶۰ ثانیه: اگر سقف دقیقه‌ای باشد
 // همان یک صبر جوابش است، و اگر روزانه باشد کاربر بیست ثانیه بعد جوابِ روشن می‌گیرد
 // نه سه دقیقه چرخنده.
-// متد است نه تابع، و فقط به یک دلیل: تسکِ در پرواز باید جایی ثبت شود که `cancel`
-// بتواند بکشدش. بدنه‌ی درخواست چند مگابایت صداست و کسی که «کنسل» می‌زند منتظر تمام
-// شدنِ آپلود نیست.
 - (NSData *)http:(NSMutableURLRequest *)req status:(NSInteger *)status headers:(NSDictionary **)headers {
     __block NSData *body = nil;
     __block NSInteger code = 0;
@@ -346,35 +325,14 @@ static NSString *ZKeyFromSecurityTool(void) {
         if (e && !code) code = -1;
         dispatch_semaphore_signal(sem);
     }];
-    if (![_pass armTask:task session:s]) {
-        // بین شروع کار و اینجا لغو رسیده (یا نوبتی در کار نیست)؛ حتی درخواست را هم
-        // نمی‌فرستیم
-        if (status) *status = -2;
-        return nil;
-    }
+    // arm/disarm (قفلِ ZPassLock) با حذفِ صدا از این پاس رفتند: آن‌ها برای لغوِ آپلودِ
+    // چندمگابایتیِ وسطِ کار بودند؛ حالا بدنه‌ی هر تماس یک متنِ کوتاه است و لغو معنا ندارد.
     [task resume];
     dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)((kGTimeout + 30) * NSEC_PER_SEC)));
-    [_pass disarm];
     [s finishTasksAndInvalidate];
     if (status) *status = code;
     if (headers) *headers = hd;
     return body;
-}
-
-- (void)cancel { [self cancelOwner:ZPassOwnerFinal]; }
-
-// به نامِ صاحب، نه «هرچه در پرواز است». قبلا یک بولینِ مشترک بود و همین باعث می‌شد Esc
-// در سشن، کارِ پنل فایل را هم بکشد؛ و بدتر، `resetCancel` نفرِ بعدی لغوِ همین لحظه‌ی
-// کاربر را پاک کند. حالا اگر کاری که در جریان است مالِ این صاحب نباشد، هیچ اتفاقی
-// نمی‌افتد.
-- (void)cancelOwner:(NSString *)owner {
-    if ([_pass cancelOwner:owner]) ZLog(@"final: %@ لغو شد", owner);
-}
-
-// نال یعنی مشغول. `resetCancel` عمدا رفت: لغو حالا روی نسلِ همان نوبت می‌نشیند، پس
-// لغوِ کهنه اصلا به کارِ بعدی نمی‌رسد و چیزی برای صفر کردن نمانده.
-- (ZPassLease *)claimPass:(NSString *)owner busy:(NSString **)busy {
-    return [_pass claim:owner busy:busy];
 }
 
 // ---------- انتقالِ قرضی ----------
@@ -450,8 +408,7 @@ static NSString *ZHumanError(NSString *label, NSInteger st, NSData *raw) {
             : @"سرور جمینای فعلا جواب نمی‌دهد (سقف درخواست). چند دقیقه بعد دوباره بزن.";
     }
     if (st == 403 || st == 401) return @"کلید جمینای پذیرفته نشد؛ یک کلید تازه در Keychain بگذار.";
-    if (st == 400) return [NSString stringWithFormat:@"درخواست %@ را سرور نپسندید (۴۰۰)؛ "
-                           @"پاسخ خام در پوشه‌ی final ذخیره شد", label];
+    if (st == 400) return [NSString stringWithFormat:@"درخواست %@ را سرور نپسندید (۴۰۰)", label];
     if (st < 0) return @"شبکه در دسترس نیست؛ پاس نهایی اجرا نشد";
     return [NSString stringWithFormat:@"%@ شکست خورد (HTTP %ld)", label, (long)st];
 }
@@ -542,9 +499,6 @@ static NSString *ZDropPreamble(NSString *t) {
     NSData *raw = [self send:req label:label status:&st headers:nil];
     NSTimeInterval dt = [NSDate.date timeIntervalSinceDate:t0];
     if (st != 200) {
-        // پاسخ خام هر تماس ناموفق روی دیسک: تنها راه فهمیدن اینکه اندپوینتِ مستندنشده
-        // چه چیزی را نپسندید. کلید در بدنه نیست، پس نوشتنش بی‌خطر است.
-        [self writeRaw:raw name:[NSString stringWithFormat:@"%@-http%ld", label, (long)st]];
         NSString *msg = [[NSString alloc] initWithData:
             [raw subdataWithRange:NSMakeRange(0, MIN((NSUInteger)600, raw.length))]
                                              encoding:NSUTF8StringEncoding];
@@ -566,279 +520,88 @@ static NSString *ZDropPreamble(NSString *t) {
     }
     ZLog(@"final: %@ در %.1f ثانیه، %lu نویسه", label, dt, (unsigned long)text.length);
     if (!text.length) {
-        [self writeRaw:raw name:[NSString stringWithFormat:@"%@-empty", label]];
         if (err) *err = [label stringByAppendingString:@" متنی برنگرداند"];
         return nil;
     }
     return ZDropPreamble(text);
 }
 
-// ---------- صدا ----------
-// تکه‌ی صدا برای تماس: درون‌خطی، وگرنه از Files API.
-- (NSDictionary *)audioPart:(NSURL *)audio key:(NSString *)key
-                   progress:(void (^)(NSString *))progress error:(NSString **)err {
-    NSData *data = [NSData dataWithContentsOfURL:audio options:NSDataReadingMappedIfSafe error:nil];
-    if (!data.length) {
-        if (err) *err = @"فایل صدا خوانده نشد";
-        return nil;
+// ---------- پاس روی متن ----------
+// شمارشِ کلمه‌های جداشده با فاصله/خط‌جدید؛ چند فاصله‌ی پشت‌سرهم یک کلمه‌ی خالی
+// نمی‌سازد.
+static NSUInteger ZWordCount(NSString *s) {
+    NSUInteger n = 0;
+    for (NSString *w in [s componentsSeparatedByCharactersInSet:
+                          NSCharacterSet.whitespaceAndNewlineCharacterSet]) {
+        if (w.length) n++;
     }
-    NSString *mime = [audio.pathExtension.lowercaseString isEqualToString:@"wav"]
-        ? @"audio/wav" : @"audio/flac";
-    if (data.length <= kGInlineMaxBytes) {
-        progress([NSString stringWithFormat:@"فرستادن صدا (%@ مگابایت)…",
-                  ZFaDigits([NSString stringWithFormat:@"%.1f", data.length / 1048576.0])]);
-        return @{@"type": @"audio", @"mime_type": mime,
-                 @"data": [data base64EncodedStringWithOptions:0]};
-    }
-    progress(@"آپلود صدای بلند…");
-    NSString *uri = [self upload:data name:audio.lastPathComponent mime:mime key:key error:err];
-    if (!uri) return nil;
-    return @{@"type": @"audio", @"mime_type": mime, @"uri": uri};
+    return n;
 }
 
-// Files API، سه مرحله‌ی resumable. فایل تا ۴۸ ساعت زنده می‌ماند و سقف صدا ۹٫۵ ساعت
-// است، پس در این مسیر هیچ چرخش و جوش درزی لازم نیست: یک فایل، یک تماس.
-- (NSString *)upload:(NSData *)data name:(NSString *)name mime:(NSString *)mime
-                 key:(NSString *)key error:(NSString **)err {
-    NSMutableURLRequest *start = [NSMutableURLRequest requestWithURL:
-        [NSURL URLWithString:[kGBase stringByAppendingString:@"/upload/v1beta/files"]]];
-    start.HTTPMethod = @"POST";
-    start.HTTPBody = [NSJSONSerialization dataWithJSONObject:@{@"file": @{@"display_name": name}}
-                                                    options:0 error:nil];
-    [start setValue:key forHTTPHeaderField:@"x-goog-api-key"];
-    [start setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
-    [start setValue:@"resumable" forHTTPHeaderField:@"X-Goog-Upload-Protocol"];
-    [start setValue:@"start" forHTTPHeaderField:@"X-Goog-Upload-Command"];
-    [start setValue:@(data.length).stringValue forHTTPHeaderField:@"X-Goog-Upload-Header-Content-Length"];
-    [start setValue:mime forHTTPHeaderField:@"X-Goog-Upload-Header-Content-Type"];
-    NSInteger st = 0;
-    NSDictionary *hd = nil;
-    [self send:start label:@"upload-start" status:&st headers:&hd];
-    NSString *url = nil;
-    for (NSString *k in hd) {
-        if ([k caseInsensitiveCompare:@"x-goog-upload-url"] == NSOrderedSame) url = hd[k];
+// پاس روی **متن**، هیچ‌وقت روی صدا. کار روی نخ پس‌زمینه، `done` روی نخ اصلی.
+// `second` متنِ پاس دوم انگلیسی است و می‌تواند نال باشد.
+// out نال یا خالی یعنی هیچ اتفاقی نیفتاد و فراخوان باید متن خام خودش را نگه دارد.
+- (void)runOnText:(NSString *)text second:(NSString *)second lang:(NSString *)lang
+             done:(void (^)(NSString *out, NSString *err))done {
+    if (!text.length) {
+        dispatch_async(dispatch_get_main_queue(), ^{ done(nil, @"متنی برای پاس نیست"); });
+        return;
     }
-    if (st != 200 || !url.length) {
-        if (err) *err = @"شروع آپلود صدا نشد";
-        return nil;
-    }
-    NSMutableURLRequest *put = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]];
-    put.HTTPMethod = @"POST";
-    put.HTTPBody = data;
-    [put setValue:@"0" forHTTPHeaderField:@"X-Goog-Upload-Offset"];
-    [put setValue:@"upload, finalize" forHTTPHeaderField:@"X-Goog-Upload-Command"];
-    NSData *body = [self send:put label:@"upload" status:&st headers:nil];
-    if (st != 200) {
-        if (err) *err = @"آپلود صدا نشد";
-        return nil;
-    }
-    NSDictionary *doc = [NSJSONSerialization JSONObjectWithData:body ?: [NSData data] options:0 error:nil];
-    NSDictionary *file = [doc isKindOfClass:NSDictionary.class] ? doc[@"file"] : nil;
-    NSString *uri = [file[@"uri"] isKindOfClass:NSString.class] ? file[@"uri"] : nil;
-    NSString *fname = [file[@"name"] isKindOfClass:NSString.class] ? file[@"name"] : nil;
-    if (!uri.length) {
-        if (err) *err = @"آدرس فایل صدا برنگشت";
-        return nil;
-    }
-    // صدا لحظه‌ای در حال پردازش می‌ماند و تماس روی فایلِ غیرِ ACTIVE خطا می‌دهد.
-    // روی فایل ۶ مگابایتی همین انتظار بیشترِ آن ۸۴ ثانیه بود، و دقیقا دلیلی است که
-    // مسیر درون‌خطی پیش‌فرض است.
-    for (int i = 0; i < 90 && fname.length; i++) {
-        NSString *state = [file[@"state"] isKindOfClass:NSString.class] ? file[@"state"] : nil;
-        if (!state || [state isEqualToString:@"ACTIVE"]) break;
-        if ([state isEqualToString:@"FAILED"]) {
-            if (err) *err = @"سرور صدا را نپذیرفت";
-            return nil;
+    // یک پاس در هر لحظه. دومی که وسط کار برسد بلوکه نمی‌شود، همان لحظه با خطای
+    // فارسی برمی‌گردد و متنِ در جریان دست‌نخورده می‌ماند.
+    @synchronized (self) {
+        if (_busy) {
+            dispatch_async(dispatch_get_main_queue(), ^{ done(nil, @"یک پاس دیگر در جریان است"); });
+            return;
         }
-        [NSThread sleepForTimeInterval:2];
-        NSMutableURLRequest *q = [NSMutableURLRequest requestWithURL:
-            [NSURL URLWithString:[NSString stringWithFormat:@"%@/v1beta/%@", kGBase, fname]]];
-        [q setValue:key forHTTPHeaderField:@"x-goog-api-key"];
-        NSData *qb = [self http:q status:&st headers:nil];
-        file = st == 200 ? [NSJSONSerialization JSONObjectWithData:qb options:0 error:nil] : nil;
-        if (!file) break;
+        _busy = YES;
     }
-    return uri;
-}
-
-// ---------- کل پاس ----------
-
-- (void)runOnAudio:(NSURL *)audio lang:(NSString *)lang
-          progress:(void (^)(NSString *msg))progress
-              done:(void (^)(ZFinalPassResult *r))done {
-    void (^say)(NSString *) = ^(NSString *m) {
-        dispatch_async(dispatch_get_main_queue(), ^{ if (progress) progress(m); });
-    };
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        // استخر عمدی است: نوبت با `dealloc` آزاد می‌شود و باید **قبل از** `done` رفته
-        // باشد. وگرنه کاربری که همان لحظه دکمه‌ی بعدی را می‌زند می‌توانست به نوبتی
-        // بخورد که هنوز در استخرِ نخِ پس‌زمینه منتظرِ تخلیه است.
-        ZFinalPassResult *r;
-        @autoreleasepool { r = [self work:audio lang:lang say:say]; }
-        dispatch_async(dispatch_get_main_queue(), ^{ done(r); });
+        NSString *out = nil, *err = nil;
+        @autoreleasepool {
+            NSDate *t0 = NSDate.date;
+            NSString *key = [self key];
+            if (!key) {
+                err = ZFinalPass.missingKeyHint;
+            } else {
+                BOOL twoPass = second.length > 0;
+                NSString *name = twoPass ? @"ai-pass-two" : @"ai-pass";
+                NSString *sys = [self prompt:name];
+                // پرامپت در بسته نبود. تا امروز همین نیل تا داخل بدنه‌ی درخواست
+                // می‌رفت و اپ با NSInvalidArgumentException می‌مرد، یعنی یک فایلِ
+                // جامانده در بسته کل اپ را می‌کشت. پاس حق ندارد نتیجه را گرو بگیرد،
+                // چه رسد به این‌که اپ را با خودش ببرد.
+                if (!sys.length) {
+                    err = @"پرامپت پاس در بسته نیست";
+                } else {
+                    NSArray<NSString *> *parts = twoPass ? @[text, second] : @[text];
+                    NSMutableDictionary *usage = [NSMutableDictionary dictionary];
+                    NSString *aerr = nil;
+                    NSString *result = [self askText:sys parts:parts label:name thinking:@"minimal"
+                                               usage:usage error:&aerr];
+                    NSUInteger inWords = ZWordCount(text);
+                    NSUInteger outWords = ZWordCount(result);
+                    if (!result.length) {
+                        err = aerr ?: @"پاس متنی جوابی نداد";
+                    } else if (inWords > 0 && (double)outWords < (double)inWords * 0.7) {
+                        // تنها تورِ ایمنی: بازنویسیِ مولد می‌تواند بی‌سروصدا یک جمله
+                        // را ببلعد. متنِ خامِ فراخوان همیشه فال‌بکِ امن است، پس
+                        // خروجیِ به‌وضوح کوتاه‌تر رد می‌شود.
+                        ZLog(@"final: پاس متن کوتاهش کرد (ورودی %lu کلمه، خروجی %lu کلمه)",
+                             (unsigned long)inWords, (unsigned long)outWords);
+                        err = @"پاس متن را کوتاه کرد";
+                    } else {
+                        out = result;
+                        ZLog(@"final: پاس متن در %.1f ثانیه، %ld+%ld توکن",
+                             [NSDate.date timeIntervalSinceDate:t0],
+                             (long)[usage[@"in"] integerValue], (long)[usage[@"out"] integerValue]);
+                    }
+                }
+            }
+        }
+        @synchronized (self) { _busy = NO; }
+        dispatch_async(dispatch_get_main_queue(), ^{ done(out, err); });
     });
 }
 
-- (ZFinalPassResult *)work:(NSURL *)audio lang:(NSString *)lang say:(void (^)(NSString *))say {
-    ZFinalPassResult *r = [ZFinalPassResult new];
-    NSDate *t0 = NSDate.date;
-    // نوبت، **اولین** کار و روی کل پاس: از این خط به بعد هر `return` خودش نوبت را پس
-    // می‌دهد، چون آزادسازی کارِ `dealloc` است نه کارِ ما. هیچ‌کدام از نقطه‌های بازگشتِ
-    // این متد چیزی برای یادش ماندن ندارند.
-    NSString *busy = nil;
-    ZPassLease *lease = [self claimPass:ZPassOwnerFinal busy:&busy];
-    if (!lease) {
-        ZLog(@"final: نوبت آزاد نبود: %@", busy);
-        r.error = busy;
-        return r;
-    }
-    // لغو قبل از آپلود و قبل از تماس چک می‌شود، نه فقط اولش: بدنه‌ی درخواست چند
-    // مگابایت صداست و کسی که کنسل زده نباید هزینه‌اش را بدهد.
-    #define ZBailIfCancelled() do { \
-        if (lease.cancelled) { r.cancelled = YES; return r; } \
-    } while (0)
-    NSString *key = [self key];
-    if (!key) {
-        r.error = ZFinalPass.missingKeyHint;
-        return r;
-    }
-    NSString *pTranscribe = [self prompt:@"transcribe"];
-    if (!pTranscribe.length) {
-        r.error = @"پرامپت پاس نهایی در بسته‌ی اپ نیست";
-        return r;
-    }
-    NSMutableDictionary *usage = [NSMutableDictionary dictionary];
-    NSString *err = nil;
-    ZBailIfCancelled();
-
-    // ---------- یک تماس: صدا ← متن نهایی ----------
-    NSDictionary *part = [self audioPart:audio key:key progress:say error:&err];
-    if (!part) {
-        r.error = err ?: @"صدا فرستاده نشد";
-        return r;
-    }
-    say(@"رونویسی…");
-    ZBailIfCancelled();
-    // فقط صدا، و در حالت «همیشه ساده» یک خط شکل. هیچ متنِ پرکننده‌ی دیگری نه: با دو
-    // تماس یک «فقط صدا.» آنجا بود که تماس اول را از تماس دوم جدا کند، و حالا که یک
-    // تماس بیشتر نیست همان جمله خودش پیام کاربر حساب می‌شود. روی یک ویس خاموش، مدل
-    // به جای متن «فقط صدا؟» برگرداند.
-    NSMutableArray *parts = [NSMutableArray array];
-    if (ZSettings.shared.plainNotes) {
-        [parts addObject:@{@"type": @"text",
-                           @"text": @"ساختار: پاراگراف. هیچ بولت و فهرستی نزن، "
-                                     "حتی اگر گفتار شمرده بود."}];
-    }
-    [parts addObject:part];
-    NSString *out = [self ask:pTranscribe parts:parts label:@"transcribe" key:key
-                     thinking:ZGThinking() usage:usage error:&err];
-    if (!out.length) {
-        r.error = err ?: @"رونویسی نشد";
-        return r;
-    }
-
-    // ---------- پاس مکانیکی ----------
-    // بعد از مدل و نه قبلش: LLM ها با نیم‌فاصله بی‌دقت‌اند و همین یک تکه‌ی قاعده‌ای
-    // ارزشش را دارد. املا و نقطه‌گذاریِ مدلِ کوچک عمدا اجرا نمی‌شوند؛ آن دو کورند و
-    // اینجا مدل بزرگ هر دو را بهتر انجام داده. روی سشن انگلیسی هم کلا رد می‌شود.
-    if (![lang hasPrefix:@"en"]) {
-        say(@"نیم‌فاصله و ارقام…");
-        NSString *mech = [ZPolish.shared mechanicalSync:out lang:lang];
-        // دروازه یک بار دیگر، این بار روی خودِ پاس مکانیکی: قاعده‌ای است و نباید چیزی
-        // بخورد، ولی «نباید» دلیل نیست که نسنجیم.
-        if (mech.length) {
-            ZCoverage *cm = [ZCoverage ofDraft:out output:mech];
-            if (cm.lostNumbers.count || cm.lostLatin.count) {
-                ZLog(@"final: پاس مکانیکی چیزی انداخت (%@)؛ نادیده گرفته شد", cm.summary);
-            } else {
-                out = mech;
-            }
-        }
-    }
-
-    r.text = out;
-    r.inTokens = [usage[@"in"] integerValue];
-    r.outTokens = [usage[@"out"] integerValue];
-    r.seconds = [NSDate.date timeIntervalSinceDate:t0];
-    ZBailIfCancelled();
-    r.dir = [self archive:audio result:r];
-    ZLog(@"final: تمام در %.0f ثانیه، %ld+%ld توکن", r.seconds,
-         (long)r.inTokens, (long)r.outTokens);
-    return r;
-    #undef ZBailIfCancelled
-}
-
-// ---------- روی دیسک ----------
-// صدا و متن نهایی، در یک پوشه با نام همان سشن. مقایسه‌ی دستی با صدا ممکن می‌ماند.
-- (NSURL *)archive:(NSURL *)audio result:(ZFinalPassResult *)r {
-    NSString *stem = audio.lastPathComponent.stringByDeletingPathExtension;
-    NSURL *dir = [[ZSupport() URLByAppendingPathComponent:@"final"] URLByAppendingPathComponent:stem];
-    [NSFileManager.defaultManager createDirectoryAtURL:dir withIntermediateDirectories:YES
-                                           attributes:nil error:nil];
-    [r.text writeToURL:[dir URLByAppendingPathComponent:@"final.txt"]
-            atomically:YES encoding:NSUTF8StringEncoding error:nil];
-    NSString *meta = [NSString stringWithFormat:
-        @"model=%@ thinking=%@\naudio=%@\nseconds=%.0f tokens=%ld+%ld\n",
-        ZGModel(), ZGThinking(), audio.path, r.seconds, (long)r.inTokens, (long)r.outTokens];
-    [meta writeToURL:[dir URLByAppendingPathComponent:@"meta.txt"]
-          atomically:YES encoding:NSUTF8StringEncoding error:nil];
-    return dir;
-}
-
-- (void)writeRaw:(NSData *)raw name:(NSString *)name {
-    if (!raw.length) return;
-    NSURL *dir = [ZSupport() URLByAppendingPathComponent:@"final"];
-    [NSFileManager.defaultManager createDirectoryAtURL:dir withIntermediateDirectories:YES
-                                           attributes:nil error:nil];
-    [raw writeToURL:[dir URLByAppendingPathComponent:
-        [NSString stringWithFormat:@"raw-%@-%@.json", ZTimestampId(), name]] atomically:YES];
-}
-
 @end
-
-// zemzeme --finalpass <audio> [--lang fa-IR]
-// همان مسیری که پنل استفاده می‌کند، بی‌میکروفن و بی‌رابط. دلیل بودنش تست است: بی این،
-// تنها راهِ سنجیدن این خط لوله «سه دقیقه حرف زدن و امیدوار بودن» بود. مسیر خروجی و
-// عددهای مصرف روی stdout می‌روند، پس با ست طلایی آزمایشگاه قابل مقایسه است.
-int ZFinalPassMain(NSArray<NSString *> *args) {
-    NSUInteger i = [args indexOfObject:@"--finalpass"];
-    if (i == NSNotFound || i + 1 >= args.count) {
-        printf("usage: zemzeme --finalpass <audio> [--lang fa-IR]\n");
-        return 2;
-    }
-    NSString *path = args[i + 1].stringByExpandingTildeInPath;
-    if (![NSFileManager.defaultManager fileExistsAtPath:path]) {
-        printf("finalpass: فایل نیست: %s\n", path.UTF8String);
-        return 2;
-    }
-    NSUInteger li = [args indexOfObject:@"--lang"];
-    NSString *lang = (li != NSNotFound && li + 1 < args.count) ? args[li + 1] : @"fa-IR";
-    // پرسشِ بلوکه، عمدا، و نه `hasKey`: آن یکی برای رابط است و روی نخ اصلی هیچ‌وقت
-    // Keychain را نمی‌پرسد (پنجره‌ی اجازه می‌تواند یخ بزند)، پس اینجا همیشه «نه»
-    // می‌گفت و خط فرمان بی‌دلیل تسلیم می‌شد. در یک ابزار خط فرمان، صبر کردن درست است.
-    if (![ZFinalPass.shared key]) {
-        printf("finalpass: %s\n", ZFinalPass.missingKeyHint.UTF8String);
-        return 1;
-    }
-    __block ZFinalPassResult *res = nil;
-    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
-    [ZFinalPass.shared runOnAudio:[NSURL fileURLWithPath:path] lang:lang
-                         progress:^(NSString *msg) { fprintf(stderr, "  %s\n", msg.UTF8String); }
-                             done:^(ZFinalPassResult *r) {
-        res = r;
-        dispatch_semaphore_signal(sem);
-    }];
-    // کال‌بک روی نخ اصلی می‌آید و اینجا ران‌لوپی نمی‌چرخد، پس خودمان می‌چرخانیمش
-    while (dispatch_semaphore_wait(sem, DISPATCH_TIME_NOW)) {
-        [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode
-                               beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
-    }
-    if (res.error.length) {
-        printf("finalpass: %s\n", res.error.UTF8String);
-        return 1;
-    }
-    fprintf(stderr, "  %.0f ثانیه، %ld+%ld توکن\n", res.seconds,
-            (long)res.inTokens, (long)res.outTokens);
-    printf("%s\n", res.dir.path.UTF8String);
-    return 0;
-}

@@ -13,13 +13,16 @@ NSURL *ZRes(void) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         NSURL *b = NSBundle.mainBundle.resourceURL;
-        if ([NSFileManager.defaultManager fileExistsAtPath:[b URLByAppendingPathComponent:@"serve.py"].path]) {
+        if ([NSFileManager.defaultManager fileExistsAtPath:[b URLByAppendingPathComponent:@"prompts"].path]) {
             res = b;
             return;
         }
-        // حالت توسعه: باینری خام app/.build/zemzeme، اسکریپت‌ها سه پله بالاتر
+        // حالت توسعه: باینری خام app/.build/zemzeme، خواندنی‌ها دو پله بالاتر (app/).
+        // قبلا سه پله بود چون serve.py و index.html ریشه‌ی ریپو بودند؛ هر دو رفتند و
+        // تنها خواندنیِ باقی‌مانده app/prompts است. یک پله اشتباه یعنی پاس هوش
+        // مصنوعی روی باینریِ توسعه بی‌صدا پرامپتش را پیدا نکند.
         NSURL *u = [NSURL fileURLWithPath:NSProcessInfo.processInfo.arguments[0]].URLByResolvingSymlinksInPath;
-        for (int i = 0; i < 3; i++) u = u.URLByDeletingLastPathComponent;
+        for (int i = 0; i < 2; i++) u = u.URLByDeletingLastPathComponent;
         res = u;
     });
     return res;
@@ -170,22 +173,21 @@ NSFont *ZFont(CGFloat size, BOOL medium) {
 - (NSString *)lang { return [self.d stringForKey:@"lang"] ?: @"fa-IR"; }
 - (void)setLang:(NSString *)v { [self.d setObject:v forKey:@"lang"]; }
 
-- (NSString *)engineName { return [self.d stringForKey:@"engine"] ?: @"google"; }
-- (void)setEngineName:(NSString *)v { [self.d setObject:v forKey:@"engine"]; }
-
 - (ZInsertMode)insertMode {
     NSInteger v = [self.d integerForKey:@"insertMode"];
     return v == ZInsertPaste ? ZInsertPaste : ZInsertType;    // مقدار قدیمی «جمع» به تایپ برمی‌گردد
 }
 - (void)setInsertMode:(ZInsertMode)m { [self.d setInteger:m forKey:@"insertMode"]; }
 
-// کلید همان «collect» قدیمی است و عمدا عوض نشده: مقدار BOOL ذخیره‌شده‌ی نسخه‌های
-// قبل با integerForKey دقیقا ۰ و ۱ خوانده می‌شود، یعنی همان ZModeLive و ZModeCollect،
-// پس انتخاب کاربر قدیمی بدون هیچ کد مهاجرتی سر جایش می‌ماند. مقدار بیرون از بازه
-// (کلید دستکاری‌شده) به زنده برمی‌گردد، نه به حالتی که کاربر نمی‌شناسد.
+// کلید همان «collect» قدیمی است و عمدا عوض نشده، پس انتخاب کاربر بین جمع و کرسر از
+// نسخه یک بی‌هیچ کد مهاجرتی سر جایش می‌ماند.
+//
+// دو حالتِ حذف‌شده هم از همین‌جا مهاجرت می‌کنند: کسی که روی «درج زنده» (۰) یا
+// «یادداشت» (۳) بوده، به «جمع» می‌آید. جمع و نه کرسر، چون جمع متن را نشان می‌دهد و
+// کاربری که حالتش زیر پایش عوض شده باید ببیند چه شد، نه اینکه متن بی‌خبر جایی درج شود.
 - (ZMode)mode {
     NSInteger v = [self.d integerForKey:@"collect"];
-    return (v >= ZModeLive && v <= ZModeNote) ? (ZMode)v : ZModeLive;
+    return v == ZModeCursor ? ZModeCursor : ZModeCollect;
 }
 - (void)setMode:(ZMode)v { [self.d setInteger:v forKey:@"collect"]; }
 
@@ -207,17 +209,6 @@ NSFont *ZFont(CGFloat size, BOOL medium) {
     ZMicSetHighSensitivity(v);    // نخ صدا از کش می‌خواند، نه از دیفالتز
 }
 
-- (BOOL)polishEnabled {
-    NSObject *o = [self.d objectForKey:@"polish"];
-    return o ? [self.d boolForKey:@"polish"] : YES;    // پیش‌فرض روشن
-}
-- (void)setPolishEnabled:(BOOL)v { [self.d setBool:v forKey:@"polish"]; }
-
-// پیش‌فرض خاموش: تصمیم اولیه این بود که وام‌واژه دست نخورد، پس برگرداندنش باید
-// انتخاب صریح کاربر باشد نه رفتار پیش‌فرض.
-- (BOOL)latinTerms { return [self.d boolForKey:@"latinTerms"]; }
-- (void)setLatinTerms:(BOOL)v { [self.d setBool:v forKey:@"latinTerms"]; }
-
 - (BOOL)soundsEnabled {
     NSObject *o = [self.d objectForKey:@"sounds"];
     return o ? [self.d boolForKey:@"sounds"] : YES;    // پیش‌فرض روشن
@@ -235,18 +226,16 @@ NSFont *ZFont(CGFloat size, BOOL medium) {
 - (BOOL)finalPassEnabled { return [self.d boolForKey:@"finalPass"]; }
 - (void)setFinalPassEnabled:(BOOL)v { [self.d setBool:v forKey:@"finalPass"]; }
 
-- (BOOL)plainNotes { return [self.d boolForKey:@"plainNotes"]; }
-- (void)setPlainNotes:(BOOL)v { [self.d setBool:v forKey:@"plainNotes"]; }
-
-// بتا، پس پیش‌فرض خاموش و بی‌هیچ استثنایی: تا کاربر صریحا روشنش نکند، نه دکمه‌ای
-// دیده می‌شود، نه میان‌بری کار می‌کند، نه تماسی گرفته می‌شود.
-- (BOOL)enhanceEnabled { return [self.d boolForKey:@"enhance"]; }
-- (void)setEnhanceEnabled:(BOOL)v { [self.d setBool:v forKey:@"enhance"]; }
-
 // پیش‌فرض خاموش، و جدا از تاگل پاس نهایی: ضبطِ ناخواسته‌ی صدا بدترین پیش‌فرض ممکن است.
 // حالت یادداشت به این کاری ندارد؛ آنجا ضبط تنها کاری است که انجام می‌شود.
 - (BOOL)recordSessions { return [self.d boolForKey:@"recordSessions"]; }
 - (void)setRecordSessions:(BOOL)v { [self.d setBool:v forKey:@"recordSessions"]; }
+
+// پیش‌فرض خاموش: یک سشن دوم به ازای هر تکه، و سودش فقط روی متنِ پر از اصطلاح فنی
+// دیده می‌شود. اندازه‌گیری: روی ضبط ۰۲ کل بلوک‌هایی را برگرداند که پاس فارسی انداخته
+// بود، روی ضبط ۰۷ تقریبا هیچ.
+- (BOOL)secondPass { return [self.d boolForKey:@"secondPass"]; }
+- (void)setSecondPass:(BOOL)v { [self.d setBool:v forKey:@"secondPass"]; }
 
 - (BOOL)upstreamFLAC {
     NSObject *o = [self.d objectForKey:@"upstreamFLAC"];

@@ -157,12 +157,7 @@ static NSString *ZClock(double sec) {
     NSView *_editorBox;       // قاب دورِ ادیتور، که متن «همین‌طور آن زیر» نیفتد
     NSTextField *_editorCap;
     NSButton *_btnAdd, *_btnStart, *_btnStop, *_btnRemove;
-    NSButton *_btnJoin, *_btnPolish, *_btnEnhance, *_btnCopy, *_btnSave;
-    // متنِ پیش از بهبود پرامپت. نال یعنی الان متنِ دیکته در ادیتور است، پرش یعنی
-    // پرامپت نشسته و همان دکمه این بار برمی‌گرداندش. جای میان‌برِ `R` را می‌گیرد: این
-    // پنجره میان‌بر ندارد، پس چرخش باید روی خودِ دکمه سوار شود.
-    NSString *_preEnhance;
-    NSString *_enhanced;      // خودِ پرامپت، تا چرخش بی‌تماسِ تازه در هر دو جهت کار کند
+    NSButton *_btnJoin, *_btnPolish, *_btnCopy, *_btnSave;
     NSArray<NSButton *> *_bar;
     NSMutableArray<ZBatchRow *> *_rows;
     ZBatchJob *_job;
@@ -234,10 +229,6 @@ static NSString *ZClock(double sec) {
     _btnPolish = [self button:@"wand.and.stars"
                           tip:@"پاس نهایی: نیم‌فاصله، نقطه‌گذاری و املا روی متن یکجا"
                        action:@selector(tapPolish)];
-    // بهبود پرامپت (بتا): همان کار پنل شناور، روی متن یکجای همین پنجره.
-    _btnEnhance = [self button:@"curlybraces"
-                           tip:@"بهبود پرامپت (بتا): همین متن، به یک پرامپت آماده برای ایجنت"
-                        action:@selector(tapEnhance)];
     _btnCopy = [self button:@"doc.on.doc" tip:@"کپی متن یکجا" action:@selector(tapCopy)];
     _btnSave = [self button:@"square.and.arrow.down" tip:@"ذخیره‌ی متن یکجا در یک فایل"
                     action:@selector(tapSave)];
@@ -245,7 +236,7 @@ static NSString *ZClock(double sec) {
                            tip:@"تاریخچه: متن اجراهای قبلی را دوباره باز کن"
                         action:@selector(tapHistory)];
     _bar = @[_btnAdd, _btnStart, _btnStop, _btnRemove,
-             _btnJoin, _btnPolish, _btnEnhance, _btnCopy, _btnSave, _btnHistory];
+             _btnJoin, _btnPolish, _btnCopy, _btnSave, _btnHistory];
 
     // هم‌زمانی: پیش‌فرض ۲ می‌ماند. تولتیپ هشدار را می‌گوید، چون این عدد فقط سرعت نیست،
     // سهمِ کلید مشترک است.
@@ -294,16 +285,6 @@ static NSString *ZClock(double sec) {
     [self buildEditor];
     [self layoutViews];
     [self syncButtons];
-}
-
-// عوض کردن آیکونِ یک دکمه‌ی ساخته‌شده، با همان تنظیمِ اندازه و وزن. دکمه‌ای که دو کار
-// دارد باید دو چهره هم داشته باشد.
-- (void)setButton:(NSButton *)b symbol:(NSString *)symbol {
-    NSImage *img = [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:b.toolTip];
-    if (!img) ZLog(@"batchui: SF Symbol پیدا نشد: %@", symbol);
-    b.image = [img imageWithSymbolConfiguration:
-               [NSImageSymbolConfiguration configurationWithPointSize:13 weight:NSFontWeightMedium]]
-              ?: [NSImage new];
 }
 
 - (NSButton *)button:(NSString *)symbol tip:(NSString *)tip action:(SEL)action {
@@ -617,9 +598,6 @@ static NSString *ZClock(double sec) {
     ZBatchJob *job = [[ZBatchJob alloc] initWithFiles:urls lang:ZSettings.shared.batchLang];
     job.langs = langs;
     job.jobs = _jobsPop.indexOfSelectedItem + 1;
-    // پاس ویرایش اینجا اجرا نمی‌شود: متن هر فایل خام روی دیسک می‌رود و پاس نهایی روی
-    // متن یکجا می‌نشیند. ترتیبش در batch.m نوشته شده: اول جوش خام، بعد ویرایش.
-    job.polishFiles = NO;
     __weak typeof(self) ws = self;
     job.onFileProgress = ^(NSURL *f, double doneSec, double totalSec) {
         [ws progress:f done:doneSec total:totalSec];
@@ -742,36 +720,16 @@ static NSString *ZClock(double sec) {
 - (void)setEditorText:(NSString *)t {
     _editor.string = t ?: @"";
     _autoText = _editor.string;
-    // هر نوشتنِ تازه، چرخشِ بهبود پرامپت را باطل می‌کند. یک جا و نه هفت جا: چسباندن،
-    // پاس نهایی، تاریخچه و پایان کار همه از همین رد می‌شوند، و «متن دیکته را برگردان»
-    // که متنِ یک صفِ دیگر را برگرداند، بدترین شکلِ ممکن است.
-    _preEnhance = nil;
-    _enhanced = nil;
     [_editor scrollRangeToVisible:NSMakeRange(0, 0)];
     [self syncButtons];
 }
 
-// قالب‌هایی که خودِ جمینای مستقیم می‌گیرد. تبدیلی در کار نیست: فایلی که در این فهرست
-// نباشد از مسیر قاعده‌ای رد می‌شود و پیامش را هم می‌گوید.
-static NSString *ZGeminiMime(NSURL *url) {
-    static NSDictionary *map;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        map = @{@"flac": @"audio/flac", @"wav": @"audio/wav", @"mp3": @"audio/mpeg",
-                @"m4a": @"audio/mp4", @"aac": @"audio/aac", @"ogg": @"audio/ogg",
-                @"oga": @"audio/ogg", @"opus": @"audio/ogg", @"aiff": @"audio/aiff",
-                @"aif": @"audio/aiff"};
-    });
-    return map[url.pathExtension.lowercaseString];
-}
-
-// پاس نهایی، دو مسیر و یک دکمه:
-//   · با هوش مصنوعی روشن و کلید موجود و فایل‌های صوتیِ قابل‌قبول: کل صدا از نو شنیده
-//     می‌شود. اندازه‌گیری روی یک ویس ۶ دقیقه‌ای فارسی: متن خام گوگل ۱۱ تکه محتوا را
-//     انداخته بود و هیچ پاس متنی برشان نمی‌گرداند، چون در ورودی نبودند.
-//   · وگرنه همان پاس قاعده‌ای روی متنِ چسبانده‌شده.
-// هر دو روی نخ پس‌زمینه: پاس قاعده‌ای صدها تکه دارد و پاس هوش مصنوعی دقیقه‌ها طول
-// می‌کشد؛ روی نخ اصلی یعنی پنجره‌ی یخ‌زده.
+// پاس نهایی حالا یک مسیر است، نه دو: نسخه‌ی قبل یا کل صدا را دوباره به مدل
+// می‌داد، یا یک پاسِ قاعده‌ای محلی می‌زد. صدا از این مسیر برداشته شد (زمزمه دیگر
+// صدا را به هیچ مدلی نمی‌دهد) و پاسِ قاعده‌ایِ محلی هم حذف شد؛ آنچه ماند یک تماسِ
+// متنیِ ZFinalPass است، روی همان متنِ چسبانده‌شده‌ی ادیتور. کار و done هر دو نخِ
+// خودِ ZFinalPass را دارند (پس‌زمینه برای تماس، اصلی برای done)، پس این متد دیگر
+// نخِ دستی نمی‌سازد.
 - (void)tapPolish {
     if (_polishing) return;
     NSString *raw = _editor.string;
@@ -779,156 +737,31 @@ static NSString *ZGeminiMime(NSURL *url) {
         [self flash:@"اول متنی بچسبان"];
         return;
     }
-    if (ZSettings.shared.finalPassEnabled && ZFinalPass.hasKey) {
-        NSMutableArray<NSURL *> *files = [NSMutableArray array];
-        NSMutableArray<NSString *> *bad = [NSMutableArray array];
-        for (ZBatchRow *r in _rows) {
-            if (!r.url) continue;
-            if (ZGeminiMime(r.url)) [files addObject:r.url];
-            else [bad addObject:r.url.pathExtension.lowercaseString ?: @"?"];
-        }
-        if (files.count && !bad.count) {
-            [self aiPolish:files];
-            return;
-        }
-        [self flash:bad.count
-            ? [NSString stringWithFormat:@"پاس هوش مصنوعی این قالب را نمی‌گیرد (%@)؛ پاس قاعده‌ای اجرا شد",
-               [[NSSet setWithArray:bad].allObjects componentsJoinedByString:@"، "]]
-            : @"فایلی در صف نیست؛ پاس قاعده‌ای روی همین متن اجرا شد"];
+    if (!ZSettings.shared.finalPassEnabled) {
+        [self flash:@"پاس نهایی خاموش است؛ از تنظیمات روشنش کن"];
+        return;
+    }
+    if (!ZFinalPass.hasKey) {
+        [self flash:ZFinalPass.missingKeyHint];
+        return;
     }
     _polishing = YES;
     [self syncButtons];
     _status.stringValue = @"پاس نهایی…";
     NSString *lang = ZSettings.shared.batchLang;
-    if (ZSettings.shared.polishEnabled) [ZPolish.shared prepare];
     __weak typeof(self) ws = self;
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        NSString *out = ZSettings.shared.polishEnabled ? ZBatchPolishText(raw, lang) : raw;
-        dispatch_async(dispatch_get_main_queue(), ^{
-            __strong typeof(ws) s = ws;
-            if (!s) return;
-            s->_polishing = NO;
-            BOOL changed = out.length && ![out isEqualToString:raw];
-            if (changed) [s setEditorText:out];
-            ZPlay(ZSoundPolish);
-            [s flash:changed ? @"پاس نهایی انجام شد"
-                             : @"پاس چیزی عوض نکرد (دیمن ویرایش بالا نیست؟)"];
-            [s syncButtons];
-        });
-    });
-}
-
-// فایل‌به‌فایل و به همان ترتیب صف، چون خروجی هم به همان ترتیب چسبانده می‌شود. صفِ
-// چندفایلی سریالی می‌رود نه موازی: سهم مجانی سقف ۲۰ درخواست در دقیقه دارد و هر فایل
-// دو تماس می‌خورد.
-- (void)aiPolish:(NSArray<NSURL *> *)files {
-    _polishing = YES;
-    [self syncButtons];
-    NSString *lang = ZSettings.shared.batchLang;
-    __weak typeof(self) ws = self;
-    __block NSMutableArray<NSString *> *out = [NSMutableArray array];
-    __block NSInteger at = 0;
-    // اولین خطا نگه داشته می‌شود تا پیامِ آخر خودِ دلیل را بگوید. بی این، «نوبت آزاد
-    // نبود» هم همان «چیزی برنگرداند»ِ کلی را می‌گرفت و کاربر نمی‌فهمید چرا.
-    __block NSString *firstErr = nil;
-    __block void (^next)(void);
-    next = ^{
-        __strong typeof(ws) s = ws;
-        if (!s) return;
-        if (at >= (NSInteger)files.count) {
-            s->_polishing = NO;
-            NSString *joined = [out componentsJoinedByString:@"\n\n"];
-            if (joined.length) [s setEditorText:joined];
-            ZPlay(ZSoundPolish);
-            [s flash:joined.length ? @"پاس نهایی با هوش مصنوعی انجام شد"
-                                   : (firstErr ?: @"پاس نهایی چیزی برنگرداند؛ متن قبلی سر جایش است")];
-            [s syncButtons];
-            next = nil;
-            return;
-        }
-        NSURL *f = files[at];
-        s->_status.stringValue = [NSString stringWithFormat:@"پاس نهایی %@ از %@: %@",
-            ZFaDigits(@(at + 1).stringValue), ZFaDigits(@(files.count).stringValue),
-            f.lastPathComponent];
-        [ZFinalPass.shared runOnAudio:f lang:lang progress:^(NSString *msg) {
-            __strong typeof(ws) s2 = ws;
-            if (s2) s2->_status.stringValue = [NSString stringWithFormat:@"%@ · %@",
-                                               f.lastPathComponent, msg];
-        } done:^(ZFinalPassResult *r) {
-            if (r.text.length) {
-                [out addObject:r.text];
-            } else {
-                if (!firstErr) firstErr = r.error;
-                ZLog(@"batchui: پاس نهایی %@ نشد: %@", f.lastPathComponent, r.error ?: @"?");
-            }
-            at++;
-            if (next) next();
-        }];
-    };
-    next();
-}
-
-// ---------- بهبود پرامپت (بتا) ----------
-// یک دکمه، دو کار، و همان قاعده‌ی پنل شناور: متن دیکته همیشه می‌ماند. اینجا میان‌بری
-// نیست که مثل `R` بچرخد، پس چرخش روی خودِ دکمه سوار شده و آیکون هم عوض می‌شود.
-//
-// و **واقعا** می‌چرخد، در هر دو جهت. نسخه‌ی اول فقط `_preEnhance` را نگه می‌داشت: بار
-// دوم متن دیکته برمی‌گشت و پرامپت دور ریخته می‌شد، پس بار سوم مدل را دوباره صدا
-// می‌زد. یعنی هم تولتیپ («پرامپت از دست نمی‌رود») دروغ بود، هم هر رفت‌وبرگشت یک
-// درخواست از سهم می‌خورد. دو رشته نگه داشتن ارزان‌تر از یک تماس شبکه است.
-- (void)tapEnhance {
-    if (_polishing) return;
-    if (_preEnhance || _enhanced) {
-        BOOL showingPrompt = _enhanced && [_editor.string isEqualToString:_enhanced];
-        NSString *to = showingPrompt ? _preEnhance : _enhanced;
-        if (to.length) {
-            NSString *keepPre = _preEnhance, *keepOut = _enhanced;
-            [self setEditorText:to];    // این هر دو را صفر می‌کند، پس بعدش برشان می‌گردانیم
-            _preEnhance = keepPre;
-            _enhanced = keepOut;
-            [self syncButtons];
-            [self flash:showingPrompt ? @"متن دیکته" : @"پرامپت"];
-            return;
-        }
-    }
-    NSString *raw = _editor.string;
-    if (!raw.length) {
-        [self flash:@"اول متنی بچسبان"];
-        return;
-    }
-    if (!ZFinalPass.hasKey) {
-        [self flash:@"کلید جمینای نیست؛ بهبود پرامپت اجرا نشد"];
-        ZLog(@"enhance: %@", ZFinalPass.missingKeyHint);
-        return;
-    }
-    // همان پرچمِ «کاری در جریان است» که پاس نهایی استفاده می‌کند، و حالا فقط برای
-    // دکمه‌هاست: «یک کار در هر لحظه» را خودِ انتقال نگه می‌دارد (`ZPassLock`)، چون این
-    // پرچم مالِ همین پنل بود و با پرچم‌های پنل شناور جمع نمی‌شد.
-    _polishing = YES;
-    [self syncButtons];
-    _status.stringValue = @"بهبود پرامپت…";
-    __weak typeof(self) ws = self;
-    [ZEnhance.shared runOnText:raw lang:ZSettings.shared.batchLang progress:^(NSString *msg) {
-        __strong typeof(ws) s = ws;
-        if (s) s->_status.stringValue = msg;
-    } done:^(ZEnhanceResult *r) {
+    [ZFinalPass.shared runOnText:raw second:nil lang:lang done:^(NSString *out, NSString *err) {
         __strong typeof(ws) s = ws;
         if (!s) return;
         s->_polishing = NO;
-        if (r.cancelled || r.error.length || r.gated || !r.text.length) {
-            [s flash:r.cancelled ? @"لغو شد؛ متن سر جایش است"
-                : r.gated ? @"پرامپت رد شد (ناقص یا پرحرف)؛ متن قبلی سر جایش است"
-                : (r.error ?: @"پرامپتی نیامد؛ متن قبلی سر جایش است")];
-            ZLog(@"enhance: batch failed: %@", r.gated ? r.summary : (r.error ?: @"?"));
-            [s syncButtons];
-            return;
-        }
-        [s setEditorText:r.text];
-        s->_preEnhance = raw;    // بعد از setEditorText، چون آن یکی صفرشان می‌کند
-        s->_enhanced = r.text;
+        // out خالی یا err پرشده یعنی پاس گرو نگرفت: متن خام دست‌نخورده می‌ماند، فقط
+        // پیامش نشان داده می‌شود؛ این پاس هیچ‌وقت حق ندارد نتیجه را گرو بگیرد.
+        BOOL changed = out.length > 0;
+        if (changed) [s setEditorText:out];
         ZPlay(ZSoundPolish);
-        [s flash:[NSString stringWithFormat:@"پرامپت آماده شد · %@ ثانیه (همین دکمه، متن دیکته را برمی‌گرداند)",
-                  ZFaDigits([NSString stringWithFormat:@"%.0f", r.seconds])]];
+        [s flash:changed ? @"پاس نهایی انجام شد"
+                         : (err.length ? err : @"پاس چیزی برنگرداند؛ متن قبلی سر جایش است")];
+        if (!changed) ZLog(@"batchui: پاس نهایی چیزی نداد: %@", err ?: @"?");
         [s syncButtons];
     }];
 }
@@ -1061,16 +894,6 @@ static NSString *ZGeminiMime(NSURL *url) {
     _btnRemove.enabled = _rows.count > 0;
     _btnJoin.enabled = anyText;
     _btnPolish.enabled = _editor.string.length > 0 && !_polishing;
-    // بتا و پیش‌فرض خاموش: تا تاگل روشن نشود، دکمه‌اش هم وجود ندارد. آیکونش می‌گوید
-    // الان کدام کار را می‌کند، وگرنه دکمه‌ای که دو کار دارد و یک چهره، دروغ می‌گوید.
-    _btnEnhance.hidden = !ZSettings.shared.enhanceEnabled;
-    _btnEnhance.enabled = _editor.string.length > 0 && !_polishing;
-    BOOL showingPrompt = _enhanced.length && [_editor.string isEqualToString:_enhanced];
-    [self setButton:_btnEnhance symbol:_preEnhance ? @"arrow.2.squarepath" : @"curlybraces"];
-    _btnEnhance.toolTip = !_preEnhance
-        ? @"بهبود پرامپت (بتا): همین متن، به یک پرامپت آماده برای ایجنت"
-        : showingPrompt ? @"نمایش متن دیکته (بی تماس تازه؛ همین دکمه برمی‌گرداند)"
-                        : @"نمایش پرامپت (بی تماس تازه)";
     _btnCopy.enabled = _editor.string.length > 0;
     _btnSave.enabled = _editor.string.length > 0;
     _btnHistory.enabled = YES;
