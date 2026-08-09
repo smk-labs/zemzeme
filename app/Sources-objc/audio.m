@@ -59,9 +59,30 @@ int ZMicDumpMain(NSString *path, double seconds) {
         fprintf(stderr, "micdump: %s\n", err.localizedDescription.UTF8String ?: "?");
         return 1;
     }
-    fprintf(stderr, "micdump: %.0f ثانیه ضبط از %s...\n", seconds, ZDefaultInputName().UTF8String);
-    [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:seconds]];
+    // ‏Ctrl+C هم یک پایانِ درست است، نه دور ریختنِ ضبط. کل صدا در حافظه جمع می‌شود و
+    // فقط سرِ پایانِ تایمر روی دیسک می‌نشیند، پس تا امروز هر بار که کاربر حرفش زودتر
+    // تمام می‌شد و Ctrl+C می‌زد، **تمامِ** ضبط می‌رفت. یک بار همین شد: چهل ثانیه
+    // خواندن، و هیچ فایلی. برای کاری که آدم باید از روی متن بخواند، «تا آخر صبر کن»
+    // شرطِ بی‌جایی است؛ طول ورودی از این به بعد فقط سقف است.
+    //
+    // dispatch source و نه signal(): هندلرِ سیگنال فقط چند تابعِ async-safe را اجازه
+    // دارد و اینجا باید یک رانلوپ را بیدار کنیم. SIG_IGN لازم است وگرنه رفتار
+    // پیش‌فرض (کشتنِ فوری) پیش از رسیدن به سورس اجرا می‌شود.
+    __block BOOL interrupted = NO;
+    signal(SIGINT, SIG_IGN);
+    dispatch_source_t sigsrc = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL, SIGINT, 0,
+                                                     dispatch_get_main_queue());
+    dispatch_source_set_event_handler(sigsrc, ^{ interrupted = YES; });
+    dispatch_resume(sigsrc);
+    fprintf(stderr, "micdump: تا %.0f ثانیه ضبط از %s (Ctrl+C زودتر تمامش می‌کند و ذخیره می‌شود)...\n",
+            seconds, ZDefaultInputName().UTF8String);
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:seconds];
+    while (!interrupted && [deadline timeIntervalSinceNow] > 0) {
+        [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
+    }
+    dispatch_source_cancel(sigsrc);
     [mic stop];
+    if (interrupted) fprintf(stderr, "micdump: با Ctrl+C تمام شد؛ همین‌قدر ذخیره می‌شود\n");
 
     NSMutableData *out = [NSMutableData data];
     NSData *body;
