@@ -132,6 +132,27 @@ static NSMutableSet<NSNumber *> *ZNoAXWritePids(void) {
         // متن جای عوضی می‌نشیند. درج یک بار در پایان اتفاق می‌افتد، پس یک پرس‌وجوی
         // اضافه هیچ هزینه‌ای ندارد و همان یک بار است که باید درست باشد.
         ZInvalidateFocusCache();
+        // اپی که صریحا پیست می‌خواهد، **همیشه** پیست می‌گیرد؛ نه فقط وقتی متن بلند
+        // باشد و نه فقط وقتی اکسسبیلیتی رد کند.
+        //
+        // این یک رگرسیون بود که برگشت و باید یک بار برای همیشه بسته شود. ریموت
+        // دسکتاپ تنها مسیرِ درستش پیست است: کلاینت، کلیپ‌بوردِ مک را فقط سرِ عوض شدنِ
+        // پنجره‌ی کلید به سمت ویندوز سینک می‌کند، و `pasteNow` دقیقا همان فلیک را
+        // می‌زند. تایپِ رویدادی آنجا به یک تنظیم در خودِ آن اپ بند است و نامطمئن،
+        // و نوشتنِ اکسسبیلیتی اصلا جواب نمی‌دهد.
+        //
+        // چرا برگشت: شرطِ `atomic` (متنِ کوتاه‌تر از ۱۸ واحد) پیش از این شرط می‌نشست،
+        // و در نسخه دو که هر مکث یک تکه‌ی کوتاه درج می‌کند، تکه‌های کوتاه از کنارِ
+        // پیست رد می‌شدند و تایپ می‌رفتند. نتیجه‌اش برای کاربر این بود که داخل ریموت
+        // «پیستِ خودِ ویندوز» اجرا می‌شد، یعنی هرچه از قبل در کلیپ‌بوردِ ویندوز بود.
+        if (pasteIfRefused) {
+            ZLog(@"inject: pasting %lu chars into pid=%d (اپ پیست می‌خواهد)",
+                 (unsigned long)text.length, pid);
+            [self pasteNow:text delayMicros:ZSettings.shared.pasteDelayMicros];
+            self->_lastWriteAt = CFAbsoluteTimeGetCurrent();
+            if (done) dispatch_async(dispatch_get_main_queue(), ^{ done(NO); });
+            return;
+        }
         BOOL viaAX = NO;
         BOOL atomic = text.length >= kZAtomicMinUnits;
         if (atomic && ![ZNoAXWritePids() containsObject:@(pid)]) {
@@ -146,11 +167,8 @@ static NSMutableSet<NSNumber *> *ZNoAXWritePids(void) {
             // متنِ بلند، در همان اپ، همان چیزی است که این مسیر برای فرارش ساخته شد:
             // اپ رویداد می‌اندازد و رویداد تکرار می‌کند و متن قیچی می‌شود. پیست تنها
             // مسیرِ اتمیکِ باقی‌مانده است، پس متنِ یکجا از آنجا می‌رود.
-            BOOL viaPaste = atomic && pasteIfRefused;
-            ZLog(@"inject: %@ %lu chars into pid=%d",
-                 viaPaste ? @"pasting" : @"typing", (unsigned long)text.length, pid);
-            if (viaPaste) [self pasteNow:text delayMicros:ZSettings.shared.pasteDelayMicros];
-            else [self typeNow:text delayMicros:d leadIn:YES];
+            ZLog(@"inject: typing %lu chars into pid=%d", (unsigned long)text.length, pid);
+            [self typeNow:text delayMicros:d leadIn:YES];
         }
         self->_lastWriteAt = CFAbsoluteTimeGetCurrent();
         if (done) dispatch_async(dispatch_get_main_queue(), ^{ done(viaAX); });

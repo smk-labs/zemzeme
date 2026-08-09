@@ -117,6 +117,7 @@ int ZSelfTest(NSString *file, NSString *lang) {
     NSUInteger shotAt = [shotArgs indexOfObject:@"--uishot"];
     if (shotAt != NSNotFound && shotAt + 1 < shotArgs.count) {
         ZRegisterFonts();
+    [self buildEditMenu];
         _panel = [ZPanel new];
         NSString *dir = shotArgs[shotAt + 1];
         // با یک مسیر فایل در ادامه، جای حالت‌های نمونه یک اجرای واقعی عکس گرفته می‌شود:
@@ -155,6 +156,7 @@ int ZSelfTest(NSString *file, NSString *lang) {
     [NSFileManager.defaultManager createDirectoryAtURL:ZSessionsDir()
                            withIntermediateDirectories:YES attributes:nil error:nil];
     ZRegisterFonts();
+    [self buildEditMenu];
     _panel = [ZPanel new];
     _hotkeys = [ZHotkeyTap new];
     [self setupStatusItem];
@@ -231,6 +233,31 @@ int ZSelfTest(NSString *file, NSString *lang) {
     NSString *queued = _pendingURL;
     _pendingURL = nil;
     if (queued.length) [self runURL:queued];
+}
+
+// اپِ اکسسوری منوی اصلی ندارد، و مک میان‌برهای ویرایش را از **منو** می‌گیرد نه از
+// جای دیگر. نتیجه‌اش این بود که در شیتِ «کلید Gemini…» هیچ‌کدام از Command+V و
+// Command+A و Command+C کار نمی‌کردند و کاربر کلیدِ چهل‌نویسه‌ای را باید دستی تایپ
+// می‌کرد. یک منوی ویرایشِ نامرئی همین را درست می‌کند: دیده نمی‌شود، ولی میان‌برها
+// زنده می‌شوند.
+- (void)buildEditMenu {
+    NSMenu *main = [NSMenu new];
+    NSMenuItem *editItem = [NSMenuItem new];
+    [main addItem:editItem];
+    NSMenu *edit = [[NSMenu alloc] initWithTitle:@"ویرایش"];
+    struct { NSString *t; SEL a; NSString *k; } rows[] = {
+        {@"واگرد",        @selector(undo:),       @"z"},
+        {@"از نو",        @selector(redo:),       @"Z"},
+        {@"برش",          @selector(cut:),        @"x"},
+        {@"کپی",          @selector(copy:),       @"c"},
+        {@"چسباندن",      @selector(paste:),      @"v"},
+        {@"انتخاب همه",   @selector(selectAll:),  @"a"},
+    };
+    for (unsigned i = 0; i < sizeof(rows) / sizeof(rows[0]); i++) {
+        [edit addItemWithTitle:rows[i].t action:rows[i].a keyEquivalent:rows[i].k];
+    }
+    editItem.submenu = edit;
+    NSApp.mainMenu = main;
 }
 
 // یک‌بار در عمر نصب، نه در عمر پروسه: کلید همان کلید معمولی دیفالتز است، پس ری‌استارت
@@ -684,9 +711,35 @@ int ZSelfTest(NSString *file, NSString *lang) {
                    dispatch_get_main_queue(), ^{
         typeof(self) me = ws;
         if (!me || !ZSettings.shared.finalPassEnabled) return;
-        if (ZFinalPass.keyKnownMissing) [me->_panel flash:@"ولی کلید جمینای نیست؛ از منو «کلید Gemini…»"];
+        if (ZFinalPass.keyKnownMissing) [me offerKey];
     });
 }
+// تاگل روشن است ولی کلید نیست: کاربر را در آن حالتِ زرد رها نکن. یا ببرش سمت
+// گذاشتن کلید، یا خاموشش کن. تاگلی که روشن باشد و کار نکند بدترین حالت است، چون
+// کاربر هر بار منتظر چیزی می‌ماند که قرار نیست بیاید.
+//
+// و فقط **یک بار**: کسی که «بعدا» را زد جوابش را داده و نباید هر بار دوباره پرسیده
+// شود. کلید روی دیسک می‌ماند، پس ری‌استارت هم دوباره‌اش نمی‌کند.
+- (void)offerKey {
+    if ([NSUserDefaults.standardUserDefaults boolForKey:@"keyOfferDismissed"]) return;
+    NSAlert *a = [NSAlert new];
+    a.messageText = @"پاس هوش مصنوعی روشن است، ولی کلید جمینای نیست";
+    a.informativeText = @"بی کلید، این پاس هیچ کاری نمی‌کند و متن خام تحویل می‌شود. "
+                         "کلید رایگان است و فقط در Keychain همین دستگاه می‌ماند.";
+    NSButton *set = [a addButtonWithTitle:@"کلید را بگذار"];
+    NSButton *off = [a addButtonWithTitle:@"پاس را خاموش کن"];
+    NSButton *later = [a addButtonWithTitle:@"بعدا"];
+    NSModalResponse r = [a runModal];
+    if (r == [a.buttons indexOfObject:set] + NSAlertFirstButtonReturn) {
+        [self menuSetKey];
+    } else if (r == [a.buttons indexOfObject:off] + NSAlertFirstButtonReturn) {
+        ZSettings.shared.finalPassEnabled = NO;
+        [_panel flash:@"پاس هوش مصنوعی خاموش شد"];
+    } else if (r == [a.buttons indexOfObject:later] + NSAlertFirstButtonReturn) {
+        [NSUserDefaults.standardUserDefaults setBool:YES forKey:@"keyOfferDismissed"];
+    }
+}
+
 - (void)menuToggleFinalPass { [self toggleAIPass]; }
 - (void)menuToggleSecondPass { ZSettings.shared.secondPass = !ZSettings.shared.secondPass; }
 - (void)menuToggleRecord { ZSettings.shared.recordSessions = !ZSettings.shared.recordSessions; }
