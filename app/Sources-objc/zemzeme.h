@@ -213,6 +213,7 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 - (void)resume;
 - (void)stop;      // آسنکرون: صف خالی می‌شود و بعد engineDidFinish: می‌آید
 - (void)cancel;    // دور ریختن: نه متنی، نه صدایی
+- (void)resetClock;   // سطل آشغال: شمارنده هم از صفر
 @end
 
 // جاروی سشن‌های قدیمی‌تر از kZSessionKeepDays. سر لانچ و بی‌صدا.
@@ -395,6 +396,7 @@ typedef NS_ENUM(NSInteger, ZWriteProof) {
 // نخ اصلی نشسته، پس امن است.
 @property (nonatomic, copy) BOOL (^onEscape)(void);
 @property (nonatomic, copy) void (^onHelp)(void);           // H: کارت راهنما، در سشن و بیرونش
+@property (nonatomic, copy) void (^onAIPass)(void);         // A: روشن/خاموش کردن پاس هوش مصنوعی
 // تک‌تپ Command راست. در نسخه یک یعنی مکث بود؛ حالا یعنی **پایان**. دلیلش سر
 // session.m نوشته شده: کاربر باید راهی ساده برای گفتن «حرفم تمام شد» داشته باشد و
 // آن راه باید همان کلیدی باشد که دستش رویش است.
@@ -442,7 +444,8 @@ typedef NS_ENUM(NSInteger, ZWriteProof) {
 @property (nonatomic) ZMode mode;
 // در نسخه دو هیچ متنی در حین حرف زدن نمی‌آید، پس بی این دو پنل مرده به نظر می‌رسد
 // و آدم نمی‌فهمد اصلا شنیده می‌شود یا نه. بدترین حالتِ این طراحی همان است.
-@property (nonatomic) NSTimeInterval elapsed;    // ثانیه‌ی ضبط‌شده؛ صفر یعنی نشان نده
+@property (nonatomic) NSTimeInterval elapsed;       // دورِ فعلی، زنده؛ صفر یعنی نشان نده
+@property (nonatomic) NSTimeInterval elapsedTotal;  // روی هم، همه‌ی دورهای این سشن
 @property (nonatomic) BOOL working;              // کاری در جریان است: چرخنده روشن
 @property (nonatomic, copy) NSString *workingMsg;
 // سشن تمام شده ولی پنل با متن نهایی باز مانده تا خوانده و ویرایش شود. دکمه‌های
@@ -514,6 +517,7 @@ int ZCaretProbeMain(NSArray<NSString *> *args);
 // راهنما از خود نوار. در نسخه یک اختیاری بود چون کاربر لازم نبود چیزی بداند؛ حالا
 // باید بداند تک‌تپ یعنی پایان، پس کارت باید از خودِ پنل هم پیدا شود.
 @property (nonatomic, copy) void (^onHelp)(void);
+@property (nonatomic, copy) void (^onAIToggle)(void);   // A: روشن/خاموش کردن پاس هوش مصنوعی
 - (void)show;
 - (void)hide;
 - (void)render:(ZPanelModel *)m;
@@ -609,6 +613,7 @@ extern NSNotificationName const ZBatchActivity;
 @property (nonatomic, readonly) BOOL running;   // کاری در جریان است (برای رنگ منوبار)
 - (void)show;
 - (void)toggle;    // میان‌بر F: باز اگر بسته، پنهان اگر باز. کارِ در جریان نمی‌ایستد
+- (BOOL)isFront;   // پنجره‌ی جلوست؟ تپِ سراسری Esc را از دستش نمی‌گیرد
 - (void)addFiles:(NSArray<NSURL *> *)urls;
 - (void)makeShots:(NSString *)dir;                                 // حالت‌های نمونه (--uishot)
 - (void)makeShots:(NSString *)dir then:(void (^)(void))done;       // پله‌پله، با فرصت رندر

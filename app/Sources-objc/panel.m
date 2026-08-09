@@ -37,9 +37,15 @@ NSColor *ZStatusColor(ZPanelModel *m) {
 // قابل ویرایش با کیبورد خود کاربر، و تهش با یک دکمه در اپ مقصد درج می‌شود.
 
 static const CGFloat kPW = 500;
-static const CGFloat kBarH = 46;      // ارتفاع ردیف پایه (دکمه‌ها + نقطه)
-static const CGFloat kBarPad = 10;    // فاصله اولین دکمه از لبه چپ
+// دو ردیف، نه یکی. تا نسخه‌ی قبل خط وضعیت و یازده دکمه یک ردیف را شریک بودند و
+// نتیجه‌اش این شد که جمله‌ی «حرفت که تمام شد…» وسطش بریده می‌شد، یعنی دقیقا همان
+// جمله‌ای که تمام نسخه دو به آن بند است. حالا متن کل پهنا را دارد.
+static const CGFloat kTextH = 34;     // ردیف بالا: خط وضعیت (تا دو خط) و ساعت و نشان
+static const CGFloat kBtnH = 38;      // ردیف پایین: دکمه‌ها با حرف میان‌بر زیرشان
+static const CGFloat kBarH = kTextH + kBtnH;
+static const CGFloat kBarPad = 12;    // فاصله اولین دکمه از لبه چپ
 static const CGFloat kBarStep = 28;   // گام هر دکمه (۲۴ عرض + ۴ فاصله)
+static const CGFloat kGroupGap = 14;  // فاصله‌ی بین دو دسته، جای جداکننده
 static const CGFloat kEditorH = 150;  // ارتفاع ادیتور حالت جمع
 static const CGFloat kGripW = 30;     // دستگیرهٔ دیداری: خطِ وسطِ لبهٔ بالا
 static const CGFloat kGripH = 4;
@@ -92,9 +98,11 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
     NSTextField *_chipLabel;
     ZBarButton *_btnClose, *_btnPause, *_btnCopy, *_btnTrash, *_btnInsert;
     ZBarButton *_btnLang, *_btnMode, *_btnFile, *_btnHelp;
-    ZBarButton *_btnSens;
+    ZBarButton *_btnSens, *_btnAI;
+    NSView *_sep1, *_sep2;   // جداکننده‌ی دسته‌ها
     NSProgressIndicator *_spinner;    // جای نشان، وقتی کاری در جریان است
-    NSArray<ZBarButton *> *_bar;  // ترتیب دکمه‌ها؛ یک منبع حقیقت برای چیدمان و پهنای متن
+    NSArray<ZBarButton *> *_bar;
+    NSArray<NSNumber *> *_groupEnds;  // ترتیب دکمه‌ها؛ یک منبع حقیقت برای چیدمان و پهنای متن
     ZPanelModel *_lastModel;      // برای رندر دوباره بدون سشن (فیدبک لحظه‌ای)
     NSString *_flash;             // پیام کوتاه تایید کار، چند لحظه روی خط وضعیت
     NSInteger _flashGen;
@@ -206,6 +214,12 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
         _btnSens = [self makeButton:@"ear.badge.waveform" key:@"S"
                                 tip:@"حساسیت بالای میکروفن: برای پچ‌پچ و اتاق ساکت"
                              action:@selector(sensTap)];
+        // پاس هوش مصنوعی: تنها دکمه‌ی نوار که یک **تنظیم** را عوض می‌کند نه یک کار
+        // را، پس دسته‌ی خودش را دارد و روشن/خاموشی‌اش باید از روی خودِ دکمه دیده
+        // شود، نه از منو. جای آینده‌ی تاگل‌های هم‌خانواده (استریم، پاس نگارشی) هم
+        // همین‌جاست.
+        _btnAI = [self makeButton:@"sparkles" key:@"A"
+                              tip:@"" action:@selector(aiTap)];
         _btnFile = [self makeButton:@"arrow.up.doc" key:@"F"
                                 tip:@"رونویسی فایل صوتی: صف، پیشرفت و متن یکجا (Command راست + F)"
                              action:@selector(fileTap)];
@@ -216,10 +230,17 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
                                 tip:@"راهنمای میان‌برها (Command راست + H)"
                              action:@selector(helpTap)];
         _btnInsert.hidden = YES;
-        // ترتیب چیدمان؛ layoutViews از همین یک لیست می‌خواند، پس پیدا و ناپیدا شدن
-        // دکمه‌ها هیچ‌وقت با عدد هاردکد ناهمخوان نمی‌شود.
-        _bar = @[_btnClose, _btnPause, _btnSens, _btnCopy, _btnTrash, _btnLang, _btnMode,
-                 _btnInsert, _btnFile, _btnHelp];
+        // سه دسته، و ترتیبشان معنی دارد: اول کارهایی که وسط دیکته لازم می‌شوند،
+        // بعد تنظیم‌های کم‌استفاده، و آخر فیچرهایی که تاگل‌اند. یازده آیکون در یک
+        // ردیفِ بی‌فاصله فقط یک دیوار است و کاربر هیچ‌کدام را پیدا نمی‌کند.
+        // layoutViews از همین یک لیست می‌خواند، پس پیدا و ناپیدا شدن دکمه‌ها
+        // هیچ‌وقت با عدد هاردکد ناهمخوان نمی‌شود.
+        _bar = @[_btnClose, _btnPause, _btnCopy, _btnInsert, _btnTrash,
+                 _btnLang, _btnMode, _btnSens, _btnFile, _btnHelp,
+                 _btnAI];
+        _groupEnds = @[@4, @9];      // اندیس آخرین دکمه‌ی هر دسته
+        _sep1 = [NSView new]; _sep1.wantsLayer = YES; [_effect addSubview:_sep1];
+        _sep2 = [NSView new]; _sep2.wantsLayer = YES; [_effect addSubview:_sep2];
 
         [self layoutViews];
         [self applyColors];
@@ -271,28 +292,41 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
 // ادیتور (اگر باز باشد) بالای ردیف پایه می‌نشیند.
 - (void)layoutViews {
     CGFloat H = _panel.frame.size.height;
-    CGFloat cy = (kBarH - 24) / 2;   // مرکز ردیف؛ آیکون‌ها ۴ پیکسل بالاتر می‌روند
-    // آیکون کمی بالاتر می‌نشیند تا حرف میان‌بر زیرش جا شود
+    // نوار پایینِ پنل دو ردیف دارد و ترتیبشان عمدی است: **دکمه‌ها بالا، خط وضعیت
+    // زیرشان.** اول برعکس بود و خط وضعیت می‌رفت لای دستگیره‌ی بالای پنل، هم زشت
+    // بود هم شبیه بخشی از قاب. پایین بودنش یعنی یک نوارِ مخصوصِ خودش: جای فیدبک و
+    // آموزش، جدا از کنترل‌ها.
+    CGFloat btnY = kTextH;      // ردیف دکمه‌ها از بالای ردیف متن شروع می‌شود
     CGFloat left = kBarPad;
+    NSInteger i = 0, sep = 0;
+    NSView *seps[2] = {_sep1, _sep2};
     for (ZBarButton *b in _bar) {
         b.cap.hidden = b.hidden;
-        if (b.hidden) continue;
-        b.frame = NSMakeRect(left, cy + 4, 24, 24);
-        b.cap.frame = NSMakeRect(left - 3, 3, 30, 10);
-        left += kBarStep;
+        if (!b.hidden) {
+            b.frame = NSMakeRect(left, btnY + 12, 24, 24);
+            b.cap.frame = NSMakeRect(left - 3, btnY + 1, 30, 10);
+            left += kBarStep;
+        }
+        if (sep < 2 && i == _groupEnds[sep].integerValue) {
+            seps[sep].frame = NSMakeRect(left + kGroupGap / 2 - 1, btnY + 13, 1, 20);
+            left += kGroupGap;
+            sep++;
+        }
+        i++;
     }
+    // ساعت و نشان هم‌ردیفِ دکمه‌ها می‌مانند، سمت راست، تا کلِ پهنای ردیف پایین
+    // برای متن آزاد بماند. همین یک تصمیم بود که جمله‌ی «حرفت که تمام شد…» را از
+    // بریده شدن نجات داد.
+    _dot.frame = NSMakeRect(kPW - 16 - 9 * ZMarkAspect, btnY + 17, 9 * ZMarkAspect, 9);
+    _spinner.frame = NSMakeRect(kPW - 16 - 14, btnY + 15, 14, 14);
     if (!_chipBg.hidden) {
         NSRect f = _chipBg.frame;
-        f.origin = NSMakePoint(left, (kBarH - 18) / 2);
+        f.origin = NSMakePoint(_dot.frame.origin.x - f.size.width - 10, btnY + 13);
         _chipBg.frame = f;
-        left += _chipBg.frame.size.width + 8;
     }
+    _text.frame = NSMakeRect(kBarPad, 4, kPW - 2 * kBarPad, kTextH - 7);
     // دستگیره وسطِ لبه‌ی بالا می‌نشیند، پس با قد کشیدنِ پنل با آن بالا می‌رود
     _grip.frame = NSMakeRect((kPW - kGripW) / 2, H - kGripTop - kGripH, kGripW, kGripH);
-    CGFloat right = _dot.frame.origin.x - 8;    // قبل از نشان تمام شود، نه زیرش
-    // در تسمه‌نقاله، فریم متن با قد پنل بالا می‌رود که تا سه خط جا شود
-    CGFloat textH = (_editorVisible ? kBarH : H) - 22;
-    _text.frame = NSMakeRect(left, 11, MAX(40, right - left), textH);
     if (_editorVisible) {
         _editorScroll.frame = NSMakeRect(12, kBarH, kPW - 24, H - kBarH - 10);
     }
@@ -304,6 +338,9 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
     // CGColor مثل بقیه‌ی رنگ‌های لایه‌ای اینجا، نه NSColor: با عوض شدن روشن و تاریک
     // خودش به‌روز نمی‌شود، پس از همین یک نقطه دوباره ساخته می‌شود
     _grip.layer.backgroundColor = [NSColor.labelColor colorWithAlphaComponent:0.25].CGColor;
+    CGColorRef line = [NSColor.labelColor colorWithAlphaComponent:0.14].CGColor;
+    _sep1.layer.backgroundColor = line;
+    _sep2.layer.backgroundColor = line;
 }
 
 // ---------- ادیتور حالت جمع ----------
@@ -522,6 +559,18 @@ static NSString *ZClock(NSTimeInterval sec) {
         : @"حساسیت بالای میکروفن: برای پچ‌پچ کردن و اتاق ساکت، یا میکروفنی که صدایش "
            "کم می‌رسد (Command راست + S)";
 
+    // پاس هوش مصنوعی: روشن/خاموشی از روی خودِ دکمه دیده می‌شود، نه از منو. رنگ
+    // می‌گیرد یعنی روشن است. بی‌کلید هم روشن نمی‌شود و تولتیپ همان را می‌گوید.
+    BOOL ai = ZSettings.shared.finalPassEnabled;
+    BOOL key = ZFinalPass.hasKey;
+    _btnAI.contentTintColor = ai ? (key ? NSColor.systemBlueColor : NSColor.systemOrangeColor) : nil;
+    _btnAI.toolTip = !key
+        ? @"پاس هوش مصنوعی: کلید جمینای نیست. از منوی زمزمه «کلید Gemini…» را بزن (A)"
+        : ai ? @"پاس هوش مصنوعی روشن است: سر پایان، متن برای فرمتینگ و اصلاح واژه‌های "
+                "غلط به جمینای می‌رود. صدا هیچ‌وقت فرستاده نمی‌شود. برای خاموش کردن بزن (A)"
+             : @"پاس هوش مصنوعی خاموش است: متن خامِ تشخیص گفتار تحویل می‌شود. برای "
+                "روشن کردن بزن (A)";
+
     BOOL over = m.review || m.working;
     _btnPause.hidden = over;
     _btnMode.hidden = over;
@@ -534,7 +583,14 @@ static NSString *ZClock(NSTimeInterval sec) {
     _btnInsert.hidden = !editor || m.working;
 
     // چیپ: فقط ساعتِ ضبط، و در هر سشنِ زنده‌ای نشان داده می‌شود، نه فقط یک حالت خاص.
+    // ساعتِ دورِ فعلی، درشت. و اگر دورِ قبلی‌ای بوده، مجموع کنارش و ریزتر: کاربر
+    // باید بداند الان چقدر حرف زده، نه فقط اینکه روی هم چقدر شده.
     NSString *chip = m.elapsed > 0 ? ZClock(m.elapsed) : @"";
+    if (chip.length && m.elapsedTotal > m.elapsed + 1) {
+        chip = [chip stringByAppendingFormat:@"  ﹒%@", ZClock(m.elapsedTotal)];
+    } else if (!chip.length && m.elapsedTotal > 0) {
+        chip = ZClock(m.elapsedTotal);
+    }
     if (!chip.length) {
         _chipBg.hidden = YES;
     } else {
@@ -542,7 +598,7 @@ static NSString *ZClock(NSTimeInterval sec) {
         _chipLabel.stringValue = chip;
         [_chipLabel sizeToFit];
         CGFloat w = _chipLabel.frame.size.width + 16;
-        _chipBg.frame = NSMakeRect(kBarPad, (kBarH - 18) / 2, w, 18);   // x را layoutViews می‌گذارد
+        _chipBg.frame = NSMakeRect(0, 0, w, 18);   // جایش را layoutViews می‌گذارد
         _chipLabel.frame = NSMakeRect(8, 0, w - 16, 17);
     }
 
@@ -633,6 +689,7 @@ static NSString *ZClock(NSTimeInterval sec) {
 - (void)fileTap { if (self.onFilePanel) self.onFilePanel(); }
 - (void)sensTap { if (self.onSensToggle) self.onSensToggle(); }
 - (void)helpTap { if (self.onHelp) self.onHelp(); }
+- (void)aiTap { if (self.onAIToggle) self.onAIToggle(); }
 
 // اسکرین‌شات برای بازبینی طراحی (بدون نیاز به اجازه ضبط صفحه)
 - (void)makeShots:(NSString *)dir {

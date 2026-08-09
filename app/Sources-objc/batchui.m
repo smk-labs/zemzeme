@@ -143,6 +143,17 @@ static NSString *ZClock(double sec) {
 @interface ZBatchPanel () <NSTableViewDataSource, NSTableViewDelegate, NSWindowDelegate>
 @end
 
+// چرا یک زیرکلاس برای یک متد: `NSPanel` به‌طور پیش‌فرض با Esc بسته می‌شود
+// (`cancelOperation:` روی پنل یعنی `performClose:`). برای یک پنلِ گذرا درست است،
+// برای این یکی فاجعه: کاربری که وسط دیکته پنل رونویسی را باز کرده بود، با اولین
+// Esc آن را از دست می‌داد. این پنجره یک کارِ پس‌زمینه‌ی طولانی را نشان می‌دهد و
+// فقط با دکمه‌ی خودش یا میان‌بر F می‌رود.
+@interface ZBatchWindow : NSPanel
+@end
+@implementation ZBatchWindow
+- (void)cancelOperation:(id)sender {}
+@end
+
 @implementation ZBatchPanel {
     NSPanel *_panel;
     ZBatchBackdrop *_back;
@@ -187,7 +198,7 @@ static NSString *ZClock(double sec) {
 // ---------- ساخت ----------
 
 - (void)build {
-    _panel = [[NSPanel alloc] initWithContentRect:NSMakeRect(0, 0, kBW, kBH)
+    _panel = [[ZBatchWindow alloc] initWithContentRect:NSMakeRect(0, 0, kBW, kBH)
                                         styleMask:NSWindowStyleMaskTitled
                                                 | NSWindowStyleMaskClosable
                                                 | NSWindowStyleMaskResizable
@@ -446,6 +457,10 @@ static NSString *ZClock(double sec) {
 
 // میان‌بر F از این می‌آید: پنجره پیدا و کلید؟ پنهانش کن (کار پس‌زمینه ادامه دارد و
 // از رنگ آیتم منوبار پیداست). وگرنه بیار جلو. یعنی یک کلید، هم رفتن هم برگشتن.
+// آیا پنل رونویسی همین حالا پنجره‌ی جلوست. تپِ سراسری از این می‌پرسد تا Esc را
+// از دستش نگیرد: این پنل کارِ خودش را دارد و کلیدهای سشن به آن ربطی ندارند.
+- (BOOL)isFront { return _panel.isVisible && _panel.isKeyWindow; }
+
 - (void)toggle {
     if (_panel.isVisible) {
         [_panel orderOut:nil];

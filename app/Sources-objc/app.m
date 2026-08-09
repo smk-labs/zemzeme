@@ -167,6 +167,9 @@ int ZSelfTest(NSString *file, NSString *lang) {
             [ZCheatSheet close];
             return YES;
         }
+        // پنل رونویسی فایل که جلو باشد، Esc مالِ خودِ اوست نه سشن دیکته. این پنل
+        // یک کارِ پس‌زمینه‌ی طولانی دارد و نباید با کلیدهای سشن دست‌کاری شود.
+        if ([ZBatchPanel.shared isFront]) return NO;
         __strong typeof(ws) me = ws;
         if (!me || !me->_session) return NO;
         dispatch_async(dispatch_get_main_queue(), ^{ [me sessionDo:@selector(finish)]; });
@@ -194,6 +197,10 @@ int ZSelfTest(NSString *file, NSString *lang) {
     // راهنما از خود نوار هم باز می‌شود. در نسخه یک اختیاری بود چون کاربر لازم نبود
     // چیزی بداند؛ حالا باید بداند تک‌تپ یعنی پایان، پس کارت باید از خودِ پنل پیدا شود.
     _panel.onHelp = ^{ [ZCheatSheet toggle]; };
+    // تاگل پاس هوش مصنوعی. مثل F و H بی‌سشن هم کار می‌کند، چون یک **تنظیم** است نه
+    // کارِ سشن، و کاربر باید بتواند قبل از شروع حرف زدن تصمیمش را بگیرد.
+    _panel.onAIToggle = ^{ [ws toggleAIPass]; };
+    _hotkeys.onAIPass = ^{ [ws toggleAIPass]; };
 
 
     // رنگ آیتم منوبار در طول کار دسته‌ای: آبی، فقط تا وقتی کار در جریان است، و فقط
@@ -659,15 +666,19 @@ int ZSelfTest(NSString *file, NSString *lang) {
     }
 }
 
-- (void)menuToggleFinalPass {
-    ZSettings.shared.finalPassEnabled = !ZSettings.shared.finalPassEnabled;
-    if (!ZSettings.shared.finalPassEnabled) return;
-    // پرسشِ Keychain می‌تواند پنجره‌ی اجازه باز کند، پس همین حالا و در پس‌زمینه پرسیده
-    // می‌شود: کاربر همان لحظه‌ای که تاگل را زده جواب می‌دهد، نه وسط پایانِ یک سشن.
-    [ZFinalPass.shared prefetchKey];
-    if (!ZFinalPass.hasKey) ZLog(@"final: %@", ZFinalPass.missingKeyHint);
+// یک جا برای هر سه در: دکمه‌ی نوار، میان‌بر A، و ردیف منو. سه پیاده‌سازی یعنی سه
+// رفتار واگرا، و همین را نسخه یک بارها به قیمتش یاد گرفت.
+- (void)toggleAIPass {
+    BOOL on = !ZSettings.shared.finalPassEnabled;
+    ZSettings.shared.finalPassEnabled = on;
+    if (on) [ZFinalPass.shared prefetchKey];
+    NSString *msg = !on ? @"پاس هوش مصنوعی خاموش شد"
+                 : ZFinalPass.keyKnownMissing ? @"پاس روشن شد، ولی کلید جمینای نیست"
+                 : @"پاس هوش مصنوعی روشن شد؛ سر پایان روی متن اجرا می‌شود";
+    [_panel flash:msg];
+    ZPlay(ZSoundMode);
 }
-
+- (void)menuToggleFinalPass { [self toggleAIPass]; }
 - (void)menuToggleSecondPass { ZSettings.shared.secondPass = !ZSettings.shared.secondPass; }
 - (void)menuToggleRecord { ZSettings.shared.recordSessions = !ZSettings.shared.recordSessions; }
 - (void)menuToggleSounds {

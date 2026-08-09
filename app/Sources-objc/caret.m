@@ -738,8 +738,21 @@ static NSRect ZFromAX(CGRect r) {
 - (void)show {
     if (_timer) return;
     _haveAt = NO;    // اولین تیک بی‌قید جابه‌جا کند، وگرنه نقطه سر جای سشن قبلی می‌ماند
+    // کشِ عنصرِ فوکوس‌دار از سشن قبلی می‌تواند کهنه باشد و همان بود که نقطه را سرِ
+    // شروع یک گوشه می‌نشاند: کاربر تا یک اسپیس نمی‌زد (که درختِ AX را تازه می‌کرد)
+    // نشان سر جای درست نمی‌رفت. یک بار اینجا باطلش می‌کنیم تا نردبان از صفر بپرسد.
+    ZInvalidateFocusCache();
     [_win orderFrontRegardless];
     [self tick];
+    // و چند تیکِ تندِ اولیه: درختِ اکسسبیلیتی بعضی اپ‌ها (Chromium و Electron) تا
+    // اولین پرس‌وجو ساخته نمی‌شود، پس اولین تیک تقریبا همیشه به پله‌ی فال‌بک می‌افتد.
+    // با ۶ هرتزِ عادی آن گوشه تا ثانیه‌ها روی صفحه می‌ماند و کاربر فکر می‌کند خراب است.
+    for (int i = 1; i <= 6; i++) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(i * 0.08 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+            if (self->_timer) [self tick];
+        });
+    }
     _timer = [NSTimer timerWithTimeInterval:kPoll target:self selector:@selector(tick)
                                    userInfo:nil repeats:YES];
     // common modes: وقتی منویی باز است یا کاربر دارد چیزی می‌کشد هم دنبال کرسر بماند

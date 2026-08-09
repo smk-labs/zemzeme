@@ -478,6 +478,7 @@ static CGEventRef zHotkeyCallback(CGEventTapProxy proxy, CGEventType type, CGEve
 - (void (^)(void))actionForCode:(int64_t)code {
     if (code == 3) return self.onFilePanel;   // F، همیشه، حتی بی‌سشن
     if (code == 4) return self.onHelp;        // H، همیشه، حتی بی‌سشن
+    if (code == 0) return self.onAIPass;      // A، همیشه: تاگل است نه کارِ سشن
     if (!self.sessionActive) return nil;      // بقیه فقط در حین سشن
     switch (code) {
         case 49: return self.onPause;         // Space: مکث. تک‌تپ دیگر مکث نیست، پایان است

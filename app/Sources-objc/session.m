@@ -33,13 +33,22 @@ static NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کر
     NSString *_statusText;
     NSString *_warning;
     NSString *_workingMsg;
-    NSString *_text;                 // متن نهایی، بعد از پایان
+    NSString *_text;                 // همه‌ی متنِ این سشن، شاملِ دورهای قبلی
+    // **دو شمارنده، نه یکی.** «نشان داده شد» و «سر کرسر درج شد» دو چیزند و یکی
+    // گرفتنشان باگی ساخت که کاربر مستقیم دید: در حالت جمع، تک‌تپ متن را در پنل
+    // نشان می‌داد و همان را «تحویل‌شده» علامت می‌زد، پس Esc بعدی چیزی برای درج
+    // پیدا نمی‌کرد و متن فقط در کلیپ‌بورد می‌ماند.
+    NSUInteger _inserted;            // چقدر از متن واقعا سر کرسر رفته
+    NSTimeInterval _secondsBefore;   // ثانیه‌ی دورهای قبلی؛ ساعت روی هم جمع می‌شود
+    NSInteger _round;                // چندمین دورِ شنیدن در همین سشن
     BOOL _listening;
     BOOL _errorState;
     BOOL _working;                   // پاس هوش مصنوعی در جریان
-    BOOL _reviewing;                 // سشن تمام شده، پنل با متن باز مانده
+    BOOL _paused;                    // شنیدن ایستاده ولی سشن زنده است
+    BOOL _closing;                   // این دور آخری است: تحویل بده و ببند
     BOOL _finished;
     BOOL _stopping;
+    NSTimer *_clock;
 }
 
 - (instancetype)initWithEngine:(ZEngine *)engine panel:(ZPanel *)panel {
@@ -48,6 +57,7 @@ static NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کر
         _panel = panel;
         _dot = [ZCaretDot new];
         _mode = ZSettings.shared.mode;
+        _text = @"";
     }
     return self;
 }
@@ -82,7 +92,25 @@ static NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کر
     if (_mode == ZModeCursor) [_dot show];
     else [_panel show];
     ZPlay(ZSoundStart);
+    [self startClock];
     [self render];
+}
+
+// بی این، شمارنده فقط سرِ رویدادها تازه می‌شد و عملا میخ می‌ماند. یک تیکِ ثانیه‌ای
+// تا وقتی می‌شنویم، و نه یک لحظه بیشتر.
+- (void)startClock {
+    if (_clock) return;
+    __weak typeof(self) ws = self;
+    _clock = [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t) {
+        typeof(self) me = ws;
+        if (!me || !me->_listening) return;
+        [me render];
+    }];
+}
+
+- (void)stopClock {
+    [_clock invalidate];
+    _clock = nil;
 }
 
 // ---------- موتور ----------
@@ -115,8 +143,18 @@ static NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کر
 // متن آماده است. از اینجا به بعد دیگر صدایی در کار نیست، فقط متن.
 - (void)engineDidFinish:(NSString *)text second:(NSString *)second took:(NSTimeInterval)took {
     _listening = NO;
-    _text = text ?: @"";
-    ZLog(@"session: متن آماده در %.1f ثانیه، %lu نویسه", took, (unsigned long)_text.length);
+    _stopping = NO;    // دورِ بعد باید بتواند دوباره بایستد
+    _secondsBefore += _engine.seconds;
+    // **اضافه، نه جایگزین.** یک سشن می‌تواند چند دور شنیدن داشته باشد: تک‌تپ
+    // می‌ایستد و تحویل می‌دهد، تک‌تپ بعدی دوباره راه می‌اندازد. اگر اینجا جایگزین
+    // می‌کردیم، دورِ دوم حرف‌های دورِ اول را پاک می‌کرد.
+    NSString *fresh = [(text ?: @"") stringByTrimmingCharactersInSet:
+                       NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (fresh.length) {
+        _text = _text.length ? [NSString stringWithFormat:@"%@ %@", _text, fresh] : fresh;
+    }
+    ZLog(@"session: دور %ld، متن آماده در %.1f ثانیه، %lu نویسه‌ی تازه",
+         (long)_round, took, (unsigned long)fresh.length);
     if (_engine.cappedOut) {
         // سقف پنج دقیقه: صریح بگو چه شد و کجا باید برود. سکوت در این لحظه یعنی
         // کاربر فکر کند اپ خراب شده، در حالی که متنش همین‌جاست.
@@ -152,41 +190,70 @@ static NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کر
 }
 
 // ---------- تحویل ----------
-// یک بار، و فقط اینجا. دو حالت، دو مقصد، ولی یک متن و یک لحظه.
+// دو گونه پایان داریم و فرقشان همان چیزی است که کاربر می‌خواست:
+//
+//   تک‌تپ Command راست  →  مکث. آنچه تا اینجا گفته شده تحویل می‌شود و **سشن زنده
+//                          می‌ماند**؛ تک‌تپ بعدی ادامه‌اش می‌دهد.
+//   Esc یا دابل‌تپ       →  تحویل، و تمام. پنل می‌رود.
+//
+// و درج همیشه فقط **متنِ تازه** را می‌برد (`_inserted`)، وگرنه دورِ دوم کلِ متن
+// را دوباره سر کرسر می‌ریخت.
 - (void)deliver {
-    NSString *text = [_text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    [self writeTranscript:text];
-    [self applyAudioPolicy];
+    NSString *all = [_text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    [self writeTranscript:all];
 
-    if (!text.length) {
-        _statusText = @"چیزی شنیده نشد";
+    if (!all.length) {
+        // هیچ حرفی شنیده نشد. این دلیل بستنِ پنل نیست: کاربر شاید تازه دارد فکر
+        // می‌کند. قبلا همین‌جا سشن بسته می‌شد و کسی که یک لحظه ساکت مانده بود،
+        // پنل را از دست می‌داد.
+        _statusText = @"چیزی شنیده نشد؛ تک‌تپ بزن و دوباره حرف بزن";
         ZPlay(ZSoundTrash);
+        if (_closing) [self endNow];
+        else { _paused = YES; [self render]; }
+        return;
+    }
+    // در حالت جمع، متنِ ادیتور مرجع است نه متنِ خام: کاربر ممکن است ویرایشش کرده باشد
+    if (_mode == ZModeCollect) {
+        [_panel setEditorText:all];
+        NSString *edited = [_panel editorText];
+        if (edited.length) all = edited;
+    }
+    [ZInjector copyFinal:all];
+
+    // درج کِی: در حالت کرسر همیشه (پنلی نیست که متن را نشان بدهد)، و در حالت جمع
+    // فقط سرِ Esc و دابل‌تپ. و همیشه فقط آنچه هنوز نرفته.
+    BOOL insert = (_mode == ZModeCursor) || _closing;
+    if (insert) {
+        NSString *fresh = _inserted < all.length ? [all substringFromIndex:_inserted] : @"";
+        fresh = [fresh stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        if (fresh.length) {
+            [self injectAtCaret:fresh];
+            _inserted = all.length;
+        }
+    }
+
+    ZPlay(_closing ? ZSoundFinish : ZSoundInsert);
+    if (_closing) {
         [self endNow];
         return;
     }
-    [ZInjector copyFinal:text];
-
-    if (_mode == ZModeCursor) {
-        // کرسر: یک درج، سر کرسرِ همان اپی که سر شروع جلو بود. نه تکه‌تکه، نه
-        // پاک‌کردنی، نه دفتری: متن یک بار و کامل می‌رود.
-        ZInjector *inj = [ZInjector new];
-        ZInsertMode im = [ZSettings.shared insertModeForBundleId:_target.bundleIdentifier];
-        [inj insert:text pid:_target.processIdentifier
-        delayMicros:ZSettings.shared.typeDelayMicros
-     pasteIfRefused:im == ZInsertPaste
-               done:^(BOOL viaAX) { ZLog(@"session: درج شد (ax=%d)", viaAX); }];
-        ZPlay(ZSoundFinish);
-        [self endNow];
-        return;
-    }
-
-    // جمع: متن در ادیتور خود پنل می‌نشیند و قابل ویرایش است. پنل باز می‌ماند تا
-    // خوانده شود، و دکمه‌های شنیدن جایشان را به دکمه‌های متن می‌دهند.
-    [_panel setEditorText:text];
-    _reviewing = YES;
-    _statusText = @"متن آماده است؛ ویرایشش کن، یا با I درج و با Esc ببند";
-    ZPlay(ZSoundFinish);
+    _paused = YES;
+    _statusText = _mode == ZModeCursor
+        ? @"درج شد. تک‌تپ یعنی ادامه بده، Esc یعنی تمام"
+        : @"متن اینجاست و قابل ویرایش. تک‌تپ یعنی ادامه بده، Esc یعنی درج و تمام";
     [self render];
+}
+
+// یک درج، سر کرسرِ همان اپی که سر شروع جلو بود. نه تکه‌تکه، نه پاک‌کردنی.
+- (void)injectAtCaret:(NSString *)text {
+    NSRunningApplication *to = _target ?: NSWorkspace.sharedWorkspace.frontmostApplication;
+    ZInjector *inj = [ZInjector new];
+    ZInsertMode im = [ZSettings.shared insertModeForBundleId:to.bundleIdentifier];
+    [inj insert:text pid:to.processIdentifier
+    delayMicros:ZSettings.shared.typeDelayMicros
+ pasteIfRefused:im == ZInsertPaste
+           done:^(BOOL viaAX) { ZLog(@"session: درج شد (ax=%d، %lu نویسه)", viaAX,
+                                     (unsigned long)text.length); }];
 }
 
 // رونوشت خام کنار صدا، همیشه. طلای تست همین است و باید پیش از هر ویرایشِ دستی
@@ -209,16 +276,24 @@ static NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کر
 
 // ---------- اکشن‌ها ----------
 
+// تک‌تپ Command راست: **مکث و تحویل**. سشن زنده می‌ماند و تک‌تپ بعدی ادامه‌اش
+// می‌دهد. اولین نسخه‌ی نسخه دو اینجا سشن را می‌بست و اشتباه بود: کسی که یک لحظه
+// می‌ایستد تا فکر کند، نباید مجبور شود دوباره دابل‌تپ بزند.
 - (void)pauseToggle {
-    // تک‌تپ Command راست: **پایان**، نه مکث. این خودِ تصمیم است و نه اشتباه: در
-    // نسخه دو کاربر باید یک راه ساده برای گفتن «حرفم تمام شد» داشته باشد، و آن راه
-    // باید همان چیزی باشد که دستش رویش است. مکث با همان کلید در دسترس می‌ماند
-    // (Command راست + Space) ولی دیگر معنیِ پیش‌فرضِ تک‌تپ نیست.
-    if (_reviewing || _finished) return;
-    [self finish];
+    if (_finished) return;
+    if (_paused) {
+        [self resumeListening];
+        return;
+    }
+    if (_stopping) return;
+    _closing = NO;
+    [self stopListening];
 }
 
+// دکمه‌ی مکث و Command راست + Space: مکثِ ساده، بی‌تحویل. صدا می‌ایستد و همان
+// لحظه ادامه می‌گیرد، بی‌آنکه تکه‌ای بسته شود یا متنی برود.
 - (void)togglePause {
+    if (_finished || _paused) return;
     if (_engine.paused) {
         [_engine resume];
         ZPlay(ZSoundResume);
@@ -229,8 +304,32 @@ static NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کر
     [self render];
 }
 
+// دورِ تازه‌ی شنیدن، روی همان سشن. موتور نو می‌شود (موتورِ تمام‌شده برنمی‌گردد) ولی
+// متن و ساعت و پوشه‌ی سشن همان می‌مانند.
+- (void)resumeListening {
+    if (!_paused || _finished) return;
+    _paused = NO;
+    _stopping = NO;
+    _round++;
+    _engine = [[ZEngine alloc] initWithLang:ZSettings.shared.lang];
+    _engine.delegate = self;
+    _engine.recorder = _recorder;
+    NSError *err = nil;
+    if (![_engine startWithError:&err]) {
+        _errorState = YES;
+        _statusText = err.localizedDescription ?: @"میکروفن باز نشد";
+        _paused = YES;
+        [self render];
+        return;
+    }
+    ZPlay(ZSoundResume);
+    [self startClock];
+    ZLog(@"session: دور %ld شروع شد", (long)_round);
+    [self render];
+}
+
 - (void)copyNow {
-    NSString *t = _reviewing ? [_panel editorText] : _text;
+    NSString *t = (_mode == ZModeCollect && [_panel editorText].length) ? [_panel editorText] : _text;
     if (!t.length) {
         [_panel flash:@"هنوز متنی نیست"];
         return;
@@ -241,40 +340,37 @@ static NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کر
 }
 
 - (void)insertHere {
-    NSString *t = _reviewing ? [_panel editorText] : _text;
+    NSString *t = (_mode == ZModeCollect && [_panel editorText].length) ? [_panel editorText] : _text;
     if (!t.length) {
         [_panel flash:@"هنوز متنی نیست"];
         return;
     }
-    NSRunningApplication *front = NSWorkspace.sharedWorkspace.frontmostApplication;
-    ZInjector *inj = [ZInjector new];
-    ZInsertMode im = [ZSettings.shared insertModeForBundleId:front.bundleIdentifier];
-    [inj insert:t pid:front.processIdentifier
-    delayMicros:ZSettings.shared.typeDelayMicros
- pasteIfRefused:im == ZInsertPaste
-           done:^(BOOL viaAX) {}];
+    [self injectAtCaret:t];
     [ZInjector copyFinal:t];
+    _inserted = t.length;
     ZPlay(ZSoundInsert);
     [_panel flash:@"درج شد"];
 }
 
+// سطل آشغال: **از صفر**، و صفر یعنی صفر. متن، صدای روی دیسک، و ساعت، هر سه.
+// ساعت هم عمدا: کاربر که «از نو» می‌زند انتظار دارد شمارنده هم از نو شروع کند،
+// وگرنه عددی می‌بیند که به هیچ صدایی که هنوز هست مربوط نیست.
 - (void)dropPending {
-    if (_reviewing) {
-        [_panel clearEditor];
-        _text = @"";
-        [_panel flash:@"متن دور ریخته شد"];
-    } else {
-        [_recorder discard];
-        [_panel flash:@"صدای تا اینجا دور ریخته شد؛ از الان از نو"];
-    }
+    _text = @"";
+    _inserted = 0;
+    _secondsBefore = 0;
+    [_engine resetClock];
+    [_recorder discard];
+    [_panel clearEditor];
     ZPlay(ZSoundTrash);
+    [_panel flash:@"همه‌چیز دور ریخته شد؛ از صفر"];
     [self render];
 }
 
 // دو حالت، پس چرخش یعنی رفت‌وبرگشت. حالت وسط سشن عوض شود، متن جایی نمی‌رود: هنوز
 // چیزی تحویل نشده، فقط مقصدش عوض می‌شود.
 - (void)toggleMode {
-    if (_reviewing || _finished) return;
+    if (_finished) return;
     ZMode next = _mode == ZModeCollect ? ZModeCursor : ZModeCollect;
     _mode = next;
     ZSettings.shared.mode = next;
@@ -310,12 +406,25 @@ static NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کر
 
 // ---------- پایان ----------
 
+// Esc و دابل‌تپ: تحویل، و تمام. فرقش با تک‌تپ همین یک پرچم است: آنجا سشن زنده
+// می‌ماند، اینجا نه. و در حالت جمع، این تنها راهی است که متن **درج** هم می‌شود؛
+// تک‌تپ فقط نشانش می‌دهد.
 - (void)finish {
     if (_finished) return;
-    if (_reviewing) {
-        [self endNow];
+    _closing = YES;
+    if (_paused) {
+        // شنیدن از قبل ایستاده و متن آماده است: همین حالا تحویل بده و ببند،
+        // بی‌آنکه دور تازه‌ای باز شود.
+        [self deliver];
         return;
     }
+    if (_stopping) return;
+    [self stopListening];
+}
+
+// موتور را بخوابان و منتظر متن بمان. هر دو در پایان (تک‌تپ و Esc) از همین‌جا
+// رد می‌شوند و تنها تفاوتشان `_closing` است.
+- (void)stopListening {
     if (_stopping) return;
     _stopping = YES;
     _statusText = @"یک لحظه، متن دارد می‌آید…";
@@ -327,17 +436,13 @@ static NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کر
 // خروج اپ از این در می‌آید: بی‌معطلی، ولی نه بی‌متن.
 - (void)finishNow {
     if (_finished) return;
-    if (_reviewing) {
-        [self endNow];
-        return;
-    }
     [self finish];
 }
 
 - (void)endNow {
     if (_finished) return;
-    _finished = TRUE;
-    _reviewing = NO;
+    _finished = YES;
+    [self stopClock];
     [_dot hide];
     [_panel hide];
     [_panel clearEditor];
@@ -356,8 +461,12 @@ static NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کر
     m.mode = _mode;
     m.working = _working;
     m.workingMsg = _workingMsg;
-    m.review = _reviewing;
+    m.review = _paused;
+    // دو عدد، چون دو سوال جداست: «الان چند ثانیه است که دارم حرف می‌زنم» و «رویِ
+    // هم چقدر شده». اولی زنده جلو می‌رود و درشت است، دومی فقط وقتی دورِ دومی در
+    // کار باشد کنارش و ریزتر می‌آید.
     m.elapsed = _listening ? _engine.seconds : 0;
+    m.elapsedTotal = _secondsBefore + m.elapsed;
     if (_mode == ZModeCursor) [_dot render:m];
     else [_panel render:m];
     // منوبار هم از همین مدل رنگ می‌گیرد؛ کانال وضعیت دومی ساخته نشده
