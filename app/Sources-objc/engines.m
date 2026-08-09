@@ -386,6 +386,12 @@ static inline double ZChunkStamp(atomic_llong *slot) {
     _lastEventAt = NSDate.date;
     if (_lastState != ZEngineListening) [self state:ZEngineListening msg:@""];
     if (ev.status > 0) ZLog(@"engine: server status %ld", (long)ev.status);
+    // اندپوینترِ گوگل (۰ شروع گفتار، ۱ پایان گفتار، ۲ پایان صدا، ۳ پایان جمله). دو تای
+    // آخر یعنی سرور این استریم را تمام‌شده می‌داند و دیگر متنی نخواهد داد. تا امروز
+    // پارس می‌شد ولی هیچ‌جا دیده نمی‌شد، پس در لاگ «سرور لال شد» و «سرور تمامش کرد»
+    // یک شکل داشتند. فعلا فقط ثبت: تا وقتی ندیده‌ایم واقعا می‌آید یا نه، چرخاندنِ
+    // استریم روی این سیگنال یعنی حدس زدن.
+    if (ev.endpoint >= 2) ZLog(@"engine: endpointer %ld on pair=%@", (long)ev.endpoint, s.pair);
 
     if (ev.finals.count || ev.interim.length) {
         _gotResultThisCycle = YES;
@@ -561,9 +567,10 @@ static inline double ZChunkStamp(atomic_llong *slot) {
     [_feedLock lock];
     NSTimeInterval voiced = _voiceSinceResult;
     [_feedLock unlock];
-    NSTimeInterval sinceResult = [now timeIntervalSinceDate:_lastResultAt];
-    BOOL graced = _stallGraceUntil && [now compare:_stallGraceUntil] == NSOrderedAscending;
-    if (!graced && voiced > kZStallVoiceSec && sinceResult > kZStallSec) {
+    // مهلتِ جویدنِ بازپخش از خودِ ساعت کم می‌شود، نه فقط از سنجش (ZStallSeconds).
+    // بی این، استریمِ تازه در اولین tickِ بعد از مهلت کشته می‌شد و حلقه راه می‌افتاد.
+    NSTimeInterval sinceResult = ZStallSeconds(_lastResultAt, _stallGraceUntil, now);
+    if (voiced > kZStallVoiceSec && sinceResult > kZStallSec) {
         ZLog(@"engine: stalled %.0fs (voice %.1fs) with no result, recycling pair=%@",
              sinceResult, voiced, _stream.pair);
         // مسیر close خودش salvage می‌کند و آن درست است: salvage متنی را می‌گیرد که
