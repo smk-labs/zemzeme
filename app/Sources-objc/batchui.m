@@ -227,7 +227,7 @@ static NSString *ZClock(double sec) {
     _btnJoin = [self button:@"text.append" tip:@"چسباندن متن همه‌ی فایل‌ها، به همین ترتیب صف"
                      action:@selector(tapJoin)];
     _btnPolish = [self button:@"wand.and.stars"
-                          tip:@"پاس نهایی: نیم‌فاصله، نقطه‌گذاری و املا روی متن یکجا"
+                          tip:@"پاس هوش مصنوعی روی متن: فرمتینگ و اصلاح واژه‌های غلط"
                        action:@selector(tapPolish)];
     _btnCopy = [self button:@"doc.on.doc" tip:@"کپی متن یکجا" action:@selector(tapCopy)];
     _btnSave = [self button:@"square.and.arrow.down" tip:@"ذخیره‌ی متن یکجا در یک فایل"
@@ -738,7 +738,7 @@ static NSString *ZClock(double sec) {
         return;
     }
     if (!ZSettings.shared.finalPassEnabled) {
-        [self flash:@"پاس نهایی خاموش است؛ از تنظیمات روشنش کن"];
+        [self flash:@"پاس هوش مصنوعی خاموش است؛ از منوی زمزمه روشنش کن"];
         return;
     }
     if (!ZFinalPass.hasKey) {
@@ -747,7 +747,7 @@ static NSString *ZClock(double sec) {
     }
     _polishing = YES;
     [self syncButtons];
-    _status.stringValue = @"پاس نهایی…";
+    _status.stringValue = @"پاس هوش مصنوعی…";
     NSString *lang = ZSettings.shared.batchLang;
     __weak typeof(self) ws = self;
     [ZFinalPass.shared runOnText:raw second:nil lang:lang done:^(NSString *out, NSString *err) {
@@ -759,7 +759,7 @@ static NSString *ZClock(double sec) {
         BOOL changed = out.length > 0;
         if (changed) [s setEditorText:out];
         ZPlay(ZSoundPolish);
-        [s flash:changed ? @"پاس نهایی انجام شد"
+        [s flash:changed ? @"پاس هوش مصنوعی انجام شد"
                          : (err.length ? err : @"پاس چیزی برنگرداند؛ متن قبلی سر جایش است")];
         if (!changed) ZLog(@"batchui: پاس نهایی چیزی نداد: %@", err ?: @"?");
         [s syncButtons];

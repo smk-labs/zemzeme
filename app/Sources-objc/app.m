@@ -236,11 +236,12 @@ int ZSelfTest(NSString *file, NSString *lang) {
     NSAlert *a = [NSAlert new];
     a.messageText = @"به زمزمه خوش آمدی";
     a.informativeText =
-        @"دیکته: دابل‌تپ Command راست، حرف بزن، Esc یعنی تمام؛ متن سرِ کرسر می‌نشیند.\n\n"
+        @"دیکته: دابل‌تپ Command راست و حرف بزن. **در حین حرف زدن هیچ متنی نشان داده "
+         "نمی‌شود**؛ حرفت که تمام شد یک بار Command راست را بزن و متن یک‌جا می‌آید.\n\n"
          "الان یک پنجره‌ی اجازه‌ی Accessibility از مک می‌بینی؛ اجازه بده تا زمزمه بتواند "
          "متن را جای کرسر بنویسد. میکروفن هم سرِ اولین دیکته پرسیده می‌شود.\n\n"
-         "«پاس نهایی» و «بهبود پرامپت» اختیاری‌اند و یک کلید رایگان از Google AI Studio "
-         "می‌خواهند؛ هر وقت خواستی، از منوی زمزمه «کلید Gemini…» را بزن.\n\n"
+         "«پاس هوش مصنوعی» اختیاری است و یک کلید رایگان از Google AI Studio می‌خواهد؛ "
+         "هر وقت خواستی، از منوی زمزمه «کلید Gemini…» را بزن.\n\n"
          "راهنمای کامل میان‌برها: Command راست + H.";
     // تیک‌خورده می‌آید و عمدا: زمزمه‌ی بسته هیچ کلیدی را نمی‌شنود، پس اپی که بعد از
     // ری‌استارت بالا نیاید عملا هاتکی ندارد. ولی پنهان هم نیست، چون افزودنِ بی‌خبرِ
@@ -346,8 +347,8 @@ int ZSelfTest(NSString *file, NSString *lang) {
 }
 
 - (void)startSession {
-    // موتور از حالت می‌آید، نه فقط از تنظیم: حالت یادداشت موتور ضبط را می‌خواهد و
-    // همان یک تابع هر دو راه (شروع سشن، و چرخش حالت وسط سشن) را یکی نگه می‌دارد.
+    // یک موتور، برای هر دو حالت. نسخه یک اینجا کارخانه داشت چون حالت یادداشت موتور
+    // دیگری می‌خواست؛ آن حالت رفت و کارخانه با آن.
     ZSession *s = [[ZSession alloc] initWithEngine:[[ZEngine alloc] initWithLang:ZSettings.shared.lang]
                                             panel:_panel];
     _session = s;
@@ -438,11 +439,10 @@ int ZSelfTest(NSString *file, NSString *lang) {
     [menu addItem:NSMenuItem.separatorItem];
 
     // رادیوی حالت‌ها از اینجا برداشته شد و با آمدن حالت سوم (کرسر) هم برنمی‌گردد:
-    // دکمه‌ی E وسط سشن بین هر سه می‌چرخد و با حفظ متن، و دو جای تنظیم برای یک چیز
-    // فقط گیج‌کننده بود. حالت شروع همان حالتی است که آخرین بار با E انتخاب شده.
-    // پاس نهایی: کنار پاس ویرایش می‌نشیند چون هم‌رده‌ی آن است، ولی کارِ دیگری می‌کند و
-    // تولتیپش همین را می‌گوید. تا کلید ست نشده باشد، ردیف خودش خبر می‌دهد: روشن بودنش
-    // بی‌کلید فقط یک پیام خطا در پایان هر سشن است.
+    // دکمه‌ی E وسط سشن بین دو حالت می‌چرخد، و دو جای تنظیم برای یک چیز فقط گیج‌کننده
+    // بود. حالت شروع همان حالتی است که آخرین بار با E انتخاب شده.
+    // پاس هوش مصنوعی: تا کلید ست نشده باشد ردیف خودش خبر می‌دهد، چون روشن بودنش
+    // بی‌کلید فقط یک پیام کوتاه در پایان هر سشن است.
     BOOL hasKey = ZFinalPass.hasKey;
     // حالت سوم: کلید در کی‌چین هست ولی ACL آیتم این اپ را نمی‌شناسد (معمولا چون یک بار
     // با `security` در ترمینال ساخته شده). منو پنجره‌ی رمز را بالا نمی‌آورد، پس اینجا
@@ -460,26 +460,35 @@ int ZSelfTest(NSString *file, NSString *lang) {
         ? @"کلیدی در Keychain هست ولی این نسخه‌ی اپ اجازه‌ی خواندنش را ندارد. "
            "همین‌جا کلید را دوباره بگذار تا صاحبش خودِ زمزمه شود و دیگر پرسیده نشود."
         : @"کلید رایگان از Google AI Studio؛ فقط در Keychain همین دستگاه ذخیره می‌شود. "
-           "لازمِ «پاس نهایی» و «بهبود پرامپت»؛ بدون آن دو، اصلا لازم نیست.";
-    NSMenuItem *fin = [self icon:[self item:menu title:hasKey ? @"پاس نهایی با هوش مصنوعی"
-                                                              : @"پاس نهایی با هوش مصنوعی (کلید نیست)"
+           "فقط لازمِ «پاس هوش مصنوعی» است؛ بدون آن، اصلا لازم نیست.";
+    NSMenuItem *fin = [self icon:[self item:menu title:hasKey ? @"پاس هوش مصنوعی (روی متن)"
+                                                              : @"پاس هوش مصنوعی (کلید نیست)"
                                      action:@selector(menuToggleFinalPass) key:@""]
                            symbol:@"sparkles"];
     fin.state = ZSettings.shared.finalPassEnabled ? NSControlStateValueOn : NSControlStateValueOff;
     fin.toolTip = hasKey
-        ? @"سر پایان سشن، کل صدا یک‌جا به جمینای می‌رود و یک متن تمیز و کامل برمی‌گردد "
-           "(Command راست + N). مسیر زنده دست‌نخورده می‌ماند. در زنده/جمع/کرسر به ردیف "
-           "«ضبط صدای سشن» هم نیاز دارد، وگرنه صدایی برای شنیدن نیست."
+        ? @"سر پایان، **متنِ** رونویسی به جمینای می‌رود و تمیزتر برمی‌گردد: فرمتینگ، و "
+           "اصلاح واژه‌ای که صد در صد غلط است. صدا هیچ‌وقت فرستاده نمی‌شود. جواب نیامد، "
+           "همان متن خام می‌نشیند."
         : ZFinalPass.missingKeyHint;
-    // ضبط صدا در سه حالت دیکته. جدا از تاگل بالا و پیش‌فرض خاموش: ضبطِ ناخواسته بدترین
-    // پیش‌فرض ممکن است. حالت یادداشت به این ردیف کاری ندارد و همیشه ضبط می‌کند.
+    // پاس دوم انگلیسی روی همان صدا. رایگان و موازی، ولی پیش‌فرض خاموش چون سودش فقط
+    // روی متنِ پر از اصطلاح فنی دیده می‌شود و در عوض یک سشن به ازای هر تکه خرج دارد.
+    NSMenuItem *sec = [self icon:[self item:menu title:@"پاس دوم انگلیسی"
+                                     action:@selector(menuToggleSecondPass) key:@""]
+                           symbol:@"character.book.closed"];
+    sec.state = ZSettings.shared.secondPass ? NSControlStateValueOn : NSControlStateValueOff;
+    sec.toolTip = @"همان صدا را هم‌زمان یک بار انگلیسی هم می‌شنود، تا اصطلاح‌های فنی از "
+                   "دست نروند. رایگان است ولی دو برابر سشن می‌خواهد. روی گفتار روزمره "
+                   "تقریبا هیچ فرقی نمی‌کند؛ برای متنِ پر از اصطلاح روشنش کن.";
+    // ماندنِ صدا روی دیسک، نه خودِ ضبط: ضبط در طول سشن همیشه انجام می‌شود چون فایل
+    // مرجع همه‌چیز است. پیش‌فرض خاموش، چون نگه داشتنِ ناخواسته بدترین پیش‌فرض ممکن است.
     NSMenuItem *rec = [self icon:[self item:menu title:@"ضبط صدای سشن"
                                      action:@selector(menuToggleRecord) key:@""]
                            symbol:@"record.circle"];
     rec.state = ZSettings.shared.recordSessions ? NSControlStateValueOn : NSControlStateValueOff;
-    rec.toolTip = @"صدای دیکته‌های زنده/جمع/کرسر را هم روی دیسک نگه می‌دارد (~۱۲ کیلوبایت "
-                   "بر ثانیه)، تا پاس نهایی روی آن‌ها هم شدنی باشد. سطل آشغال صدا را هم "
-                   "دور می‌ریزد. حالت یادداشت همیشه ضبط می‌کند.";
+    rec.toolTip = @"صدای سشن بعد از آماده شدن متن هم روی دیسک بماند (هفت روز، بعد خودکار "
+                   "پاک می‌شود). خاموش یعنی همان لحظه پاک شود. در هر دو حالت، در طول "
+                   "خودِ سشن ضبط انجام می‌شود تا اگر شبکه بمیرد حرفی گم نشود.";
     NSMenuItem *snd = [self icon:[self item:menu title:@"صدا" action:@selector(menuToggleSounds) key:@""]
                            symbol:@"speaker.wave.2"];
     snd.state = ZSettings.shared.soundsEnabled ? NSControlStateValueOn : NSControlStateValueOff;
@@ -615,8 +624,8 @@ int ZSelfTest(NSString *file, NSString *lang) {
     NSAlert *a = [NSAlert new];
     a.messageText = @"کلید Gemini";
     a.informativeText =
-        @"«پاس نهایی» و «بهبود پرامپت» یک کلید رایگان از Google AI Studio می‌خواهند "
-         "(سهم رایگان: ۲۰ درخواست در روز). کلید فقط روی همین دستگاه، در Keychain، "
+        @"«پاس هوش مصنوعی» یک کلید رایگان از Google AI Studio می‌خواهد. "
+         "کلید فقط روی همین دستگاه، در Keychain، "
          "می‌ماند؛ نه در ریپو، نه روی هیچ سروری از طرف زمزمه.\n\n"
          "پیش از گرفتن کلید، بخش «داده و حریم خصوصی» در README را بخوان: در سهم "
          "رایگان گوگل ممکن است از صدا و متن برای بهبود مدل‌هایش استفاده کند.";
@@ -659,6 +668,7 @@ int ZSelfTest(NSString *file, NSString *lang) {
     if (!ZFinalPass.hasKey) ZLog(@"final: %@", ZFinalPass.missingKeyHint);
 }
 
+- (void)menuToggleSecondPass { ZSettings.shared.secondPass = !ZSettings.shared.secondPass; }
 - (void)menuToggleRecord { ZSettings.shared.recordSessions = !ZSettings.shared.recordSessions; }
 - (void)menuToggleSounds {
     ZSettings.shared.soundsEnabled = !ZSettings.shared.soundsEnabled;
