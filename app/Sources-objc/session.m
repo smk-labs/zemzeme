@@ -124,7 +124,7 @@ static NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کر
         case ZEngineListening:
             _listening = YES;
             // و همین‌جا، هر بار: تا وقتی می‌شنویم، جمله‌ی پایان جلوی چشم است.
-            _statusText = ZStopHint;
+            _statusText = [@"در حال گوش کردن ﹒ " stringByAppendingString:ZStopHint];
             break;
         case ZEnginePaused: _statusText = @"مکث؛ تک‌تپ Command راست برای ادامه"; break;
         case ZEngineGaveUp:
@@ -144,7 +144,6 @@ static NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کر
 - (void)engineDidFinish:(NSString *)text second:(NSString *)second took:(NSTimeInterval)took {
     _listening = NO;
     _stopping = NO;    // دورِ بعد باید بتواند دوباره بایستد
-    _secondsBefore += _engine.seconds;
     // **اضافه، نه جایگزین.** یک سشن می‌تواند چند دور شنیدن داشته باشد: تک‌تپ
     // می‌ایستد و تحویل می‌دهد، تک‌تپ بعدی دوباره راه می‌اندازد. اگر اینجا جایگزین
     // می‌کردیم، دورِ دوم حرف‌های دورِ اول را پاک می‌کرد.
@@ -227,7 +226,11 @@ static NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کر
         NSString *fresh = _inserted < all.length ? [all substringFromIndex:_inserted] : @"";
         fresh = [fresh stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
         if (fresh.length) {
-            [self injectAtCaret:fresh];
+            // یک فاصله‌ی آخر، ولی فقط وقتی سشن ادامه دارد. دو کار می‌کند: تکه‌ی
+            // بعدی که برسد از قبل جدا افتاده و به کلمه‌ی آخر نمی‌چسبد، و کرسر یک
+            // قدم جلو می‌رود که در متنِ راست‌به‌چپ جای درستش را پیدا کند.
+            // سرِ Esc نمی‌گذاریم: آنجا حرف تمام شده و فاصله‌ی اضافه فقط زباله است.
+            [self injectAtCaret:_closing ? fresh : [fresh stringByAppendingString:@" "]];
             _inserted = all.length;
         }
     }
@@ -427,6 +430,10 @@ static NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کر
 - (void)stopListening {
     if (_stopping) return;
     _stopping = YES;
+    // ثانیه‌های این دور **همین‌جا** به مجموع اضافه می‌شوند، نه سرِ رسیدن متن. قبلا
+    // آنجا بود و در آن دو سه ثانیه‌ی فاصله، مجموع یک لحظه به عددِ دورِ قبل برمی‌گشت
+    // و بعد می‌پرید جلو. عددی که جلوی چشم کاربر عقب برود، از نبودنش بدتر است.
+    _secondsBefore += _engine.seconds;
     _statusText = @"یک لحظه، متن دارد می‌آید…";
     _listening = NO;
     [self render];
@@ -467,6 +474,7 @@ static NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کر
     // کار باشد کنارش و ریزتر می‌آید.
     m.elapsed = _listening ? _engine.seconds : 0;
     m.elapsedTotal = _secondsBefore + m.elapsed;
+    m.rounds = _round;
     if (_mode == ZModeCursor) [_dot render:m];
     else [_panel render:m];
     // منوبار هم از همین مدل رنگ می‌گیرد؛ کانال وضعیت دومی ساخته نشده

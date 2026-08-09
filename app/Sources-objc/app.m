@@ -672,11 +672,20 @@ int ZSelfTest(NSString *file, NSString *lang) {
     BOOL on = !ZSettings.shared.finalPassEnabled;
     ZSettings.shared.finalPassEnabled = on;
     if (on) [ZFinalPass.shared prefetchKey];
-    NSString *msg = !on ? @"پاس هوش مصنوعی خاموش شد"
-                 : ZFinalPass.keyKnownMissing ? @"پاس روشن شد، ولی کلید جمینای نیست"
-                 : @"پاس هوش مصنوعی روشن شد؛ سر پایان روی متن اجرا می‌شود";
-    [_panel flash:msg];
+    [_panel flash:on ? @"پاس هوش مصنوعی روشن شد؛ سر پایان روی متن اجرا می‌شود"
+                     : @"پاس هوش مصنوعی خاموش شد"];
     ZPlay(ZSoundMode);
+    // هشدارِ «کلید نیست» عمدا با تاخیر: `hasKey` روی نخ اصلی محافظه‌کار است و تا
+    // جوابِ Keychain نرسیده «نه» می‌گوید. بی این تاخیر، هر بار که کاربر تاگل را
+    // روشن می‌کرد یک هشدارِ دروغ می‌گرفت، در حالی که کلید سر جایش بود.
+    if (!on) return;
+    __weak typeof(self) ws = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        typeof(self) me = ws;
+        if (!me || !ZSettings.shared.finalPassEnabled) return;
+        if (ZFinalPass.keyKnownMissing) [me->_panel flash:@"ولی کلید جمینای نیست؛ از منو «کلید Gemini…»"];
+    });
 }
 - (void)menuToggleFinalPass { [self toggleAIPass]; }
 - (void)menuToggleSecondPass { ZSettings.shared.secondPass = !ZSettings.shared.secondPass; }

@@ -126,6 +126,12 @@ static NSMutableSet<NSNumber *> *ZNoAXWritePids(void) {
 - (void)insert:(NSString *)text pid:(pid_t)pid delayMicros:(useconds_t)d
  pasteIfRefused:(BOOL)pasteIfRefused done:(void (^)(BOOL viaAX))done {
     dispatch_async(_q, ^{
+        // کشِ عنصرِ فوکوس‌دار را همین‌جا باطل کن. کش فقط می‌پرسد «این عنصر هنوز
+        // زنده است؟»، نه «هنوز همان فوکوس‌دار است؟»، پس عنصری که یک بار اشتباه
+        // resolve شده باشد (درختِ AX سرد بوده) تا آخر سشن زنده و غلط می‌ماند و
+        // متن جای عوضی می‌نشیند. درج یک بار در پایان اتفاق می‌افتد، پس یک پرس‌وجوی
+        // اضافه هیچ هزینه‌ای ندارد و همان یک بار است که باید درست باشد.
+        ZInvalidateFocusCache();
         BOOL viaAX = NO;
         BOOL atomic = text.length >= kZAtomicMinUnits;
         if (atomic && ![ZNoAXWritePids() containsObject:@(pid)]) {

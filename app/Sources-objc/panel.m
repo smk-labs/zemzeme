@@ -571,26 +571,24 @@ static NSString *ZClock(NSTimeInterval sec) {
              : @"پاس هوش مصنوعی خاموش است: متن خامِ تشخیص گفتار تحویل می‌شود. برای "
                 "روشن کردن بزن (A)";
 
-    BOOL over = m.review || m.working;
-    _btnPause.hidden = over;
-    _btnMode.hidden = over;
-    _btnLang.hidden = over;
-    _btnSens.hidden = over;
+    // **هیچ دکمه‌ای غیب نمی‌شود.** قبلا سرِ مکث نصفشان می‌رفتند، با این استدلال که
+    // «دکمه‌ای که کار نمی‌کند دروغ است». ولی در نسخه دو مکث یعنی سشن هنوز زنده است
+    // و همه‌ی آن دکمه‌ها واقعا کار می‌کنند، پس آن استدلال اینجا اصلا صدق نمی‌کرد و
+    // نتیجه‌اش نواری بود که زیر دست کاربر نصف می‌شد. نوارِ ثابت، حافظه‌ی عضلانی.
     _btnClose.toolTip = m.working ? @"لغو؛ صدا سر جایش می‌ماند (Esc)"
                       : m.review ? @"بستن (Esc)" : @"پایان و درج همه (Esc)";
     _btnTrash.toolTip = m.working ? @"لغو و پاک کردن صدا و متن (D)"
                       : @"دور ریختن هرچه هنوز درج نشده، و صدای ضبط‌شده (D)";
-    _btnInsert.hidden = !editor || m.working;
+    _btnInsert.hidden = NO;
 
     // چیپ: فقط ساعتِ ضبط، و در هر سشنِ زنده‌ای نشان داده می‌شود، نه فقط یک حالت خاص.
     // ساعتِ دورِ فعلی، درشت. و اگر دورِ قبلی‌ای بوده، مجموع کنارش و ریزتر: کاربر
     // باید بداند الان چقدر حرف زده، نه فقط اینکه روی هم چقدر شده.
-    NSString *chip = m.elapsed > 0 ? ZClock(m.elapsed) : @"";
-    if (chip.length && m.elapsedTotal > m.elapsed + 1) {
-        chip = [chip stringByAppendingFormat:@"  ﹒%@", ZClock(m.elapsedTotal)];
-    } else if (!chip.length && m.elapsedTotal > 0) {
-        chip = ZClock(m.elapsedTotal);
-    }
+    // یک عدد در چیپ، نه دو تا. دو عددِ هم‌اندازه که با یک نقطه کنار هم بنشینند
+    // سلسله‌مراتب ندارند و چشم نمی‌داند کدام مهم است. چیپ فقط «الان»: عددی که زنده
+    // جلو می‌رود. مجموع یک اطلاعِ آرام است و جایش خط وضعیت است، نه اینجا.
+    NSString *chip = m.elapsed > 0 ? ZClock(m.elapsed)
+                   : m.elapsedTotal > 0 ? ZClock(m.elapsedTotal) : @"";
     if (!chip.length) {
         _chipBg.hidden = YES;
     } else {
@@ -620,6 +618,11 @@ static NSString *ZClock(NSTimeInterval sec) {
         // قبلا در _statusText پخته می‌شد و بعد از عوض کردن زبان تازه نمی‌شد، پس روی
         // انگلیسی هم می‌نوشت «فارسی».
         NSString *s = m.status;
+        // مجموع فقط وقتی معنی دارد که دورِ دومی در کار باشد، و آن‌وقت هم آرام و
+        // ته خط می‌نشیند، نه هم‌وزنِ عددِ زنده.
+        if (m.rounds > 0 && m.elapsedTotal > 0) {
+            s = [s stringByAppendingFormat:@"  ﹒ روی هم %@", ZClock(m.elapsedTotal)];
+        }
         if (m.listening) {
             NSString *ln = [m.lang hasPrefix:@"en"] ? @"انگلیسی" : @"فارسی";
             s = s.length ? [s stringByAppendingFormat:@" · %@", ln] : ln;

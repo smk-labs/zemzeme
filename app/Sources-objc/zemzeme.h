@@ -446,6 +446,7 @@ typedef NS_ENUM(NSInteger, ZWriteProof) {
 // و آدم نمی‌فهمد اصلا شنیده می‌شود یا نه. بدترین حالتِ این طراحی همان است.
 @property (nonatomic) NSTimeInterval elapsed;       // دورِ فعلی، زنده؛ صفر یعنی نشان نده
 @property (nonatomic) NSTimeInterval elapsedTotal;  // روی هم، همه‌ی دورهای این سشن
+@property (nonatomic) NSInteger rounds;             // چند دور شنیدن؛ صفر یعنی هنوز دورِ اول
 @property (nonatomic) BOOL working;              // کاری در جریان است: چرخنده روشن
 @property (nonatomic, copy) NSString *workingMsg;
 // سشن تمام شده ولی پنل با متن نهایی باز مانده تا خوانده و ویرایش شود. دکمه‌های
