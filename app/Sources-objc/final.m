@@ -541,17 +541,49 @@ static NSUInteger ZWordCount(NSString *s) {
 // پاس روی **متن**، هیچ‌وقت روی صدا. کار روی نخ پس‌زمینه، `done` روی نخ اصلی.
 // `second` متنِ پاس دوم انگلیسی است و می‌تواند نال باشد.
 // out نال یا خالی یعنی هیچ اتفاقی نیفتاد و فراخوان باید متن خام خودش را نگه دارد.
+// ادامه‌ی یک متنِ در حال ساخت: متنِ تمیزِ قبلی به‌اضافه‌ی تکه‌ی خامِ تازه، و خروجی
+// کلِ متنِ از نو نوشته‌شده.
+//
+// چرا نه فقط «تکه‌ی تازه را تمیز کن و بچسبان»: تکه‌ای که جدا تمیز شود کانتکست ندارد،
+// پس نه ضمیرش به جمله‌ی قبلی وصل می‌شود نه نقطه‌گذاری‌اش با بقیه یک‌دست درمی‌آید، و
+// درزش پیداست. مدل باید کل متن را ببیند تا جوش بخورد.
+//
+// و چرا دو ورودیِ جدا و نه یک متنِ سرهم: مدل باید بداند کدام قسمت را خودش نوشته
+// (پس دست‌نخورده بماند) و کدام قسمت خامِ تشخیص گفتار است (پس تمیزکاری لازم دارد).
+// یک متنِ سرهم این تفاوت را پاک می‌کند و مدل کل متن را دوباره‌نویسی می‌کند.
+- (void)runOnText:(NSString *)raw appendingTo:(NSString *)previous lang:(NSString *)lang
+             done:(void (^)(NSString *out, NSString *err))done {
+    if (!previous.length) {
+        [self runOnText:raw second:nil lang:lang done:done];
+        return;
+    }
+    [self work:@"ai-pass-append" parts:@[previous, raw]
+      guardOn:[NSString stringWithFormat:@"%@ %@", previous, raw] done:done];
+}
+
 - (void)runOnText:(NSString *)text second:(NSString *)second lang:(NSString *)lang
              done:(void (^)(NSString *out, NSString *err))done {
     if (!text.length) {
-        dispatch_async(dispatch_get_main_queue(), ^{ done(nil, @"متنی برای پاس نیست"); });
+        dispatch_async(dispatch_get_main_queue(), ^{ done(nil, @"متنی برای تمیز کردن نیست"); });
         return;
     }
-    // یک پاس در هر لحظه. دومی که وسط کار برسد بلوکه نمی‌شود، همان لحظه با خطای
-    // فارسی برمی‌گردد و متنِ در جریان دست‌نخورده می‌ماند.
+    BOOL twoPass = second.length > 0;
+    [self work:twoPass ? @"ai-pass-two" : @"ai-pass"
+         parts:twoPass ? @[text, second] : @[text]
+       guardOn:text done:done];
+}
+
+// تنها پیاده‌سازی. سه ورودی دارد (تک‌متنی، دو‌زبانه، ادامه) و هر سه از همین‌جا
+// می‌روند، وگرنه نگهبانِ «یک کار در هر لحظه» و تورِ ایمنیِ کوتاه‌شدن سه بار نوشته
+// می‌شد و سه رفتار واگرا می‌داد.
+//
+// `guardOn` متنی است که خروجی با آن سنجیده می‌شود. در حالت ادامه، ورودیِ واقعی
+// مجموعِ متنِ قبلی و تکه‌ی تازه است، نه فقط تکه‌ی تازه.
+- (void)work:(NSString *)promptName parts:(NSArray<NSString *> *)parts
+     guardOn:(NSString *)guardText done:(void (^)(NSString *out, NSString *err))done {
     @synchronized (self) {
         if (_busy) {
-            dispatch_async(dispatch_get_main_queue(), ^{ done(nil, @"یک پاس دیگر در جریان است"); });
+            dispatch_async(dispatch_get_main_queue(), ^{ done(nil, @"یک کار دیگر در جریان است"); });
             return;
         }
         _busy = YES;
@@ -561,41 +593,35 @@ static NSUInteger ZWordCount(NSString *s) {
         @autoreleasepool {
             NSDate *t0 = NSDate.date;
             NSString *key = [self key];
+            NSString *sys = key ? [self prompt:promptName] : nil;
             if (!key) {
                 err = ZFinalPass.missingKeyHint;
-            } else {
-                BOOL twoPass = second.length > 0;
-                NSString *name = twoPass ? @"ai-pass-two" : @"ai-pass";
-                NSString *sys = [self prompt:name];
+            } else if (!sys.length) {
                 // پرامپت در بسته نبود. تا امروز همین نیل تا داخل بدنه‌ی درخواست
                 // می‌رفت و اپ با NSInvalidArgumentException می‌مرد، یعنی یک فایلِ
-                // جامانده در بسته کل اپ را می‌کشت. پاس حق ندارد نتیجه را گرو بگیرد،
-                // چه رسد به این‌که اپ را با خودش ببرد.
-                if (!sys.length) {
-                    err = @"پرامپت پاس در بسته نیست";
+                // جامانده در بسته کل اپ را می‌کشت.
+                err = @"پرامپت در بسته نیست";
+            } else {
+                NSMutableDictionary *usage = [NSMutableDictionary dictionary];
+                NSString *aerr = nil;
+                NSString *result = [self askText:sys parts:parts label:promptName
+                                        thinking:@"minimal" usage:usage error:&aerr];
+                NSUInteger inWords = ZWordCount(guardText);
+                NSUInteger outWords = ZWordCount(result);
+                if (!result.length) {
+                    err = aerr ?: @"جوابی نیامد";
+                } else if (inWords > 0 && (double)outWords < (double)inWords * 0.7) {
+                    // تنها تورِ ایمنی: بازنویسیِ مولد می‌تواند بی‌سروصدا یک جمله را
+                    // ببلعد. متنِ خامِ فراخوان همیشه فال‌بکِ امن است، پس خروجیِ
+                    // به‌وضوح کوتاه‌تر رد می‌شود.
+                    ZLog(@"final: %@ متن را کوتاه کرد (ورودی %lu کلمه، خروجی %lu کلمه)",
+                         promptName, (unsigned long)inWords, (unsigned long)outWords);
+                    err = @"متن کوتاه شد، پس رد شد";
                 } else {
-                    NSArray<NSString *> *parts = twoPass ? @[text, second] : @[text];
-                    NSMutableDictionary *usage = [NSMutableDictionary dictionary];
-                    NSString *aerr = nil;
-                    NSString *result = [self askText:sys parts:parts label:name thinking:@"minimal"
-                                               usage:usage error:&aerr];
-                    NSUInteger inWords = ZWordCount(text);
-                    NSUInteger outWords = ZWordCount(result);
-                    if (!result.length) {
-                        err = aerr ?: @"پاس متنی جوابی نداد";
-                    } else if (inWords > 0 && (double)outWords < (double)inWords * 0.7) {
-                        // تنها تورِ ایمنی: بازنویسیِ مولد می‌تواند بی‌سروصدا یک جمله
-                        // را ببلعد. متنِ خامِ فراخوان همیشه فال‌بکِ امن است، پس
-                        // خروجیِ به‌وضوح کوتاه‌تر رد می‌شود.
-                        ZLog(@"final: پاس متن کوتاهش کرد (ورودی %lu کلمه، خروجی %lu کلمه)",
-                             (unsigned long)inWords, (unsigned long)outWords);
-                        err = @"پاس متن را کوتاه کرد";
-                    } else {
-                        out = result;
-                        ZLog(@"final: پاس متن در %.1f ثانیه، %ld+%ld توکن",
-                             [NSDate.date timeIntervalSinceDate:t0],
-                             (long)[usage[@"in"] integerValue], (long)[usage[@"out"] integerValue]);
-                    }
+                    out = result;
+                    ZLog(@"final: %@ در %.1f ثانیه، %ld+%ld توکن", promptName,
+                         [NSDate.date timeIntervalSinceDate:t0],
+                         (long)[usage[@"in"] integerValue], (long)[usage[@"out"] integerValue]);
                 }
             }
         }

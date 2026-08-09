@@ -39,6 +39,7 @@ static NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کر
     // نشان می‌داد و همان را «تحویل‌شده» علامت می‌زد، پس Esc بعدی چیزی برای درج
     // پیدا نمی‌کرد و متن فقط در کلیپ‌بورد می‌ماند.
     NSUInteger _inserted;            // چقدر از متن واقعا سر کرسر رفته
+    NSString *_polished;             // آخرین متنی که مدل نوشته؛ پایه‌ی جوشِ دور بعد
     NSTimeInterval _secondsBefore;   // ثانیه‌ی دورهای قبلی؛ ساعت روی هم جمع می‌شود
     NSInteger _round;                // چندمین دورِ شنیدن در همین سشن
     BOOL _listening;
@@ -149,7 +150,11 @@ static NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کر
     // می‌کردیم، دورِ دوم حرف‌های دورِ اول را پاک می‌کرد.
     NSString *fresh = [(text ?: @"") stringByTrimmingCharactersInSet:
                        NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    if (fresh.length) {
+    // دورِ دومی که پاس هوش مصنوعی روشن است، تکه‌ی خام را **جدا** نگه می‌داریم و
+    // چسباندنش را به خودِ مدل می‌سپاریم. شرحش پایین‌تر، سرِ فراخوانِ ادامه.
+    BOOL weld = _polished.length > 0 && fresh.length > 0 &&
+                ZSettings.shared.finalPassEnabled && ZFinalPass.hasKey;
+    if (fresh.length && !weld) {
         _text = _text.length ? [NSString stringWithFormat:@"%@ %@", _text, fresh] : fresh;
     }
     ZLog(@"session: دور %ld، متن آماده در %.1f ثانیه، %lu نویسه‌ی تازه",
@@ -163,23 +168,45 @@ static NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کر
     // نیست: نتیجه‌اش که نیامد، همین متن خام تحویل می‌شود.
     if (ZSettings.shared.finalPassEnabled && ZFinalPass.hasKey) {
         _working = YES;
-        _workingMsg = @"پاس هوش مصنوعی…";
+        _workingMsg = @"در حال تمیز کردن متن…";
         [self render];
         __weak typeof(self) ws = self;
-        [ZFinalPass.shared runOnText:_text second:second lang:ZSettings.shared.lang
-                                done:^(NSString *out, NSString *err) {
+        NSString *before = _polished;
+        void (^landed)(NSString *, NSString *) = ^(NSString *out, NSString *err) {
             __strong typeof(ws) s = ws;
             if (!s) return;
             s->_working = NO;
             s->_workingMsg = nil;
             if (out.length) {
                 s->_text = out;
-            } else if (err.length) {
-                s->_warning = [NSString stringWithFormat:@"پاس هوش مصنوعی نشد (%@)؛ متن خام", err];
-                ZLog(@"session: پاس رد شد: %@", err);
+                s->_polished = out;
+            } else {
+                // مدل جواب نداد. تکه‌ی خامی که برای جوش خوردن کنار گذاشته بودیم
+                // نباید گم شود: همین‌جا دستی می‌چسبد. متن را می‌بازیم یعنی هیچ‌وقت.
+                if (weld && fresh.length) {
+                    s->_text = before.length ? [NSString stringWithFormat:@"%@ %@", before, fresh] : fresh;
+                }
+                if (err.length) {
+                    s->_warning = [NSString stringWithFormat:@"تمیز کردن نشد (%@)؛ متن خام", err];
+                    ZLog(@"session: پاس رد شد: %@", err);
+                }
             }
             [s deliver];
-        }];
+        };
+        if (weld) {
+            // **ادامه، با کانتکست.** تکه‌ی تازه جدا از متنِ قبلی فرستاده می‌شود و
+            // مدل کل متن را از نو می‌نویسد، پس درز جوش می‌خورد و ضمیر و نقطه‌گذاری
+            // با بقیه یک‌دست درمی‌آید. تکه‌ای که تنها تمیز شود کانتکست ندارد و
+            // درزش از یک فرسنگی پیداست.
+            //
+            // و دو ورودیِ جدا، نه یک متنِ سرهم: مدل باید بداند متنِ اول را خودش
+            // نوشته (پس دست نزند) و دومی خامِ تشخیص گفتار است (پس تمیزش کند).
+            [ZFinalPass.shared runOnText:fresh appendingTo:before
+                                    lang:ZSettings.shared.lang done:landed];
+        } else {
+            [ZFinalPass.shared runOnText:_text second:second
+                                    lang:ZSettings.shared.lang done:landed];
+        }
         return;
     }
     if (ZSettings.shared.finalPassEnabled) {
@@ -360,6 +387,7 @@ static NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کر
 // وگرنه عددی می‌بیند که به هیچ صدایی که هنوز هست مربوط نیست.
 - (void)dropPending {
     _text = @"";
+    _polished = nil;
     _inserted = 0;
     _secondsBefore = 0;
     [_engine resetClock];

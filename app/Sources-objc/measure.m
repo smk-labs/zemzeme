@@ -214,12 +214,13 @@ static int ZTable(NSArray<NSString *> *takes, NSString *lang, double speed) {
 // باش» بود. و چون این تنها جایی است که چیزی از دستگاه بیرون می‌رود، باید بشود
 // دقیقا دید چه رفت و چه برگشت.
 int ZAIPassMain(NSArray<NSString *> *args) {
-    NSString *lang = @"fa-IR", *file = nil, *secondPath = nil;
+    NSString *lang = @"fa-IR", *file = nil, *secondPath = nil, *prevPath = nil;
     NSUInteger i = [args indexOfObject:@"--aipass"] + 1;
     for (; i < args.count; i++) {
         NSString *a = args[i];
         if ([a isEqualToString:@"--lang"] && i + 1 < args.count) lang = args[++i];
         else if ([a isEqualToString:@"--second"] && i + 1 < args.count) secondPath = args[++i];
+        else if ([a isEqualToString:@"--prev"] && i + 1 < args.count) prevPath = args[++i];
         else if (!file) file = a;
     }
     if (!file) {
@@ -240,7 +241,11 @@ int ZAIPassMain(NSArray<NSString *> *args) {
     __block BOOL done = NO;
     __block int rc = 0;
     NSDate *t0 = NSDate.date;
-    [ZFinalPass.shared runOnText:text second:second lang:lang done:^(NSString *out, NSString *err) {
+    // مسیرِ ادامه: متنِ تمیزِ قبلی به‌اضافه‌ی تکه‌ی خامِ تازه. همان کاری که سشن در
+    // دورِ دوم می‌کند، ولی بی‌میکروفن و بی‌آدم، تا بشود واقعا دیدش.
+    NSString *prev = prevPath
+        ? [NSString stringWithContentsOfFile:prevPath encoding:NSUTF8StringEncoding error:nil] : nil;
+    void (^landed)(NSString *, NSString *) = ^(NSString *out, NSString *err) {
         if (out.length) {
             printf("%s\n", out.UTF8String);
         } else {
@@ -248,7 +253,9 @@ int ZAIPassMain(NSArray<NSString *> *args) {
             rc = 1;
         }
         done = YES;
-    }];
+    };
+    if (prev.length) [ZFinalPass.shared runOnText:text appendingTo:prev lang:lang done:landed];
+    else [ZFinalPass.shared runOnText:text second:second lang:lang done:landed];
     while (!done) {
         [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
     }

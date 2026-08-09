@@ -19,6 +19,9 @@ static const CGFloat kWinInset = 12;    // فروکاست پنجره: چقدر �
 static const CGFloat kParkInset = 24;   // فروکاست آخر: فاصله از گوشه‌ی صفحه
 static const CGFloat kBadgeInset = 6;   // فرورفتگی نشان از لبه‌های باکس تایپ، پله‌ی فیلد
 static const CGFloat kBadgeRoom = 40;   // باکس کوتاه‌تر از این یعنی تک‌خطی: نشان بیرون بنشیند
+// بلندیِ تخمینیِ یک خط متن، فقط برای پله‌ی فیلدِ خالی. تخمین است چون از بیرونِ اپ به
+// فونت و چیدمانِ آن فیلد دسترسی نداریم؛ فیلدِ خالی هم قابِ خط نمی‌دهد که اندازه بگیریم.
+static const CGFloat kEmptyLine = 20;
 static const NSTimeInterval kPoll = 1.0 / 6.0;   // ۶ هرتز: چشم روان می‌بیند، AX هم له نمی‌شود
 static const CGFloat kMoveEps = 2.0;    // جابه‌جایی کمتر از این نادیده، وگرنه نقطه می‌لرزد
 static const float kAXTimeout = 0.15f;
@@ -38,6 +41,7 @@ typedef NS_ENUM(NSInteger, ZCaretSource) {
     ZCaretNone = 0,     // هیچ: نقطه گوشه‌ی صفحه پارک می‌شود
     ZCaretWindow,       // فقط پنجره‌ی فوکس‌دار: پایین-چپِ داخل همان پنجره
     ZCaretField,        // قاب خود المنت فوکس‌دار (باکس تایپ)، بی‌مختصات کرسر داخلش
+    ZCaretEmptyField,   // باکس تایپِ خالی: کرسر حتما سرِ آغازِ خط اول است، بی‌آنکه بپرسیم
     ZCaretExact,        // خود نقطه‌ی درج
 };
 
@@ -447,6 +451,50 @@ static NSString *ZStringAttr(AXUIElementRef el, CFStringRef attr) {
     return s;
 }
 
+// ---------- پله‌ی «فیلدِ خالی» ----------
+// هر چهار پله‌ی دقیقِ بالا از اکسسبیلیتی قابِ خودِ نقطه‌ی درج را می‌خواهند: تِکست
+// مارکر، رنجِ طول‌صفر، نویسه‌ی همسایه، رنجِ خط. فیلدِ خالی متن ندارد، پس هر چهارتا
+// به‌حق یا هیچ می‌دهند یا قابِ وارفته، و نردبان می‌افتد روی نشانِ گوشه‌ای که پایینِ
+// سمتِ دنباله‌ی باکس می‌ایستد. کاربر دقیقا همین را گزارش کرد: در اینپوتِ خالی نشان
+// جای غلطی پارک می‌شود، و همین که یک اسپیس تایپ می‌کند (متن دیگر خالی نیست، پس
+// پله‌های دقیق جواب می‌دهند) می‌پرد سر جای درست و از آن به بعد هم درست می‌ماند.
+// ولی جای کرسر در فیلدِ خالی حدس نمی‌خواهد: آغازِ باکس است، روی خط اول. اینجا فقط
+// تشخیص می‌دهیم «فیلدِ متن است و خالی است»؛ خودِ لبه در originFor ساخته می‌شود، چون
+// تصمیمِ راست‌به‌چپِ متنِ خالی به زبانِ سشن می‌افتد و آن فقط روی نخ اصلی در دسترس است.
+
+// طول متن. -۱ یعنی «اپ نگفت»، و آنجا حق نداریم خالی فرض کنیم: فیلدِ پرِ اپی که این
+// صفت‌ها را پیاده نکرده نباید رفتارش عوض شود.
+static CFIndex ZTextLength(AXUIElementRef el) {
+    CFTypeRef n = ZCopyAttr(el, kAXNumberOfCharactersAttribute);
+    if (n) {
+        int count = -1;
+        BOOL ok = CFGetTypeID(n) == CFNumberGetTypeID()
+            && CFNumberGetValue((CFNumberRef)n, kCFNumberIntType, &count) && count >= 0;
+        CFRelease(n);
+        if (ok) return count;
+    }
+    // AXValue دومین منبع است نه اولی: روی سندِ بزرگ کلِ متن را کپی می‌کند و این مسیر
+    // ۶ بار در ثانیه می‌دود. فقط برای اپ‌هایی لازم است که شمارنده‌ی نویسه را نمی‌دهند،
+    // مثل contenteditable در بعضی نسخه‌های Chromium.
+    CFTypeRef v = ZCopyAttr(el, kAXValueAttribute);
+    if (!v) return -1;
+    CFIndex len = CFGetTypeID(v) == CFStringGetTypeID()
+        ? CFStringGetLength((CFStringRef)v) : -1;
+    CFRelease(v);
+    return len;
+}
+
+// فقط باکس تایپ، نه هر عنصری که قابش شبیه فیلد است: دکمه و لیست و ویوِ وب هم می‌توانند
+// همان اندازه باشند و «خالی» درباره‌شان بی‌معنی است. آن‌ها همان نشانِ گوشه‌ای را دارند.
+static BOOL ZIsEmptyTextInput(AXUIElementRef el) {
+    NSString *role = ZStringAttr(el, kAXRoleAttribute);
+    if (![role isEqualToString:(__bridge NSString *)kAXTextFieldRole]
+        && ![role isEqualToString:(__bridge NSString *)kAXTextAreaRole]) return NO;
+    CFIndex len = ZTextLength(el);
+    ZProbe(@"    empty check: role=%@ len=%ld", role, (long)len);
+    return len == 0;
+}
+
 // «کدام پله، روی چه عنصری، در کدام اپ». بی این، هر گزارشِ «نشان جای بدی می‌نشیند»
 // حدس می‌ماند. یک بار به ازای هر تغییرِ وضعیت لاگ می‌شود نه ۶ بار در ثانیه: لاگی که
 // پر شود کسی نمی‌خواندش. صفت‌های اضافه فقط همان لحظه‌ی لاگ خوانده می‌شوند.
@@ -626,6 +674,25 @@ static ZCaretHit ZFindCaret(pid_t frontPid) {
         ZProbe(@"    %s rect is outside the element frame, dropped", hit.how);
         hit.src = ZCaretNone;
         hit.x = NAN;
+    }
+
+    // پله ۱٫۵: فیلدِ خالی. بعد از پله‌های دقیق می‌آید چون هر وقت آن‌ها جواب بدهند
+    // اندازه‌گیریِ واقعی از حسابِ ما بهتر است، و پیش از نشانِ گوشه‌ای چون آن نشان سمتِ
+    // دنباله‌ی متن می‌ایستد و کرسرِ فیلدِ خالی سرِ آغازِ متن است: دو سرِ مخالفِ باکس.
+    // شرطِ ZLooksLikeField همان شرطِ پله‌ی «قاب فیلد» است، پس این پله دقیقا همان‌جا
+    // می‌زند که تا امروز نشانِ گوشه‌ای می‌نشست و جای دیگری عوض نمی‌شود.
+    if (hit.src != ZCaretExact && haveFrame && ZLooksLikeField(elFrame)
+        && ZIsEmptyTextInput(focused)) {
+        hit.src = ZCaretEmptyField;
+        hit.rect = elFrame;
+        hit.x = NAN;    // لبه‌ی آغاز روی نخ اصلی حساب می‌شود، آنجا که زبانِ سشن هست
+        // جهت را نمی‌پرسیم: ZTextDirection برای متنِ خالی همیشه -۱ می‌دهد و همان -۱
+        // یعنی «زبانِ سشن تصمیم بگیرد»، که در originFor انجام می‌شود. دو فراخوانِ AX
+        // کمتر، به ازای هر تیک.
+        hit.rtl = -1;
+        hit.how = "empty field start";
+        ZProbe(@"    empty field -> start edge of %.0f,%.0f %.0fx%.0f", elFrame.origin.x,
+               elFrame.origin.y, elFrame.size.width, elFrame.size.height);
     }
 
     // پله ۲: قاب خود المنت، بعد پنجره‌ی همان عنصر. اپی که رنج نمی‌دهد معمولا یکی

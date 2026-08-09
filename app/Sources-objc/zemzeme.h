@@ -321,6 +321,11 @@ int ZAIPassMain(NSArray<NSString *> *args);
 // متن خام خودش را نگه دارد: این پاس هیچ‌وقت حق ندارد نتیجه را گرو بگیرد.
 - (void)runOnText:(NSString *)text second:(NSString *)second lang:(NSString *)lang
              done:(void (^)(NSString *out, NSString *err))done;
+// ادامه‌ی یک متنِ در حال ساخت: متنِ تمیزِ قبلی به‌اضافه‌ی تکه‌ی خامِ تازه، و خروجی کلِ
+// متن از نو. دو ورودیِ جدا و نه یک متنِ سرهم، چون مدل باید بداند کدام قسمت را خودش
+// نوشته (دست‌نخورده بماند) و کدام خامِ تشخیص گفتار است (تمیزکاری لازم دارد).
+- (void)runOnText:(NSString *)raw appendingTo:(NSString *)previous lang:(NSString *)lang
+             done:(void (^)(NSString *out, NSString *err))done;
 
 // ---------- انتقالِ قرضی ----------
 // کلید، تلاش دوباره، رفتار ۴۲۹، و پارس پاسخِ اندپوینتِ مستندنشده فقط در همین یک فایل

@@ -235,10 +235,13 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
         // ردیفِ بی‌فاصله فقط یک دیوار است و کاربر هیچ‌کدام را پیدا نمی‌کند.
         // layoutViews از همین یک لیست می‌خواند، پس پیدا و ناپیدا شدن دکمه‌ها
         // هیچ‌وقت با عدد هاردکد ناهمخوان نمی‌شود.
+        // دسته‌ی سوم مالِ **تاگل‌ها**ست، نه فقط پاس هوش مصنوعی: حساسیت میکروفن هم
+        // یک تاگل است و جایش کنار همان است، نه لای تنظیم‌های لحظه‌ای. هر دو هم وقتی
+        // روشن‌اند رنگ می‌گیرند، پس از روی نوار معلوم است چه چیزی فعال است.
         _bar = @[_btnClose, _btnPause, _btnCopy, _btnInsert, _btnTrash,
-                 _btnLang, _btnMode, _btnSens, _btnFile, _btnHelp,
-                 _btnAI];
-        _groupEnds = @[@4, @9];      // اندیس آخرین دکمه‌ی هر دسته
+                 _btnLang, _btnMode, _btnFile, _btnHelp,
+                 _btnSens, _btnAI];
+        _groupEnds = @[@4, @8];      // اندیس آخرین دکمه‌ی هر دسته
         _sep1 = [NSView new]; _sep1.wantsLayer = YES; [_effect addSubview:_sep1];
         _sep2 = [NSView new]; _sep2.wantsLayer = YES; [_effect addSubview:_sep2];
 
@@ -553,6 +556,7 @@ static NSString *ZClock(NSTimeInterval sec) {
     // یعنی عادی، گوشِ پر یعنی حساسیت بالا روشن است.
     BOOL sens = ZSettings.shared.highSensitivity;
     [self setButton:_btnSens symbol:sens ? @"ear.fill" : @"ear.badge.waveform"];
+    _btnSens.contentTintColor = sens ? NSColor.systemBlueColor : nil;
     _btnSens.toolTip = sens
         ? @"حساسیت بالا روشن است: صدای آرام تا حد زیادی بزرگ می‌شود. برای برگشتن بزن "
            "(Command راست + S)"
