@@ -237,6 +237,13 @@ NSFont *ZFont(CGFloat size, BOOL medium) {
 - (BOOL)secondPass { return [self.d boolForKey:@"secondPass"]; }
 - (void)setSecondPass:(BOOL)v { [self.d setBool:v forKey:@"secondPass"]; }
 
+// پیش‌نمایش. پیش‌فرض خاموش، و این یکی نه به‌خاطر هزینه که به‌خاطر **حواس‌پرتی**:
+// هیچ بایتِ اضافه‌ای فرستاده نمی‌شود و هیچ چیزی در مسیر تشخیص عوض نمی‌شود (همان
+// تکه‌های خط لوله، فقط زودتر دیده می‌شوند)، ولی خواندنِ حرفِ خود آدم در حالی که دارد
+// همان را می‌گوید، رشته‌ی کلام را پاره می‌کند. پس انتخابِ صریح، نه پیش‌فرض.
+- (BOOL)previewStream { return [self.d boolForKey:@"previewStream"]; }
+- (void)setPreviewStream:(BOOL)v { [self.d setBool:v forKey:@"previewStream"]; }
+
 - (BOOL)upstreamFLAC {
     NSObject *o = [self.d objectForKey:@"upstreamFLAC"];
     return o ? [self.d boolForKey:@"upstreamFLAC"] : YES;    // پیش‌فرض روشن

@@ -96,9 +96,10 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
     NSTextField *_text;
     NSView *_chipBg;
     NSTextField *_chipLabel;
+    NSTextField *_previewTag;     // سرنویسِ کوچکِ بالای ادیتور، فقط وقتی دُم خاکستری هست
     ZBarButton *_btnClose, *_btnPause, *_btnCopy, *_btnTrash, *_btnInsert;
     ZBarButton *_btnLang, *_btnMode, *_btnFile, *_btnHelp;
-    ZBarButton *_btnSens, *_btnAI, *_btnSecond;
+    ZBarButton *_btnSens, *_btnAI, *_btnSecond, *_btnPreview;
     NSView *_sep1, *_sep2;   // جداکننده‌ی دسته‌ها
     NSProgressIndicator *_spinner;    // جای نشان، وقتی کاری در جریان است
     NSArray<ZBarButton *> *_bar;
@@ -108,6 +109,14 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
     NSInteger _flashGen;
     NSScrollView *_editorScroll;
     NSTextView *_editor;
+    // دُمِ پیش‌نمایش: کجا شروع می‌شود، و **عینا** چه چیزی نوشتیم. دومی مدرکِ «کاربر
+    // دست نزده» است و بی آن، هر نوشتنِ تازه می‌توانست تایپِ خودِ کاربر را پاک کند.
+    NSUInteger _previewLoc;
+    NSString *_previewText;
+    BOOL _previewGaveUp;          // کاربر در دُم تایپ کرد: تا نوشتنِ کاملِ بعدی دست نگه دار
+    NSTimer *_fadeTimer;          // فِیدِ ورودِ تکه‌ی تازه
+    NSRange _fadeRange;
+    NSInteger _fadeStep;
     NSTimer *_saveOriginTimer;
     BOOL _pulsing;
     BOOL _editorVisible;
@@ -190,6 +199,17 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
         _chipLabel.alignment = NSTextAlignmentCenter;
         [_chipBg addSubview:_chipLabel];
 
+        // سرنویسِ دُم خاکستری. یک جمله و بس، و جمله عمدا **عذرخواهی نمی‌کند، توضیح
+        // می‌دهد**: کاربری که می‌بیند حرفِ همین ثانیه‌اش روی صفحه نیست باید بداند
+        // دلیلش عقب بودنِ پیش‌نمایش است، نه نشنیدنِ اپ. بی این یک خط، همان سکوتِ چند
+        // ثانیه‌ای دقیقا شبیه خرابی به نظر می‌رسد.
+        _previewTag = [NSTextField labelWithString:@"پیش‌نمایش ﹒ کمی عقب‌تر از حرفت"];
+        _previewTag.font = ZFont(10.5, NO);
+        _previewTag.textColor = NSColor.tertiaryLabelColor;
+        _previewTag.alignment = NSTextAlignmentRight;
+        _previewTag.hidden = YES;
+        [_effect addSubview:_previewTag];
+
         // همه‌ی دکمه‌ها آیکون‌اند و یک اندازه، و هر تولتیپ حرف میان‌بر خودش را می‌گوید.
         // میان‌بر هر کدام «Command راست + همان حرف» است، و تنها همان.
         _btnClose = [self makeButton:@"xmark" key:@"esc" tip:@"پایان دیکته و درج متن (Esc)"
@@ -224,6 +244,11 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
         // دو تای دیگر و با همان قاعده: روشن که باشد رنگ می‌گیرد.
         _btnSecond = [self makeButton:@"character.book.closed" key:@"B"
                                   tip:@"" action:@selector(secondTap)];
+        // پیش‌نمایش: چهارمین تاگل. زیرنویس، دقیقا همان چیزی که می‌گیری. جایش کنار دو
+        // تاگلِ شنیدن و قبل از تاگلِ متن است، چون کارش نه شنیدن است نه عوض کردنِ متن:
+        // فقط زودتر نشان دادنِ همان متن.
+        _btnPreview = [self makeButton:@"captions.bubble" key:@"P"
+                                   tip:@"" action:@selector(previewTap)];
         _btnFile = [self makeButton:@"arrow.up.doc" key:@"F"
                                 tip:@"رونویسی فایل صوتی: چند فایل پشت هم، با متن قابل ویرایش (Command راست + F)"
                              action:@selector(fileTap)];
@@ -247,7 +272,7 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
         // همین ردیف می‌نشیند، و اگر A وسط می‌ماند آن کلید صفِ تاگل‌ها را می‌شکست.
         _bar = @[_btnClose, _btnPause, _btnCopy, _btnInsert, _btnTrash,
                  _btnLang, _btnMode, _btnFile, _btnHelp,
-                 _btnSens, _btnSecond, _btnAI];
+                 _btnSens, _btnSecond, _btnPreview, _btnAI];
         _groupEnds = @[@4, @8];      // اندیس آخرین دکمه‌ی هر دسته
         _sep1 = [NSView new]; _sep1.wantsLayer = YES; [_effect addSubview:_sep1];
         _sep2 = [NSView new]; _sep2.wantsLayer = YES; [_effect addSubview:_sep2];
@@ -338,7 +363,13 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
     // دستگیره وسطِ لبه‌ی بالا می‌نشیند، پس با قد کشیدنِ پنل با آن بالا می‌رود
     _grip.frame = NSMakeRect((kPW - kGripW) / 2, H - kGripTop - kGripH, kGripW, kGripH);
     if (_editorVisible) {
-        _editorScroll.frame = NSMakeRect(12, kBarH, kPW - 24, H - kBarH - 10);
+        // سرنویسِ پیش‌نمایش بالای ادیتور می‌نشیند و جایش را از قدِ ادیتور می‌گیرد، نه
+        // از قدِ پنل: نبودنش نباید پنل را یک نوارِ خالی بلندتر کند.
+        CGFloat tag = _previewTag.hidden ? 0 : 15;
+        _previewTag.frame = NSMakeRect(16, H - 10 - tag, kPW - 32, tag);
+        _editorScroll.frame = NSMakeRect(12, kBarH, kPW - 24, H - kBarH - 10 - tag);
+    } else {
+        _previewTag.hidden = YES;
     }
 }
 
@@ -416,9 +447,12 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
     });
 }
 
-// جای متن را یک‌جا عوض می‌کند: مسیر پاس دستی و مسیر عوض کردن حالت هر دو لازمش دارند
+// جای متن را یک‌جا عوض می‌کند: مسیر پاس دستی و مسیر عوض کردن حالت هر دو لازمش دارند.
+// و این همان نقطه‌ای است که خاکستری سفید می‌شود: متنِ تمام‌شده کلِ ادیتور را از نو
+// می‌نویسد، پس دُم پیش‌نمایش نه «جایگزین» که اصلا بی‌موضوع می‌شود.
 - (void)setEditorText:(NSString *)text {
     [self ensureEditor];
+    [self forgetPreview];
     [_editor.textStorage replaceCharactersInRange:NSMakeRange(0, _editor.string.length)
                                       withString:text ?: @""];
     _editor.font = ZFont(15, NO);
@@ -428,7 +462,129 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
 
 - (void)clearEditor {
     [self ensureEditor];
+    [self forgetPreview];
     [_editor.textStorage replaceCharactersInRange:NSMakeRange(0, _editor.string.length) withString:@""];
+}
+
+// ---------- دُمِ پیش‌نمایش ----------
+// خاکستری یک معنی دارد و فقط همان: **هنوز تمام نشده.** پس اگر پاس هوش مصنوعی روشن
+// باشد، دُم تا نشستنِ آن پاس خاکستری می‌ماند، نه تا رسیدنِ متن خام. سفید شدن کارِ
+// setEditorText: است، و آن یک جا بیشتر نیست.
+
+// خاکستریِ دُم. از labelColor ساخته می‌شود نه از secondaryLabelColor، چون آن یکی خودش
+// آلفا دارد و ضرب کردنِ آلفا در آلفا در حالت تاریک متن را عملا ناخوانا می‌کرد.
+static NSColor *ZPreviewColor(CGFloat f) {
+    return [NSColor.labelColor colorWithAlphaComponent:0.45 * MIN(MAX(f, 0.0), 1.0)];
+}
+
+- (void)forgetPreview {
+    [self stopFade];
+    _previewText = nil;
+    _previewLoc = 0;
+    _previewGaveUp = NO;
+    if (!_previewTag.hidden) {
+        _previewTag.hidden = YES;
+        [self layoutViews];
+    }
+}
+
+- (void)setPreviewText:(NSString *)text {
+    if (!_editor && !text.length) return;    // ادیتوری نیست و چیزی هم برای پاک کردن نیست
+    [self ensureEditor];
+    if (_previewGaveUp) return;
+    NSTextStorage *ts = _editor.textStorage;
+
+    // شرطِ نوشتن: دُمِ قبلی هنوز عینا همان‌جاست که گذاشتیمش و هنوز ته متن است. نبود،
+    // یعنی کاربر خودش تایپ کرده و از این لحظه متن مالِ اوست: دست نگه می‌داریم و تا
+    // نوشتنِ کاملِ بعدی هیچ‌چیز را پاک نمی‌کنیم. تایپِ کاربر را باختن یعنی هیچ‌وقت.
+    if (_previewText) {
+        NSUInteger end = _previewLoc + _previewText.length;
+        if (end != ts.length ||
+            ![[ts.string substringFromIndex:_previewLoc] isEqualToString:_previewText]) {
+            [self stopFade];
+            _previewText = nil;
+            _previewGaveUp = YES;
+            return;
+        }
+    } else {
+        if (!text.length) return;
+        _previewLoc = ts.length;    // لنگر: ته متنِ سفیدِ دورهای قبلی
+    }
+
+    // یک فاصله سرِ دُم، وقتی چیزی قبلش هست. بی این، اولین کلمه‌ی پیش‌نمایشِ دورِ دوم
+    // به آخرین کلمه‌ی دورِ اول می‌چسبد. فاصله جزوِ خودِ دُم است و با آن هم پاک می‌شود،
+    // پس در متنِ نهایی اثری از خودش نمی‌گذارد.
+    NSString *body = text ?: @"";
+    if (body.length && _previewLoc > 0) body = [@" " stringByAppendingString:body];
+
+    // فقط تکه‌ی **تازه** فِید می‌خورد. متنِ قبلی که از نو نوشته می‌شود نباید هر بار
+    // دوباره روشن و خاموش شود؛ چشم آن را به‌عنوان «چیزی عوض شد» می‌خواند.
+    NSUInteger settled = [body hasPrefix:_previewText ?: @""] ? (_previewText ?: @"").length : 0;
+    [self stopFade];
+    [ts beginEditing];
+    [ts replaceCharactersInRange:NSMakeRange(_previewLoc, ts.length - _previewLoc) withString:body];
+    if (body.length) {
+        NSRange r = NSMakeRange(_previewLoc, body.length);
+        [ts addAttribute:NSFontAttributeName value:ZFont(15, NO) range:r];
+        [ts addAttribute:NSForegroundColorAttributeName value:ZPreviewColor(1) range:r];
+    }
+    [ts endEditing];
+
+    if (!body.length) {
+        [self forgetPreview];
+        return;
+    }
+    _previewText = [body copy];
+    if (settled < body.length) {
+        [self startFade:NSMakeRange(_previewLoc + settled, body.length - settled)];
+    }
+    // اسکرول به آخر، وگرنه بعد از سه تکه دیگر هیچ چیز تازه‌ای دیده نمی‌شود و کل
+    // فیچر یک بلوکِ بی‌حرکت می‌شود.
+    [_editor scrollRangeToVisible:NSMakeRange(ts.length, 0)];
+    if (_previewTag.hidden) {
+        _previewTag.hidden = NO;
+        [self layoutViews];
+    }
+}
+
+// فِیدِ ۱۵۰ میلی‌ثانیه‌ای، پنج پله. ظاهر شدنِ ناگهانیِ یک خط متن چشم را از کاری که
+// دارد می‌کند می‌کَند؛ آمدنِ نرم همان خبر را می‌دهد بی آنکه نگاه را بدزدد.
+//
+// و از **صفر شروع نمی‌شود**، عمدا: متنی که تا فیر شدنِ یک تایمر نامرئی است، اگر آن
+// تایمر به هر دلیلی نچرخد نامرئی می‌ماند، و متنِ نامرئی از پرشِ ناگهانی خیلی بدتر
+// است. پس بدترین حالتِ ممکنِ این فِید، خاکستریِ کم‌رنگِ خوانا است، نه هیچ.
+static const NSInteger kZFadeSteps = 5;
+static const NSInteger kZFadeFrom = 2;    // پله‌ی شروع، یعنی ۴۰٪ رنگِ نهایی
+
+- (void)startFade:(NSRange)r {
+    _fadeRange = r;
+    _fadeStep = kZFadeFrom;
+    [_editor.textStorage addAttribute:NSForegroundColorAttributeName
+                                value:ZPreviewColor((CGFloat)kZFadeFrom / kZFadeSteps) range:r];
+    __weak typeof(self) ws = self;
+    _fadeTimer = [NSTimer timerWithTimeInterval:0.03 repeats:YES block:^(NSTimer *t) {
+        [ws fadeTick];
+    }];
+    // common modes: وسط کشیدنِ پنل هم ران‌لوپِ درگ می‌چرخد و فِید نباید نیمه‌کاره بماند
+    [NSRunLoop.currentRunLoop addTimer:_fadeTimer forMode:NSRunLoopCommonModes];
+}
+
+- (void)fadeTick {
+    NSTextStorage *ts = _editor.textStorage;
+    // متن زیر پای فِید عوض شده (نوشتنِ کامل، یا تایپ کاربر): بی‌سروصدا بایست
+    if (NSMaxRange(_fadeRange) > ts.length) {
+        [self stopFade];
+        return;
+    }
+    _fadeStep++;
+    CGFloat f = MIN(1.0, (CGFloat)_fadeStep / kZFadeSteps);
+    [ts addAttribute:NSForegroundColorAttributeName value:ZPreviewColor(f) range:_fadeRange];
+    if (f >= 1.0) [self stopFade];
+}
+
+- (void)stopFade {
+    [_fadeTimer invalidate];
+    _fadeTimer = nil;
 }
 
 // ---------- اندازه ----------
@@ -527,6 +683,7 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
     _saveOriginTimer = nil;
     [self saveOrigin];
     [self stopPulse];
+    [self stopFade];
     [_panel orderOut:nil];
 }
 
@@ -593,6 +750,27 @@ static NSString *ZClock(NSTimeInterval sec) {
            "فنی از دست نروند. برای خاموش کردن بزن (Command راست + B)"
         : @"دوزبانه: همین صدا را هم‌زمان انگلیسی هم بشنو. برای متنِ پر از اصطلاح فنی؛ "
            "روی گفتار روزمره فرقی نمی‌کند (Command راست + B)";
+
+    // پیش‌نمایش. تولتیپ عمدا **توصیه به خاموش کردن** دارد و این یک تعارف نیست: متنی
+    // که وسط حرف زدن جلوی چشم بیاید، رشته‌ی کلام را پاره می‌کند. کسی که با دیدنش
+    // راحت‌تر است روشنش می‌کند؛ بقیه باید بدانند خاموشی حالتِ درست است.
+    BOOL prev = ZSettings.shared.previewStream;
+    [self setButton:_btnPreview symbol:prev ? @"captions.bubble.fill" : @"captions.bubble"];
+    _btnPreview.contentTintColor = prev ? NSColor.systemBlueColor : nil;
+    _btnPreview.toolTip = prev
+        ? @"پیش‌نمایش روشن است: هر چند ثانیه، تکه‌ی تازه خاکستری در پنل می‌نشیند و سر "
+           "پایان همه‌اش سفید می‌شود. متن هیچ فرقی نمی‌کند، فقط زودتر دیده می‌شود. "
+           "برای تمرکز بیشتر خاموشش کن (Command راست + P)"
+        : @"پیش‌نمایش (آزمایشی): متن را همان‌طور که می‌رسد، تکه‌تکه و خاکستری، نشان "
+           "می‌دهد. خاموش بماند بهتر است: خواندنِ حرفِ خودت وسط حرف زدن حواست را پرت "
+           "می‌کند (Command راست + P)";
+    // حالت کنار کرسر پنلی ندارد که چیزی در آن نشان داده شود، پس دکمه هم آنجا معنا
+    // ندارد. مثل بقیه‌ی نوار غیب نمی‌شود، فقط خاموش و بی‌رنگ می‌ماند و می‌گوید چرا.
+    if (!collect) {
+        _btnPreview.contentTintColor = nil;
+        _btnPreview.toolTip = @"پیش‌نمایش فقط در حالت «جمع در پنل» دیده می‌شود؛ کنار کرسر "
+                               "پنلی نیست که متن در آن بنشیند (Command راست + E)";
+    }
 
     // **هیچ دکمه‌ای غیب نمی‌شود.** قبلا سرِ مکث نصفشان می‌رفتند، با این استدلال که
     // «دکمه‌ای که کار نمی‌کند دروغ است». ولی در نسخه دو مکث یعنی سشن هنوز زنده است
@@ -716,6 +894,7 @@ static NSString *ZClock(NSTimeInterval sec) {
 - (void)helpTap { if (self.onHelp) self.onHelp(); }
 - (void)aiTap { if (self.onAIToggle) self.onAIToggle(); }
 - (void)secondTap { if (self.onSecondPass) self.onSecondPass(); }
+- (void)previewTap { if (self.onPreview) self.onPreview(); }
 
 // اسکرین‌شات برای بازبینی طراحی (بدون نیاز به اجازه ضبط صفحه)
 - (void)makeShots:(NSString *)dir {
@@ -737,8 +916,15 @@ static NSString *ZClock(NSTimeInterval sec) {
     review.review = YES;
     review.status = @"متن آماده است و در کلیپ‌بورد هم هست";
 
+    // پیش‌نمایش در حال شنیدن: دو رنگ در یک متن، که تنها حالتی است که رنگ در آن معنی
+    // دارد. سفید یعنی تحویل‌شده، خاکستری یعنی هنوز تمام نشده.
+    ZPanelModel *preview = [ZPanelModel new];
+    preview.mode = ZModeCollect;
+    preview.listening = YES;
+    preview.status = [@"در حال گوش کردن ﹒ " stringByAppendingString:ZStopHint];
+
     NSArray *states = @[@[@"listening", listening], @[@"paused", paused],
-                        @[@"error", error], @[@"review", review]];
+                        @[@"error", error], @[@"review", review], @[@"preview", preview]];
     [_panel orderFrontRegardless];
     for (NSArray *pair in states) {
         ZPanelModel *m = pair[1];
@@ -747,8 +933,22 @@ static NSString *ZClock(NSTimeInterval sec) {
             [self setEditorText:@"متن آماده اینجا جمع می‌شود و با کیبورد خودت قابل ویرایش است. "
                                 @"تهش با دکمه‌ی درج، یکجا سر کرسر می‌نشیند."];
         }
+        if (m == preview) {
+            // عمدا **تکه‌تکه**، همان‌طور که سشن واقعی می‌فرستد: هر بار کلِ متنِ جمع‌شده
+            // از نو. اگر لنگر یا فاصله یا رنگ جایی بلغزد، دقیقا همین‌جا پیدا می‌شود.
+            [self setEditorText:@"این تکه قبلا تحویل شده و سفید است."];
+            NSString *acc = @"";
+            for (NSString *part in @[@"و این تکه‌ها تازه رسیده‌اند", @"و هنوز خاکستری‌اند،",
+                                     @"تا وقتی که حرفت تمام شود."]) {
+                acc = acc.length ? [NSString stringWithFormat:@"%@ %@", acc, part] : part;
+                [self setPreviewText:acc];
+            }
+        }
         [self render:m];
         [_effect layoutSubtreeIfNeeded];
+        // فرصتِ چرخیدنِ ران‌لوپ: فِیدِ دُم پیش‌نمایش تایمری است و بی این، عکس حالتِ
+        // نیمه‌کاره را می‌گیرد نه حالتِ نشسته‌ای که کاربر واقعا می‌بیند.
+        [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.25]];
         NSBitmapImageRep *rep = [_effect bitmapImageRepForCachingDisplayInRect:_effect.bounds];
         if (!rep) continue;
         [_effect cacheDisplayInRect:_effect.bounds toBitmapImageRep:rep];

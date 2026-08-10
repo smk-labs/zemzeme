@@ -207,6 +207,10 @@ int ZSelfTest(NSString *file, NSString *lang) {
     // مثل A از دو در می‌آید: دکمه‌ی نوار و میان‌بر.
     _hotkeys.onSecondPass = ^{ [ws toggleSecondPass]; };
     _panel.onSecondPass = ^{ [ws toggleSecondPass]; };
+    // P: پیش‌نمایش. مثل A و B یک تنظیم است نه کارِ سشن، پس بی‌سشن هم کار می‌کند و از
+    // همان دو در می‌آید: دکمه‌ی نوار و میان‌بر.
+    _hotkeys.onPreview = ^{ [ws togglePreview]; };
+    _panel.onPreview = ^{ [ws togglePreview]; };
     // بقیه‌ی دکمه‌های نوار مالِ سشن‌اند و ZSession خودش در wirePanel می‌بنددشان.
 
 
@@ -585,6 +589,20 @@ int ZSelfTest(NSString *file, NSString *lang) {
                    "روزمره تقریبا هیچ فرقی نمی‌کند؛ برای متنِ پر از اصطلاح روشنش کن "
                    "(دکمه‌ی B روی نوار، یا Command راست + B)";
 
+    // پیش‌نمایش، بین تاگل‌های شنیدن و تاگلِ متن: نه در شنیدن دست می‌برد نه در متن،
+    // فقط همان متن را زودتر نشان می‌دهد. عنوان «آزمایشی» را در تولتیپ می‌گوید نه در
+    // خودِ ردیف: ردیف منو جای برچسب نیست.
+    NSMenuItem *prev = [self icon:[self item:menu title:@"پیش‌نمایش متن"
+                                      action:@selector(menuTogglePreview) key:@"p"]
+                            symbol:ZSettings.shared.previewStream ? @"captions.bubble.fill"
+                                                                  : @"captions.bubble"];
+    prev.state = ZSettings.shared.previewStream ? NSControlStateValueOn : NSControlStateValueOff;
+    prev.toolTip = @"آزمایشی. هر چند ثانیه، تکه‌ی تازه‌ی متن خاکستری در پنل می‌نشیند و "
+                    "سر پایان همه‌اش سفید می‌شود. متن هیچ فرقی نمی‌کند و بایت اضافه‌ای هم "
+                    "فرستاده نمی‌شود؛ فقط زودتر دیده می‌شود. **پیشنهاد ما خاموش ماندن "
+                    "است**: خواندنِ حرفِ خودت وسط حرف زدن رشته‌ی کلام را پاره می‌کند. "
+                    "فقط در حالت «جمع در پنل» (Command راست + P)";
+
     // تمیز کردن متن و کلیدش، پشت سر هم: یکی بی آن یکی کار نمی‌کند. کلید **کار** است نه
     // تنظیم، پس در «پیشرفته» جایی ندارد؛ جایش دقیقا زیر همان تاگلی است که به آن نیاز دارد.
     BOOL hasKey = ZFinalPass.hasKey;
@@ -898,6 +916,19 @@ int ZSelfTest(NSString *file, NSString *lang) {
     ZPlay(ZSoundMode);
 }
 - (void)menuToggleSecondPass { [self toggleSecondPass]; }
+
+// پیش‌نمایش. برخلاف B اثرش **همین حالا**ست، نه از دور بعد: خط لوله دست‌نخورده است و
+// این فقط تصمیمِ نشان دادن یا ندادنِ همان تکه‌هاست. پس خاموش کردنش وسط دیکته باید
+// همان لحظه دُم خاکستری را هم ببرد، وگرنه کاربر خاموشش می‌کند و متن همان‌جا می‌ماند.
+- (void)togglePreview {
+    BOOL on = !ZSettings.shared.previewStream;
+    ZSettings.shared.previewStream = on;
+    if (!on) [_panel setPreviewText:nil];
+    [_panel flash:on ? @"پیش‌نمایش روشن شد؛ هر چند ثانیه یک تکه، خاکستری"
+                     : @"پیش‌نمایش خاموش شد؛ متن سر پایان یک‌جا می‌آید"];
+    ZPlay(ZSoundMode);
+}
+- (void)menuTogglePreview { [self togglePreview]; }
 - (void)menuToggleRecord { ZSettings.shared.recordSessions = !ZSettings.shared.recordSessions; }
 - (void)menuToggleSounds {
     ZSettings.shared.soundsEnabled = !ZSettings.shared.soundsEnabled;

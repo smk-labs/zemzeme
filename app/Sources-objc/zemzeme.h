@@ -79,6 +79,11 @@ NSString *ZModeLabel(ZMode m);
 // اصطلاح فنی عالی است (ضبط ۰۲) و روی گفتار روزمره تقریبا هیچ (ضبط ۰۷). بیمه است،
 // نه ستون، پس روشن کردنش باید انتخاب صریح باشد.
 @property (nonatomic) BOOL secondPass;
+// پیش‌نمایش: تکه‌های رونویسی‌شده همان‌طور که می‌رسند، خاکستری، در ادیتور پنل. هیچ
+// چیزی در مسیر تشخیص عوض نمی‌شود: این همان متنی است که خط لوله سر پایان تحویل
+// می‌دهد، فقط زودتر دیده می‌شود. پیش‌فرض خاموش، چون خواندنِ حرفِ خود آدم در حالی که
+// دارد همان را می‌گوید، رشته‌ی کلام را پاره می‌کند.
+@property (nonatomic) BOOL previewStream;
 - (ZInsertMode)insertModeForBundleId:(NSString *)bundleId;
 - (void)setInsertMode:(ZInsertMode)m forBundleId:(NSString *)bundleId;   // استثنای یک اپ خاص
 - (useconds_t)typeDelayMicros;
@@ -186,6 +191,16 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 // `took` ثانیه‌ی «از پایان صدا تا آماده شدن متن» است: بودجه‌ی این عدد ۵ ثانیه است و
 // چون در هدر است، اندازه‌گیری‌اش کار حدس نیست.
 - (void)engineDidFinish:(NSString *)text second:(NSString *)second took:(NSTimeInterval)took;
+@optional
+// متنِ **یک تکه‌ی تمام‌شده**، به ترتیب، روی نخ اصلی. و این با «رونوشت زنده»ی نسخه یک
+// یک چیز نیست، و فرقشان تمام قصه است: آنجا متنِ غیرقطعی روی صفحه می‌نشست و باید
+// پس گرفته می‌شد؛ اینجا هر تکه **قطعی** است و دقیقا همان چیزی است که سر پایان هم
+// تحویل داده می‌شود (`ZPipe.text` همین تکه‌ها با یک فاصله است). پس نه راچتی لازم
+// است، نه پاک‌کردنی، و اگر هیچ‌کس این متد را نداشته باشد هم چیزی عوض نمی‌شود.
+//
+// اختیاری، و عمدا: تنها مصرف‌کننده‌اش رابط کاربری است. مسیر اندازه‌گیری و مسیر
+// دسته‌ای نه لازمش دارند نه باید با آمدنش رفتارشان عوض شود.
+- (void)enginePart:(NSString *)text;
 @end
 
 @class ZRecorder;
@@ -422,6 +437,7 @@ typedef NS_ENUM(NSInteger, ZWriteProof) {
 // B: همین صدا را انگلیسی هم بشنو. مثل A بی‌سشن هم کار می‌کند، چون تنظیم است نه کارِ
 // سشن. «نگه داشتن صدا» عمدا میان‌بر ندارد: یک ترجیحِ یک‌باره است و جایش «پیشرفته».
 @property (nonatomic, copy) void (^onSecondPass)(void);     // B
+@property (nonatomic, copy) void (^onPreview)(void);        // P: مثل A و B یک تنظیم است، پس بی‌سشن هم کار می‌کند
 @property (nonatomic) BOOL sessionActive;
 @property (nonatomic, readonly) BOOL enabled;   // تپ واقعا بالا است، نه فقط enable صدا خورده
 - (void)enable;
@@ -535,16 +551,22 @@ int ZCaretProbeMain(NSArray<NSString *> *args);
 @property (nonatomic, copy) void (^onHelp)(void);
 @property (nonatomic, copy) void (^onAIToggle)(void);   // A: روشن/خاموش کردن پاس هوش مصنوعی
 @property (nonatomic, copy) void (^onSecondPass)(void); // B: شنیدنِ دوزبانه، سومین تاگلِ نوار
+@property (nonatomic, copy) void (^onPreview)(void);    // P: پیش‌نمایش تکه‌ها حین حرف زدن
 - (void)show;
 - (void)hide;
 - (void)render:(ZPanelModel *)m;
 - (void)pulseLevel:(float)level;
-// ادیتور حالت جمع: متن سر پایان یک بار اینجا می‌نشیند و قابل ویرایش است. نسخه یک
-// اینجا یک مقصدِ استریمی داشت (ZTextSink) که تکه‌تکه می‌نوشت و دُم خاکستری می‌کشید؛
-// حالا یک نوشتنِ ساده کافی است، چون متن یک بار و کامل می‌آید.
+// ادیتور حالت جمع: متن سر پایان یک بار اینجا می‌نشیند و قابل ویرایش است.
 - (NSString *)editorText;
-- (void)setEditorText:(NSString *)text;
+- (void)setEditorText:(NSString *)text;   // متنِ **تمام‌شده**: سفید، و دُم پیش‌نمایش را می‌بلعد
 - (void)clearEditor;
+// دُمِ خاکستری ته ادیتور: تکه‌هایی که رسیده‌اند ولی سشن هنوز تمام نشده. نال یا خالی
+// یعنی پاکش کن. رنگ تنها معنی‌اش همین است: خاکستری یعنی هنوز تمام نشده، سفید یعنی
+// تمام شد. پس اگر پاس هوش مصنوعی روشن باشد، خاکستری تا نشستنِ آن پاس می‌ماند.
+//
+// هرگز روی متنِ کاربر نمی‌نویسد: هرچه نوشته را عینا به یاد دارد و اگر دُم دیگر همان
+// نبود (یعنی کاربر خودش تایپ کرده)، رهایش می‌کند و تا نوشتنِ کاملِ بعدی ساکت می‌ماند.
+- (void)setPreviewText:(NSString *)text;
 - (void)flash:(NSString *)msg;    // فیدبک کوتاه کار روی خط وضعیت
 - (void)makeShots:(NSString *)dir;
 @end
