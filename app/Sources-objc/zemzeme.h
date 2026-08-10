@@ -31,7 +31,7 @@ NSString *ZFaDigits(NSString *s);
 NSString *ZTimestampId(void);
 
 // ---------- تنظیمات ----------
-#define kZRDPBundleId @"com.microsoft.rdc.macos"    // Windows App، تنها اپی که استثنای درج دارد
+#define kZRDPBundleId @"com.microsoft.rdc.macos"    // Windows App، تنها اپی که همیشه پیست می‌گیرد
 
 typedef NS_ENUM(NSInteger, ZInsertMode) {
     ZInsertType = 0,     // تایپ مستقیم با رویداد یونیکد
@@ -84,8 +84,8 @@ NSString *ZModeLabel(ZMode m);
 // می‌دهد، فقط زودتر دیده می‌شود. پیش‌فرض خاموش، چون خواندنِ حرفِ خود آدم در حالی که
 // دارد همان را می‌گوید، رشته‌ی کلام را پاره می‌کند.
 @property (nonatomic) BOOL previewStream;
+// روش درج برای یک اپ مشخص. Windows App همیشه پیست، بی‌تنظیم و بی‌استثنا؛ دلیلش در core.m
 - (ZInsertMode)insertModeForBundleId:(NSString *)bundleId;
-- (void)setInsertMode:(ZInsertMode)m forBundleId:(NSString *)bundleId;   // استثنای یک اپ خاص
 - (useconds_t)typeDelayMicros;
 - (useconds_t)pasteDelayMicros;
 @end

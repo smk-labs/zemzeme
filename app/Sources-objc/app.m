@@ -681,7 +681,8 @@ int ZSelfTest(NSString *file, NSString *lang) {
                                              action:nil keyEquivalent:@""]
                                symbol:typing ? @"keyboard" : @"doc.on.clipboard"];
     insItem.toolTip = @"متن آماده چطور در برنامه‌ی مقصد نوشته شود: حرف‌به‌حرف تایپ شود، "
-                       "یا یک‌جا چسبانده شود";
+                       "یا یک‌جا چسبانده شود. در Windows App همیشه چسباندن است و این "
+                       "انتخاب رویش اثری ندارد: تایپ آنجا فقط یک مشت a می‌نویسد.";
     NSMenu *insMenu = [NSMenu new];
     insMenu.autoenablesItems = NO;
     NSMenuItem *iType = [self item:insMenu title:@"تایپ کردن، حرف‌به‌حرف"
@@ -699,21 +700,6 @@ int ZSelfTest(NSString *file, NSString *lang) {
     insItem.submenu = insMenu;
     [adv addItem:insItem];
 
-    // استثنای Windows App جدا و دیدنی، نه پنهان در کد: پیست آنجا به کلیپ‌بورد ریموت
-    // وابسته است و کلیپ‌بورد ریموت گیر می‌کند، ولی تایپ مستقیم فقط وقتی جواب می‌دهد
-    // که خود Windows App روی Keyboard Mode = Unicode باشد. پس تصمیمش مال کاربر است.
-    // اینجا هم مقدار در خودِ عنوان است نه پشت یک تیک: تیکِ «تایپ مستقیم» جواب می‌داد
-    // که کاربر بداند نبودنش یعنی چسباندن، و همان دانستن چیزی بود که کم داشت.
-    BOOL rdpType = [ZSettings.shared insertModeForBundleId:kZRDPBundleId] == ZInsertType;
-    NSMenuItem *rdp = [self icon:[self item:adv
-                                       title:rdpType ? @"Windows App: تایپ" : @"Windows App: چسباندن"
-                                      action:@selector(menuToggleRDPType) key:@""]
-                           symbol:@"display"];
-    rdp.toolTip = rdpType
-        ? @"استثنای Windows App. برای برگشتن به چسباندن بزن. تایپ آنجا فقط وقتی جواب "
-           "می‌دهد که در نوار منوی خودِ Windows App هم Keyboard Mode ← Unicode باشد."
-        : @"استثنای Windows App: ریموت کلیدهای یونیکد را مطمئن نمی‌فرستد، پس آنجا "
-           "چسباندن پیش‌فرض است. برای عوض کردنش بزن.";
     [adv addItem:NSMenuItem.separatorItem];
 
     NSMenuItem *hk = [self icon:[self item:adv title:@"میان‌بر داخلی" action:@selector(menuToggleHotkey) key:@""]
@@ -799,10 +785,6 @@ int ZSelfTest(NSString *file, NSString *lang) {
 - (void)menuToggleFLAC { ZSettings.shared.upstreamFLAC = !ZSettings.shared.upstreamFLAC; }
 - (void)menuInsertMode:(NSMenuItem *)sender {
     ZSettings.shared.insertMode = [sender.representedObject integerValue];
-}
-- (void)menuToggleRDPType {
-    ZInsertMode now = [ZSettings.shared insertModeForBundleId:kZRDPBundleId];
-    [ZSettings.shared setInsertMode:(now == ZInsertType ? ZInsertPaste : ZInsertType) forBundleId:kZRDPBundleId];
 }
 // شیتِ کلید: جای دستورِ ترمینال. سه دکمه‌ی همیشگی به‌علاوه‌ی «پاک کردن» وقتی کلیدی
 // از قبل هست. جواب دکمه‌ها با شیء خودشان مقایسه می‌شود، نه با عددِ ثابت NSAlert، چون

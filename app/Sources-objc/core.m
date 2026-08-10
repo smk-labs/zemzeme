@@ -250,20 +250,21 @@ NSFont *ZFont(CGFloat size, BOOL medium) {
 }
 - (void)setUpstreamFLAC:(BOOL)v { [self.d setBool:v forKey:@"upstreamFLAC"]; }
 
+// Windows App همیشه پیست می‌گیرد. این دیگر یک پیش‌فرضِ قابلِ عوض کردن نیست، قانون است.
+//
+// چرا تایپ آنجا **ذاتا** غلط است، نه «نامطمئن»: رویدادِ تایپِ ما کیکد صفر است با متنِ
+// یونیکد چسبیده به آن (zPostUnicode در inject.m)، و کیکد صفر روی کیبورد مک همان A است.
+// کلاینت ریموت وقتی Keyboard Mode رویش Scancode باشد اصلا به محتوای یونیکد نگاه نمی‌کند و
+// فقط اسکن‌کدِ همان کیکد را به ویندوز می‌فرستد. نتیجه: به‌ازای هر رویداد یک a. متنِ ۶۴
+// نویسه‌ای در هجده‌تایی‌ها می‌شکند و آن‌طرف «aaaa» می‌نشیند. کیبوردِ این دستگاه همیشه روی
+// Scancode است، پس این «شاید جواب ندهد» نیست، «هیچ‌وقت جواب نمی‌دهد» است.
+//
+// اینجا قبلا یک استثنای per-app بود که از منو تاگل می‌شد و مقدارش روی دیسک می‌ماند. یک
+// کلیک روی آن ردیف کافی بود تا از آن لحظه به بعد هر درجی در ریموت «aaaa» بدهد، بی هیچ
+// نشانه‌ای که چه شد و چرا. تنظیمی که تنها کارِ ممکنش خراب کردن است تنظیم نیست، تله است.
 - (ZInsertMode)insertModeForBundleId:(NSString *)bundleId {
-    // استثنای هر اپ؛ Windows App پیش‌فرض پیست می‌گیرد چون فوروارد یونیکد مصنوعی در RDP نامطمئن است.
-    // ادغام، نه جایگزینی: اولین چیزی که روزی در perApp نوشته شود نباید این پیش‌فرض را ببلعد.
-    NSMutableDictionary *perApp = [@{kZRDPBundleId: @(ZInsertPaste)} mutableCopy];
-    [perApp addEntriesFromDictionary:[self.d dictionaryForKey:@"perApp"] ?: @{}];
-    NSNumber *n = bundleId ? perApp[bundleId] : nil;
-    return n ? n.integerValue : self.insertMode;
-}
-
-- (void)setInsertMode:(ZInsertMode)m forBundleId:(NSString *)bundleId {
-    if (!bundleId.length) return;
-    NSMutableDictionary *perApp = [[self.d dictionaryForKey:@"perApp"] mutableCopy] ?: [NSMutableDictionary dictionary];
-    perApp[bundleId] = @(m);
-    [self.d setObject:perApp forKey:@"perApp"];
+    if ([bundleId isEqualToString:kZRDPBundleId]) return ZInsertPaste;
+    return self.insertMode;
 }
 
 - (useconds_t)typeDelayMicros {
