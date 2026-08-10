@@ -39,6 +39,7 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
     NSString *_warning;
     NSString *_workingMsg;
     NSString *_text;                 // همه‌ی متنِ این سشن، شاملِ دورهای قبلی
+    NSString *_rawText;              // همان، ولی خام: پیش از پاس، برای raw.txt
     // **دو شمارنده، نه یکی.** «نشان داده شد» و «سر کرسر درج شد» دو چیزند و یکی
     // گرفتنشان باگی ساخت که کاربر مستقیم دید: در حالت جمع، تک‌تپ متن را در پنل
     // نشان می‌داد و همان را «تحویل‌شده» علامت می‌زد، پس Esc بعدی چیزی برای درج
@@ -236,6 +237,10 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
     }
     ZLog(@"session: دور %ld، متن آماده در %.1f ثانیه، %lu نویسه‌ی تازه",
          (long)_round, took, (unsigned long)fresh.length);
+    // خام، همین‌جا و پیش از پاس. جوش خورده باشد یا نه، آنچه تشخیص گفتار داده روی
+    // دیسک می‌ماند: هر دورِ تازه به دنبالِ قبلی، پس ترتیبِ گفته‌شده حفظ می‌شود.
+    _rawText = _rawText.length ? [NSString stringWithFormat:@"%@ %@", _rawText, fresh] : fresh;
+    [self writeRawTranscript:_rawText];
     if (_engine.cappedOut) {
         // سقف پنج دقیقه: صریح بگو چه شد و کجا باید برود. سکوت در این لحظه یعنی
         // کاربر فکر کند اپ خراب شده، در حالی که متنش همین‌جاست.
@@ -382,11 +387,24 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
                                      (unsigned long)text.length); }];
 }
 
-// رونوشت خام کنار صدا، همیشه. طلای تست همین است و باید پیش از هر ویرایشِ دستی
-// روی دیسک باشد.
+// متنِ تحویل‌شده کنار صدا. این **بعدِ** پاس هوش مصنوعی نوشته می‌شود، پس همان چیزی
+// است که کاربر گرفته، نه رونوشتِ خام.
 - (void)writeTranscript:(NSString *)text {
     if (!text.length) return;
     [text writeToURL:[_sessionDir URLByAppendingPathComponent:@"text.txt"]
+          atomically:YES encoding:NSUTF8StringEncoding error:nil];
+}
+
+// و رونوشتِ **خام**، جدا، پیش از هر دست خوردنی. تا امروز کامنتِ بالای همین فایل
+// می‌گفت text.txt «طلای تست» است و خام است، و نبود: در `deliver` و بعدِ پاس نوشته
+// می‌شد، پس با پاسِ روشن، متنِ خام هیچ‌جا نمی‌ماند.
+//
+// هزینه‌اش را همان روز دادیم: برای محکِ پرامپت، متنِ خامِ یک سشن لازم شد و مجبور
+// شدیم از فایل صدا **دوباره رونویسی** کنیم تا به دستش بیاوریم، یعنی طلای تست از
+// اول وجود نداشت. یک فایل چند بایتی جلوی تکرارش را می‌گیرد.
+- (void)writeRawTranscript:(NSString *)text {
+    if (!text.length) return;
+    [text writeToURL:[_sessionDir URLByAppendingPathComponent:@"raw.txt"]
           atomically:YES encoding:NSUTF8StringEncoding error:nil];
 }
 
@@ -489,6 +507,7 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
 - (void)dropPending {
     [_engine discardText];
     _text = @"";
+    _rawText = nil;    // خام هم دور ریخته می‌شود، وگرنه raw.txt حرفِ پاک‌شده را نگه می‌داشت
     _polished = nil;
     _inserted = 0;
     _secondsBefore = 0;

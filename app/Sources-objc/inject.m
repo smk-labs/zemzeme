@@ -111,9 +111,9 @@ static void zPostUnicode(const UniChar *units, NSUInteger n) {
 // روی صفحه غایب. مهلتِ شروع و کفِ فاصله فقط احتمالش را کم می‌کنند، صفرش نمی‌کنند.
 // یک نوشتنِ اکسسبیلیتی اما تجزیه‌ناپذیر است: یا همه‌اش می‌نشیند یا خطا برمی‌گرداند.
 //
-// فقط برای متنِ بلندتر از یک رویداد. متنِ کوتاه‌تر ذاتا نمی‌تواند نصفه بیفتد، و آنجا
-// مسیر تایپِ اندازه‌گیری‌شده دست‌نخورده می‌ماند (دُمِ زنده‌ی حالت کرسر از همان می‌رود).
-static const NSUInteger kZAtomicMinUnits = 18;
+// مرزِ «بلندتر از یک رویداد» (kZEventUnits) و خودِ انتخابِ مسیر، در هدر نشسته‌اند:
+// آنجا کنارِ قراردادشان‌اند و بی هیچ لینکی آزمودنی. متنِ کوتاه‌تر ذاتا نمی‌تواند نصفه
+// بیفتد و مسیرِ تایپِ اندازه‌گیری‌شده دست‌نخورده می‌ماند.
 
 // اپ‌هایی که نوشتنِ AX را قبول نکردند. یک بار امتحان، بعد دیگر هزینه‌اش را نمی‌دهیم.
 static NSMutableSet<NSNumber *> *ZNoAXWritePids(void) {
@@ -145,30 +145,39 @@ static NSMutableSet<NSNumber *> *ZNoAXWritePids(void) {
         // و در نسخه دو که هر مکث یک تکه‌ی کوتاه درج می‌کند، تکه‌های کوتاه از کنارِ
         // پیست رد می‌شدند و تایپ می‌رفتند. نتیجه‌اش برای کاربر این بود که داخل ریموت
         // «پیستِ خودِ ویندوز» اجرا می‌شد، یعنی هرچه از قبل در کلیپ‌بوردِ ویندوز بود.
-        if (pasteIfRefused) {
-            ZLog(@"inject: pasting %lu chars into pid=%d (اپ پیست می‌خواهد)",
-                 (unsigned long)text.length, pid);
-            [self pasteNow:text delayMicros:ZSettings.shared.pasteDelayMicros];
-            self->_lastWriteAt = CFAbsoluteTimeGetCurrent();
-            if (done) dispatch_async(dispatch_get_main_queue(), ^{ done(NO); });
-            return;
-        }
+        // نوشتنِ AX را فقط یک بار به ازای هر اپ امتحان می‌کنیم؛ رد که کرد، دیگر نه.
+        BOOL axAvailable = !pasteIfRefused && text.length >= kZEventUnits
+                        && ![ZNoAXWritePids() containsObject:@(pid)];
         BOOL viaAX = NO;
-        BOOL atomic = text.length >= kZAtomicMinUnits;
-        if (atomic && ![ZNoAXWritePids() containsObject:@(pid)]) {
+        if (axAvailable) {
             viaAX = [self axInsert:text pid:pid];
             if (!viaAX) {
                 ZLog(@"inject: ax write refused by pid=%d", pid);
                 [ZNoAXWritePids() addObject:@(pid)];
             }
         }
-        if (!viaAX) {
-            // اپ همین حالا گفت نوشتنِ اتمیک را نمی‌پذیرد. رگبار رویدادِ ساختگی روی
-            // متنِ بلند، در همان اپ، همان چیزی است که این مسیر برای فرارش ساخته شد:
-            // اپ رویداد می‌اندازد و رویداد تکرار می‌کند و متن قیچی می‌شود. پیست تنها
-            // مسیرِ اتمیکِ باقی‌مانده است، پس متنِ یکجا از آنجا می‌رود.
-            ZLog(@"inject: typing %lu chars into pid=%d", (unsigned long)text.length, pid);
-            [self typeNow:text delayMicros:d leadIn:YES];
+        // و از اینجا به بعد تصمیم **یک جا** گرفته می‌شود، همان تابعِ خالصِ هدر. تا امروز
+        // این تصمیم پخش بود و سه خط توضیحِ بالای سرش وعده‌ی پیست می‌داد در حالی که کد
+        // تایپ می‌کرد. هزینه‌اش را کاربر داد: در یک درجِ واقعی دقیقا ۱۸ واحد UTF-16 از
+        // وسط متن افتاد (`\n* **بولت سوم:** ا`) و یک بولتِ کامل غیب شد، در حالی که متنِ
+        // مدل روی دیسک سالم بود؛ یک `*` و یک `س` هم جابه‌جا ته متن ظاهر شدند، یعنی
+        // رویدادها هم افتادند هم بی‌ترتیب رسیدند.
+        //
+        // و کلیپ‌بورد چیزی نمی‌بازد، برخلاف آنچه اول گمان می‌رفت: هر مسیرِ تحویل پیش از
+        // درج `copyFinal:` را صدا زده (session.m)، پس همین متن از قبل رویش هست.
+        switch (ZChooseWritePath(pasteIfRefused, viaAX, text.length)) {
+            case ZWriteAX:
+                break;    // نشست، تمام
+            case ZWritePaste:
+                ZLog(@"inject: pasting %lu chars into pid=%d (%@)", (unsigned long)text.length, pid,
+                     pasteIfRefused ? @"اپ پیست می‌خواهد" : @"نوشتنِ اتمیک رد شد؛ رگبار متن را می‌خورد");
+                [self pasteNow:text delayMicros:ZSettings.shared.pasteDelayMicros];
+                break;
+            case ZWriteType:
+                // کوتاه‌تر از یک رویداد: تایپ ذاتا امن است و کلیپ‌بورد دست‌نخورده می‌ماند.
+                ZLog(@"inject: typing %lu chars into pid=%d", (unsigned long)text.length, pid);
+                [self typeNow:text delayMicros:d leadIn:YES];
+                break;
         }
         self->_lastWriteAt = CFAbsoluteTimeGetCurrent();
         if (done) dispatch_async(dispatch_get_main_queue(), ^{ done(viaAX); });
