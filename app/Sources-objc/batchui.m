@@ -756,7 +756,11 @@ static NSString *ZClock(double sec) {
         [self flash:@"تمیز کردن متن خاموش است؛ از منوی زمزمه روشنش کن"];
         return;
     }
-    if (!ZFinalPass.hasKey) {
+    // `keyKnownMissing` و نه `hasKey`، به همان دلیلی که سر session.m نوشته شده: hasKey
+    // فقط جوابِ پرسشِ بی‌پنجره‌ی کی‌چین را می‌دهد و آن پرسش می‌تواند سر ACL رد شود، پس
+    // روی کلیدِ سالم هم «نیست» می‌گفت و دکمه بی‌صدا کار نمی‌کرد. اینجا هم امتحان کردن
+    // ارزان است: مسیر پاس خودش خطای روشن برمی‌گرداند.
+    if (ZFinalPass.keyKnownMissing) {
         [self flash:ZFinalPass.missingKeyHint];
         return;
     }

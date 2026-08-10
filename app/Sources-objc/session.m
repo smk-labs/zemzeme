@@ -218,8 +218,19 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
                        NSCharacterSet.whitespaceAndNewlineCharacterSet];
     // دورِ دومی که پاس هوش مصنوعی روشن است، تکه‌ی خام را **جدا** نگه می‌داریم و
     // چسباندنش را به خودِ مدل می‌سپاریم. شرحش پایین‌تر، سرِ فراخوانِ ادامه.
-    BOOL weld = _polished.length > 0 && fresh.length > 0 &&
-                ZSettings.shared.finalPassEnabled && ZFinalPass.hasKey;
+    // شرطِ پاس، و **نه `hasKey`**. این یک خط چند وقت پاس هوش مصنوعی را بی‌صدا خاموش
+    // نگه داشته بود: `hasKey` روی نخ اصلی عمدا محافظه‌کار است و فقط جوابِ کش‌شده‌ی
+    // پرسشِ **بی‌پنجره**ی کی‌چین را می‌دهد. روی این دستگاه آن پرسش همیشه ۲۵۲۹۳
+    // (errSecAuthFailed) می‌گیرد، پس سر هر لانچِ تازه `hasKey` نه می‌گفت و پاس اصلا
+    // اجرا نمی‌شد؛ فقط در همان سشنی کار می‌کرد که کاربر تازه کلید را ذخیره کرده بود و
+    // کلید در حافظه بود. یعنی «کار می‌کند» به یک تصادف گره خورده بود.
+    //
+    // معیار درست «کلید را همین حالا در دست دارم» نیست، «می‌دانیم که کلیدی نیست» است:
+    // مسیر خودِ پاس با اجازه‌ی پنجره می‌خواند و فال‌بکِ ابزار `security` را هم دارد، و
+    // اگر آخرش کلید نبود خودش خطای روشن برمی‌گرداند و متن خام سر جایش می‌ماند. پس
+    // امتحان کردن هیچ هزینه‌ای ندارد و نکردنش کلِ فیچر را می‌خورد.
+    BOOL wantPass = ZSettings.shared.finalPassEnabled && !ZFinalPass.keyKnownMissing;
+    BOOL weld = _polished.length > 0 && fresh.length > 0 && wantPass;
     if (fresh.length && !weld) {
         _text = _text.length ? [NSString stringWithFormat:@"%@ %@", _text, fresh] : fresh;
     }
@@ -232,7 +243,7 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
     }
     // پاس هوش مصنوعی، فقط روی متن و فقط اگر خودت خواسته باشی. هیچ‌وقت بلوکه‌کننده
     // نیست: نتیجه‌اش که نیامد، همین متن خام تحویل می‌شود.
-    if (ZSettings.shared.finalPassEnabled && ZFinalPass.hasKey) {
+    if (wantPass) {
         _busy = ZBusyPolish;
         _workingMsg = @"در حال تمیز کردن متن…";
         [self render];

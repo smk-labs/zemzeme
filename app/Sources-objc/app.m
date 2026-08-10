@@ -618,11 +618,15 @@ int ZSelfTest(NSString *file, NSString *lang) {
 
     // تمیز کردن متن و کلیدش، پشت سر هم: یکی بی آن یکی کار نمی‌کند. کلید **کار** است نه
     // تنظیم، پس در «پیشرفته» جایی ندارد؛ جایش دقیقا زیر همان تاگلی است که به آن نیاز دارد.
-    BOOL hasKey = ZFinalPass.hasKey;
+    // `keyKnownMissing` و نه `hasKey`، همان معیارِ سشن و پنل: «نمی‌دانم» را «نیست»
+    // نخوان. با hasKey این منو روی کلیدِ سالمِ ذخیره‌شده «(اختیاری)…» نشان می‌داد، چون
+    // پرسشِ بی‌پنجره‌ی کی‌چین سر ACL رد می‌شد؛ کاربر می‌رفت کلید تازه بگذارد بی‌آنکه
+    // لازم باشد. یک معیار در کل اپ، وگرنه سه جا سه چیز می‌گویند.
+    BOOL hasKey = !ZFinalPass.keyKnownMissing;
     // حالت سوم: کلید در کی‌چین هست ولی ACL آیتم این اپ را نمی‌شناسد (معمولا چون یک بار
-    // با `security` در ترمینال ساخته شده). منو پنجره‌ی رمز را بالا نمی‌آورد، پس اینجا
-    // فقط راستش را می‌گوید؛ یک بار «کلید Gemini…» و ذخیره‌ی دوباره، تمامش می‌کند.
-    BOOL keyLocked = !hasKey && ZFinalPass.keyNeedsPermission;
+    // با `security` در ترمینال ساخته شده). پاس با فال‌بکِ ابزار `security` باز هم کار
+    // می‌کند، پس این «خراب» نیست؛ فقط تولتیپ می‌گوید یک بار ذخیره‌ی دوباره تمامش می‌کند.
+    BOOL keyLocked = ZFinalPass.keyNeedsPermission;
     NSMenuItem *fin = [self icon:[self item:menu title:@"تمیز کردن متن"
                                      action:@selector(menuToggleFinalPass) key:@"a"]
                            symbol:@"sparkles"];
@@ -639,8 +643,7 @@ int ZSelfTest(NSString *file, NSString *lang) {
     // نمی‌کند. دیکته و رونویسی فایل هیچ کلیدی نمی‌خواهند؛ این کلید فقط مالِ یک تاگل است.
     NSMenuItem *key = [self icon:[self item:menu
                                        title:hasKey ? @"کلید Gemini (هست)"
-                                           : keyLocked ? @"کلید Gemini (قفل)"
-                                                       : @"کلید Gemini (اختیاری)…"
+                                                    : @"کلید Gemini (اختیاری)…"
                                      action:@selector(menuSetKey) key:@""]
                            symbol:@"key.fill"];
     key.toolTip = keyLocked
@@ -814,8 +817,14 @@ int ZSelfTest(NSString *file, NSString *lang) {
 // شیتِ کلید: جای دستورِ ترمینال. سه دکمه‌ی همیشگی به‌علاوه‌ی «پاک کردن» وقتی کلیدی
 // از قبل هست. جواب دکمه‌ها با شیء خودشان مقایسه می‌شود، نه با عددِ ثابت NSAlert، چون
 // ترتیب دکمه‌ها این‌جا شرطی است (کلید بود/نبود) و اندیس‌شان جابه‌جا می‌شود.
-- (void)menuSetKey {
-    BOOL had = ZFinalPass.hasKey;
+- (void)menuSetKey { [self runKeySheet]; }
+
+// همان شیت، ولی با یک خبر برای فراخوان: **کلیدی برای ذخیره گرفته شد یا نه.** جواب
+// «کلید درست بود؟» اینجا در دسترس نیست و نباید باشد؛ آن آسنکرون می‌آید (keySaved:).
+// این تفکیک لازم است چون offerKey باید بداند «کاربر کلید داد» را از «کاربر لغو کرد»
+// جدا کند، بی‌آنکه منتظرِ نتیجه‌ی شبکه بماند.
+- (BOOL)runKeySheet {
+    BOOL had = !ZFinalPass.keyKnownMissing;
     NSAlert *a = [NSAlert new];
     a.messageText = @"کلید Gemini";
     a.informativeText =
@@ -835,9 +844,10 @@ int ZSelfTest(NSString *file, NSString *lang) {
     NSModalResponse resp = [a runModal];
     if (resp == [a.buttons indexOfObject:save] + NSAlertFirstButtonReturn) {
         [self saveKeyTested:field.stringValue had:had];
+        return YES;
     } else if (resp == [a.buttons indexOfObject:get] + NSAlertFirstButtonReturn) {
         [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@"https://aistudio.google.com/apikey"]];
-        [self menuSetKey];    // برگشت به همین شیت، چون کاربر رفت کلید بگیرد و برمی‌گردد بچسباند
+        return [self runKeySheet];    // برگشت به همین شیت: کاربر رفت کلید بگیرد و برمی‌گردد بچسباند
     } else if (clear && resp == [a.buttons indexOfObject:clear] + NSAlertFirstButtonReturn) {
         [ZFinalPass clearKey];
         // کلید که رفت، تاگل هم می‌رود. وگرنه دقیقا همان حالت بینابینی ساخته می‌شود که
@@ -847,6 +857,7 @@ int ZSelfTest(NSString *file, NSString *lang) {
             [_panel flash:@"کلید پاک شد؛ تمیز کردن متن هم خاموش شد"];
         }
     }
+    return NO;    // لغو، یا پاک کردن: کلیدی برای ذخیره داده نشد
 }
 
 // ذخیره‌ی کلید، با تست. تست یک درخواست شبکه است، پس نه روی نخ اصلی: تپ کیبورد روی
@@ -883,12 +894,14 @@ int ZSelfTest(NSString *file, NSString *lang) {
     //
     // پس بدترین حالت این است: کاربر بعد از این‌قدر ثانیه یک پیام روشن می‌گیرد. نه
     // چرخنده‌ی ابدی، نه سکوت.
+    // و عددش باید **بلندتر از سقفِ خودِ کلیدسنج** باشد (۴۵ ثانیه)، وگرنه نگهبان پیش از
+    // رسیدنِ جوابِ واقعی حرف می‌زند و کاربر روی یک شبکه‌ی کند همیشه پیامِ غلط می‌گیرد.
     __weak typeof(self) ws = self;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(25 * NSEC_PER_SEC)),
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(70 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         typeof(self) me = ws;
         if (!me || !me->_keyCheckBusy) return;    // جواب رسیده بود؛ نگهبان کاری ندارد
-        ZLog(@"app: کلیدسنج در ۲۵ ثانیه جواب نداد؛ نگهبان پیام داد");
+        ZLog(@"app: کلیدسنج در ۷۰ ثانیه جواب نداد؛ نگهبان پیام داد");
         [me keySaved:ZKeySaveStuck message:
             @"بررسی کلید جواب نداد. اگر مک پنجره‌ی رمز Keychain نشان داد جوابش را بده، "
              "بعد دوباره امتحان کن. کلید تازه ذخیره نشد." had:had];
@@ -927,12 +940,20 @@ int ZSelfTest(NSString *file, NSString *lang) {
             break;
     }
     r.informativeText = msg.length ? msg : @"خطای نامشخص";
+    // کلیدی که نشست، پرونده‌اش باز است: تاگل بماند. کلیدی که رد شد و کلیدِ قبلی‌ای هم
+    // نبود، یعنی «روشن و بی‌کار»، و این اپ آن حالت را ندارد. اینجا و نه در offerKey،
+    // چون فقط اینجا جوابِ واقعی در دست است.
+    if ((verdict == ZKeySaveRejected || verdict == ZKeySaveBadInput) && !had
+        && ZSettings.shared.finalPassEnabled) {
+        ZSettings.shared.finalPassEnabled = NO;
+        ZLog(@"app: کلید پذیرفته نشد و کلیدِ قبلی هم نبود؛ تمیز کردن متن خاموش شد");
+    }
     if (verdict == ZKeySaveRejected || verdict == ZKeySaveBadInput || verdict == ZKeySaveStuck) {
         [r addButtonWithTitle:@"دوباره امتحان می‌کنم"];
         [r addButtonWithTitle:@"بی‌خیال"];
         // درِ برگشت، همان‌جا: کسی که کلید را غلط چسبانده، الان دستش روی کلیدِ درست
         // است. بستنِ پنجره و فرستادنش دوباره به منو، فقط یک قدم اضافه بود.
-        if ([r runModal] == NSAlertFirstButtonReturn) [self menuSetKey];
+        if ([r runModal] == NSAlertFirstButtonReturn) [self runKeySheet];
         return;
     }
     [r runModal];
@@ -977,12 +998,15 @@ int ZSelfTest(NSString *file, NSString *lang) {
     NSButton *set = [a addButtonWithTitle:@"کلید را بگذار"];
     [a addButtonWithTitle:@"خاموشش کن"];
     if ([a runModal] == [a.buttons indexOfObject:set] + NSAlertFirstButtonReturn) {
-        [self menuSetKey];
-        // شیتِ کلید بسته شد ولی کلیدی ننشست (لغو، یا کلیدِ خالی): همان درِ دوم.
-        if (ZFinalPass.hasKey) {
-            [_panel flash:@"کلید ذخیره شد؛ تمیز کردن متن روشن است"];
-            return;
-        }
+        // **جوابِ «کلید نشست؟» همین حالا موجود نیست، و پرسیدنش همان باگ بود.** ذخیره
+        // حالا آسنکرون است (کلیدسنج یک درخواست شبکه دارد)، پس `hasKey` در این خط
+        // همیشه نه می‌گفت و همین‌جا تاگل را خاموش می‌کرد؛ یعنی کاربر کلید را می‌گذاشت
+        // و اپ بلافاصله می‌گفت «کلید نبود، پس خاموش شد» و دوباره می‌پرسید.
+        //
+        // پس اینجا هیچ تصمیمی گرفته نمی‌شود: اگر شیت واقعا کلیدی برای ذخیره گرفت،
+        // نتیجه‌اش کارِ `keySaved:` است و خودش هم پیام می‌دهد هم اگر رد شد تاگل را
+        // خاموش می‌کند. درِ دومِ «خاموشش کن» فقط برای وقتی است که کلیدی داده نشد.
+        if ([self runKeySheet]) return;
     }
     ZSettings.shared.finalPassEnabled = NO;
     [_panel flash:@"کلید نبود، پس تمیز کردن متن خاموش شد"];

@@ -39,11 +39,15 @@ static NSString *ZGThinking(void) {
     return t.length ? t : @"minimal";
 }
 #define kGTimeout 300.0
-// کلیدسنج سقفِ خودش را دارد و کوتاه: پشتش یک آدم ایستاده که تازه دکمه‌ی «ذخیره» را
-// زده و تا جواب نیاید هیچ پنجره‌ای نمی‌بیند (شرحش سر saveKeyTested: در app.m: پنجره‌ی
-// انتظار حق ندارد وجود داشته باشد). سه دقیقه چرخنده برای یک پینگ، یعنی کاربر فکر کند
-// اپ گیر کرده. در عمل ~۰٫۷ ثانیه است؛ این عدد فقط سقفِ روزِ بد است.
-#define kGProbeTimeout 12.0
+// سقفِ کلیدسنج، و عددش **اندازه‌گیری است نه سلیقه**. اول ۱۲ ثانیه بود و غلط بود: پشتِ
+// VPN همین اندپوینت برای یک متنِ کوچک ۱۹ ثانیه گرفت، پس کلیدسنج سر ۱۲ می‌بُرید و
+// «اینترنت نیست» می‌گفت، در حالی که یک دقیقه بعد خودِ پاس روی همان شبکه جواب گرفت.
+// سنجه‌ای که از خودِ کاری که می‌سنجد کم‌حوصله‌تر باشد، فقط خطای دروغ تولید می‌کند.
+//
+// چهل و پنج، یعنی دو برابرِ بدترین چیزی که دیده‌ایم. کوتاه‌تر از kGTimeout می‌ماند
+// (آن ۳۰۰ است و مالِ مسیری است که آدمی منتظرش نیست) و نگهبانِ رابط از این بلندتر است،
+// وگرنه نگهبان پیش از رسیدنِ جوابِ واقعی حرف می‌زد.
+#define kGProbeTimeout 45.0
 
 // ---------- کلیدسنج: یک درخواست عمدا کوچک، پیش از ذخیره ----------
 // تا امروز نبود و هزینه‌اش را کاربر داد: چیزی که کلید نبود (۵۷۶ نویسه، بی هیچ شباهتی
@@ -74,6 +78,7 @@ typedef NS_ENUM(NSInteger, ZKeyVerdict) {
     NSString *_key;
     BOOL _keyChecked;    // یک بار پرسیده شد؛ «نبود» هم جواب است و دوباره پرسیده نمی‌شود
     BOOL _keyBlocked;    // پرسشِ بی‌پنجره خورد به ACL: کلید شاید هست، ولی اجازه‌اش نه
+    BOOL _noUITried;     // پرسشِ بی‌پنجره یک بار انجام شد؛ تکرارش جوابِ تازه نمی‌دهد
     NSLock *_keyLock;    // فقط کلید
     // ...و این یکی فقط دور خودِ *پرسش*. جدا از `_keyLock` و عمدا: آن قفل نباید در طول
     // یک پرسشِ چندثانیه‌ای گرفته بماند.
@@ -142,10 +147,18 @@ static NSString *ZKeyFromKeychain(BOOL allowUI, BOOL *blocked) {
         return [s stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     }
     if (out) CFRelease(out);
-    // ۲۵۳۰۸ یعنی «کلید هست ولی بی‌پنجره نمی‌دهم». این «نبود» نیست و نباید مثل نبود
-    // بایگانی شود، وگرنه تا ری‌استارت بعدی اپ فکر می‌کند کلیدی در کار نیست.
-    if (st == errSecInteractionNotAllowed && blocked) *blocked = YES;
-    ZLog(@"final: Keychain کلید نداد (OSStatus %d%@)", (int)st, allowUI ? @"" : @"، بی‌پنجره");
+    // **فقط یک کد یعنی «کلیدی نیست»: errSecItemNotFound.** هر چیز دیگری یعنی «نشد
+    // بخوانم»، و آن دو تا زمین تا آسمان فرق دارند: اولی یعنی برو کلید بگیر، دومی یعنی
+    // کلید سر جایش است و من دستم بسته بود.
+    //
+    // نسخه‌ی اول فقط ۲۵۳۰۸ را «دستم بسته بود» می‌دید و بقیه را «نیست» بایگانی می‌کرد،
+    // و روی این دستگاه هزینه‌اش را داد: پرسشِ بی‌پنجره همیشه **۲۵۲۹۳** (errSecAuthFailed)
+    // می‌گرفت، پس اپ سر هر لانچ نتیجه می‌گرفت کلیدی وجود ندارد، تاگل را خودش خاموش
+    // می‌کرد و دوباره کلید می‌خواست، در حالی که کلید همان‌جا بود. در لاگ ده‌ها بار
+    // تکرار شده و هیچ‌وقت به چشم نیامده بود، چون خروجی‌اش یک پیام معقول بود.
+    if (st != errSecItemNotFound && blocked) *blocked = YES;
+    ZLog(@"final: Keychain کلید نداد (OSStatus %d%@)%@", (int)st, allowUI ? @"" : @"، بی‌پنجره",
+         st == errSecItemNotFound ? @": کلیدی ذخیره نشده" : @": نشد خواند، «نبود» حساب نمی‌شود");
     return nil;
 }
 
@@ -209,8 +222,14 @@ static NSString *ZKeyFromSecurityTool(void) {
     [_keyLock lock];
     NSString *k = _key;
     BOOL checked = _keyChecked;
+    BOOL noUIDone = _noUITried;
     [_keyLock unlock];
     if (k.length || checked) return k.length ? k : nil;
+    // پرسشِ بی‌پنجره **یک بار**، و بس. حالا که «نشد بخوانم» دیگر مثل «نبود» بایگانی
+    // نمی‌شود، `_keyChecked` در حالتِ قفل هیچ‌وقت YES نمی‌شود؛ و `hasKey` هر بار که
+    // جواب نداشته باشد یک prefetch می‌اندازد، و خودش سر هر رندرِ پنل صدا زده می‌شود.
+    // یعنی بی این خط: ثانیه‌ای یک خواندنِ کی‌چین، تا ابد، با جوابِ از پیش معلوم.
+    if (!allowUI && noUIDone) return nil;
     [_fetchLock lock];
     // نفر دوم پشت در ایستاده بود؛ حالا که نوبتش شده جواب از قبل آماده است
     [_keyLock lock];
@@ -233,6 +252,7 @@ static NSString *ZKeyFromSecurityTool(void) {
     // ری‌استارت بعدی خاموش می‌ماند با اینکه کلید سر جایش است.
     _keyChecked = k.length || !blocked;
     _keyBlocked = blocked;
+    if (!allowUI) _noUITried = YES;
     if (k.length) _key = [k copy];
     [_keyLock unlock];
     [_fetchLock unlock];
@@ -458,7 +478,14 @@ static NSString *ZKeyFromSecurityTool(void) {
             code = ((NSHTTPURLResponse *)r).statusCode;
             hd = ((NSHTTPURLResponse *)r).allHeaderFields;
         }
-        if (e && !code) code = -1;
+        // **کدِ واقعیِ خطا، نه یک منفیِ یک.** قبلا هر خطای شبکه به `-1` تبدیل می‌شد و
+        // همان‌جا اطلاعات از دست می‌رفت، پس پیامِ کاربر مجبور بود حدس بزند و حدسش
+        // «اینترنت نیست» بود. هزینه‌اش را کاربر داد: پشتِ VPN، درخواست ۱۹ ثانیه طول
+        // می‌کشید و کلیدسنج سر ۱۲ ثانیه می‌بُرید، بعد می‌گفت اینترنت نیست، در حالی که
+        // همان لحظه خودِ پاس داشت کار می‌کرد. کدهای NSURLError همه منفی‌اند، پس هر
+        // چک `st < 0` سر جایش می‌ماند و حالا **می‌شود فهمید کدام خطا**.
+        if (e && !code) code = e.code ?: -1;
+        if (e) ZLog(@"final: شبکه خطا داد: %@ (%ld)", e.localizedDescription ?: @"?", (long)e.code);
         dispatch_semaphore_signal(sem);
     }];
     // arm/disarm (قفلِ ZPassLock) با حذفِ صدا از این پاس رفتند: آن‌ها برای لغوِ آپلودِ
@@ -557,7 +584,15 @@ static NSString *ZHumanError(NSString *label, NSInteger st, NSData *raw) {
     }
     if (ZKeyRejected(st, body)) return @"کلید Gemini پذیرفته نشد؛ از منوی زمزمه یک کلید تازه بگذار.";
     if (st == 400) return @"سرور Gemini این درخواست را نپذیرفت (۴۰۰)";
-    if (st < 0) return @"اینترنت نیست؛ متن تمیز نشد";
+    // «کند بود» با «نبود» یکی نیست، و یکی گفتنشان کاربر را دنبال اشتباه می‌فرستد: یکی
+    // می‌گوید صبر کن یا دوباره بزن، آن یکی می‌گوید برو سراغ شبکه‌ات.
+    if (st == NSURLErrorTimedOut) return @"جواب سرور Gemini دیر آمد و منتظر نماندیم";
+    if (st == NSURLErrorNotConnectedToInternet) return @"اینترنت نیست";
+    if (st == NSURLErrorCannotFindHost || st == NSURLErrorCannotConnectToHost
+        || st == NSURLErrorDNSLookupFailed) {
+        return @"به سرور Gemini نشد وصل شد (DNS یا فایروال یا VPN)";
+    }
+    if (st < 0) return [NSString stringWithFormat:@"شبکه نگذاشت (خطای %ld)", (long)st];
     return [NSString stringWithFormat:@"تمیز کردن متن نشد (HTTP %ld)", (long)st];
 }
 
