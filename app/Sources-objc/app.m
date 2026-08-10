@@ -849,13 +849,14 @@ int ZSelfTest(NSString *file, NSString *lang) {
         [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@"https://aistudio.google.com/apikey"]];
         return [self runKeySheet];    // برگشت به همین شیت: کاربر رفت کلید بگیرد و برمی‌گردد بچسباند
     } else if (clear && resp == [a.buttons indexOfObject:clear] + NSAlertFirstButtonReturn) {
-        [ZFinalPass clearKey];
-        // کلید که رفت، تاگل هم می‌رود. وگرنه دقیقا همان حالت بینابینی ساخته می‌شود که
-        // این نسخه دارد از بین می‌بردش: روشن، و بی‌کار.
-        if (ZSettings.shared.finalPassEnabled) {
-            ZSettings.shared.finalPassEnabled = NO;
-            [_panel flash:@"کلید پاک شد؛ تمیز کردن متن هم خاموش شد"];
-        }
+        // پس‌زمینه، چون ابزار بیرونی و شاید پنجره‌ی کی‌چین در کار است و نخ اصلی حق
+        // ندارد بایستد. و نتیجه **گزارش** می‌شود: تا امروز پاک نشدن هم «پاک شد» پیام
+        // می‌گرفت، و کاربر هر بار دکمه را می‌زد و هیچ نمی‌شد.
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+            NSString *m = nil;
+            BOOL gone = [ZFinalPass clearKeyWithMessage:&m];
+            dispatch_async(dispatch_get_main_queue(), ^{ [self keyCleared:gone message:m]; });
+        });
     }
     return NO;    // لغو، یا پاک کردن: کلیدی برای ذخیره داده نشد
 }
@@ -906,6 +907,22 @@ int ZSelfTest(NSString *file, NSString *lang) {
             @"بررسی کلید جواب نداد. اگر مک پنجره‌ی رمز Keychain نشان داد جوابش را بده، "
              "بعد دوباره امتحان کن. کلید تازه ذخیره نشد." had:had];
     });
+}
+
+// جوابِ پاک کردن، در نوبتِ تازه‌ی خودش (همان قاعده‌ی keySaved:). و صریح در هر دو
+// جهت: «پاک شد» فقط وقتی گفته می‌شود که دوباره خوانده و پیدا نشده باشد.
+- (void)keyCleared:(BOOL)gone message:(NSString *)msg {
+    // کلید که رفت، تاگل هم می‌رود. وگرنه دقیقا همان حالت بینابینی ساخته می‌شود که این
+    // نسخه دارد از بین می‌بردش: روشن، و بی‌کار.
+    BOOL turnedOff = gone && ZSettings.shared.finalPassEnabled;
+    if (turnedOff) ZSettings.shared.finalPassEnabled = NO;
+    NSAlert *a = [NSAlert new];
+    a.messageText = gone ? @"کلید پاک شد" : @"کلید پاک نشد";
+    a.alertStyle = gone ? NSAlertStyleInformational : NSAlertStyleWarning;
+    a.informativeText = turnedOff
+        ? [(msg ?: @"") stringByAppendingString:@" «تمیز کردن متن» هم خاموش شد."]
+        : (msg ?: @"");
+    [a runModal];
 }
 
 // جوابِ کلیدسنج، روی نخ اصلی و در بلاکِ **خودش**. جدا بودنش از saveKeyTested: تشریفات

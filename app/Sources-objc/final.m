@@ -169,20 +169,21 @@ static NSString *ZKeyFromKeychain(BOOL allowUI, BOOL *blocked) {
 // خودش یک باگ است، حتی اگر امروز کسی به آن نخورد.
 #define kZSecurityToolTimeout 5.0
 
-static NSString *ZKeyFromSecurityTool(void) {
+// یک اجرا از ابزار `security`، با سقف. دو مصرف دارد (خواندن، و پاک کردن) و یک
+// پیاده‌سازی، وگرنه سقف و کشتنِ پروسه دو بار نوشته می‌شد و یکی‌شان دیر یا زود جا
+// می‌افتاد. `-1` یعنی اصلا اجرا نشد یا سقف خورد.
+static int ZRunSecurityTool(NSArray<NSString *> *args, NSData **outData) {
     NSTask *t = [NSTask new];
     t.executableURL = [NSURL fileURLWithPath:@"/usr/bin/security"];
-    t.arguments = @[@"find-generic-password", @"-s", kKeychainService, @"-w"];
+    t.arguments = args;
     NSPipe *p = [NSPipe pipe];
     t.standardOutput = p;
     t.standardError = NSFileHandle.fileHandleWithNullDevice;
     NSError *e = nil;
     if (![t launchAndReturnError:&e]) {
         ZLog(@"final: ابزار security اجرا نشد: %@", e.localizedDescription ?: @"?");
-        return nil;
+        return -1;
     }
-    // خواندن روی نخ دیگر و انتظار با سقف: خودِ خواندن هم می‌تواند بلوکه بماند، پس
-    // سقف گذاشتن فقط روی waitUntilExit کافی نیست.
     dispatch_semaphore_t sem = dispatch_semaphore_create(0);
     __block NSData *out = nil;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
@@ -191,16 +192,21 @@ static NSString *ZKeyFromSecurityTool(void) {
     });
     if (dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW,
                                 (int64_t)(kZSecurityToolTimeout * NSEC_PER_SEC)))) {
-        // سقف خورد: پروسه را بکش تا نخِ خواننده هم آزاد شود (EOF می‌گیرد)، و برگرد.
-        // «نمی‌دانم» جوابِ درستی است؛ گیر کردن نه.
-        ZLog(@"final: ابزار security در %.0f ثانیه جواب نداد، کشته شد", kZSecurityToolTimeout);
+        ZLog(@"final: ابزار security (%@) در %.0f ثانیه جواب نداد، کشته شد",
+             args.firstObject, kZSecurityToolTimeout);
         [t terminate];
-        return nil;
+        return -1;
     }
     [t waitUntilExit];    // خروجی‌اش آمده، پس این آنی است
-    NSData *d = out;
-    if (t.terminationStatus != 0 || !d.length) {
-        ZLog(@"final: ابزار security کلید نداد (exit %d)", t.terminationStatus);
+    if (outData) *outData = out;
+    return t.terminationStatus;
+}
+
+static NSString *ZKeyFromSecurityTool(void) {
+    NSData *d = nil;
+    int st = ZRunSecurityTool(@[@"find-generic-password", @"-s", kKeychainService, @"-w"], &d);
+    if (st != 0 || !d.length) {
+        ZLog(@"final: ابزار security کلید نداد (exit %d)", st);
         return nil;
     }
     return [[[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding]
@@ -427,16 +433,53 @@ static NSString *ZKeyFromSecurityTool(void) {
     return v == ZKeyGood ? ZKeySaveOK : ZKeySaveUntested;
 }
 
-+ (void)clearKey {
+// ---------- پاک کردن ----------
+// دو باگ اینجا با هم بود و کاربر هر دو را یک چیز می‌دید: «هر کاری می‌کنم پاک نمی‌شه».
+//
+// یک: جوابِ `SecItemDelete` **خوانده نمی‌شد**. پاک نشدن و پاک شدن یک شکل داشتند، و
+// آیتمی که ACL‌اش این اپ را نمی‌شناسد می‌تواند اجازه‌ی پاک شدن ندهد. حالا جواب چک
+// می‌شود، فال‌بکِ ابزار `security` هم هست (همان‌جایی که خواندن هم فال‌بک دارد)، و آخرش
+// **دوباره خوانده می‌شود** تا «رفت» یک ادعا نباشد.
+//
+// دو: و این یکی مالِ خودم بود. `_keyChecked = NO` یعنی «نمی‌دانم»، و از وقتی رابط
+// معیارش را به `keyKnownMissing` عوض کرد، «نمی‌دانم» را «کلید هست» می‌خواند. پس
+// پاک کردنِ **موفق** هم در منو «کلید Gemini (هست)» نشان می‌داد و دکمه آبی می‌ماند.
+// حالا صریح است: پاک شد یعنی می‌دانیم نیست.
+//
+// بلوکه است (ابزار بیرونی و شاید پنجره‌ی کی‌چین)، پس فراخوان باید از نخ اصلی دورش کند.
++ (BOOL)clearKeyWithMessage:(NSString **)msg {
     NSDictionary *q = @{(id)kSecClass: (id)kSecClassGenericPassword,
                         (id)kSecAttrService: kKeychainService};
-    SecItemDelete((__bridge CFDictionaryRef)q);
+    OSStatus st = SecItemDelete((__bridge CFDictionaryRef)q);
+    if (st != errSecSuccess && st != errSecItemNotFound) {
+        ZLog(@"final: SecItemDelete نشد (OSStatus %d)، ابزار security امتحان می‌شود", (int)st);
+        int tool = ZRunSecurityTool(@[@"delete-generic-password", @"-s", kKeychainService], NULL);
+        ZLog(@"final: security delete-generic-password exit %d", tool);
+    }
+    // ادعا نه، تایید: دوباره بخوان. با اجازه‌ی پنجره، چون کاربر خودش همین حالا دکمه‌ی
+    // «پاک کردن» را زده و پنجره‌ی کی‌چین در این لحظه معنا دارد.
+    BOOL blocked = NO;
+    NSString *still = ZKeyFromKeychain(YES, &blocked);
+    if (!still.length) still = ZKeyFromSecurityTool();
     ZFinalPass *s = ZFinalPass.shared;
     [s->_keyLock lock];
-    s->_key = nil;
-    s->_keyChecked = NO;
+    s->_key = still.length ? [still copy] : nil;
+    // «می‌دانیم نیست»، نه «نمی‌دانم». همین یک خط بود که پاک کردنِ موفق را هم شبیه
+    // شکست نشان می‌داد.
+    s->_keyChecked = !still.length;
+    s->_keyBlocked = still.length ? NO : blocked;
     s->_keyRejected = NO;
+    s->_noUITried = NO;      // پرونده‌ی تازه: پرسشِ بی‌پنجره دوباره حق دارد یک بار بپرسد
     [s->_keyLock unlock];
+    if (still.length) {
+        ZLog(@"final: کلید پاک نشد، هنوز در Keychain است");
+        if (msg) *msg = @"کلید پاک نشد: Keychain اجازه نداد. از Keychain Access "
+                         "آیتم «zemzeme-gemini» را دستی پاک کن.";
+        return NO;
+    }
+    ZLog(@"final: کلید پاک شد و تایید شد");
+    if (msg) *msg = @"کلید از Keychain پاک شد.";
+    return YES;
 }
 
 // ---------- پرامپت‌ها ----------
