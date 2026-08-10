@@ -26,7 +26,8 @@ int main(int argc, const char *argv[]) {
     @autoreleasepool {
         ZSettings *s = ZSettings.shared;
         ZInsertMode global = s.insertMode;
-        NSString *want = global == ZInsertType ? @"تایپ" : @"چسباندن";
+        // همان دو اسمی که در منو نوشته شده، تا خروجی تست و رابط یک زبان داشته باشند
+        NSString *want = global == ZInsertType ? @"درج مستقیم" : @"ذخیره در کلیپ‌بورد";
         fprintf(stderr, "روشِ سراسری: %s\n", want.UTF8String);
 
         ok([s insertModeForBundleId:kZRDPBundleId] == ZInsertPaste,
