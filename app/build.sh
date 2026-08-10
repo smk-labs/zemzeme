@@ -51,9 +51,12 @@ cp prompts/ai-pass.md prompts/ai-pass-two.md prompts/ai-pass-append.md "$APP/Con
 rm -rf .build/icon.iconset
 .build/zemzeme --appicon .build/icon.iconset
 iconutil -c icns .build/icon.iconset -o "$APP/Contents/Resources/Zemzeme.icns"
-for f in "$HOME/Library/Fonts/Vazirmatn-Regular.ttf" "$HOME/Library/Fonts/Vazirmatn-Medium.ttf"; do
-  [ -f "$f" ] && cp "$f" "$APP/Contents/Resources/" || true
-done
+# فونت از داخل ریپو، نه از پوشه‌ی فونتِ دستگاهِ بیلد. قبلا از ~/Library/Fonts خوانده
+# می‌شد و روی مکِ کسی که وزیرمتن نصب ندارد بی‌صدا به فونت سیستم می‌افتاد، یعنی کل
+# رابطِ فارسی روی نصبِ تازه بدریخت می‌شد و هیچ‌جا هم گزارش نمی‌شد. وزیرمتن با پروانه‌ی
+# SIL OFL منتشر می‌شود (app/fonts/OFL.txt) و بازتوزیعش آزاد است، پس دو فایل ۱۲۰
+# کیلوبایتی داخل ریپو می‌نشینند و بیلد از هر دستگاهی یک نتیجه می‌دهد.
+cp fonts/Vazirmatn-Regular.ttf fonts/Vazirmatn-Medium.ttf "$APP/Contents/Resources/"
 
 # امضا با گواهی ثابت، نه ad-hoc: شرطی که TCC ذخیره می‌کند «شناسه + گواهی» است،
 # پس اجازه اکسسبیلیتی و میکروفن از هر بیلد جان سالم می‌برد.

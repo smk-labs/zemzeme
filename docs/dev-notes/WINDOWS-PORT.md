@@ -2,6 +2,8 @@
 
 Written 2026-07-24 from a full read of this repo. **No code has been written. This is a decision record, not a task list in progress.** Pick it up whenever; nothing here expires except the risk note at the bottom.
 
+> **Read this against version 1.** The Mac app was rewritten as version 2 after this note was filed, and three pieces it costs out are gone: the Persian polish daemon (`polish.py`, phase 3), the `app/swift-port/` tree, and the overlap-and-stitch pipeline the session rotation existed to repair. Version 2 cuts audio into ~7-second chunks at silence and concatenates them, so a port today is smaller than the estimate below, not larger. The wire protocol, the injection model and the risk section still hold.
+
 ## What a port actually costs
 
 Roughly 2,900 lines of C#, zero third-party packages, in five phases. Two of the three hard parts are already OS-independent and move over untouched: the Google full-duplex speech protocol and the Persian polish daemon. What genuinely has to be rebuilt is the thin macOS shell around them: hotkey, mic, text injection, floating panel.

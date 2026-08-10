@@ -25,7 +25,7 @@ If the binary is not at that path, the app is not installed. Tell the user, do n
 
 - Default is `fa-IR`. Leave it alone for Persian audio.
 - Pass `--lang en-US` when you know the audio is English. Guessing wrong costs a whole run, so if you are unsure, ask the user in one short question.
-- Persian output gets a spelling and punctuation pass automatically. English output comes back lowercase with no punctuation. Clean it up yourself when you present it.
+- The text comes back raw, exactly as the speech engine returned it. No cleanup pass runs on it in either language: Persian keeps whatever spacing and punctuation the engine produced, English comes back lowercase and unpunctuated. Tidy it yourself when you present it.
 
 ## Keep `--jobs` at 2
 
