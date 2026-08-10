@@ -39,6 +39,7 @@ static NSString *const kBase = @"https://www.google.com/speech-api/full-duplex/v
         _lock = [NSLock new];
         _pending = [NSMutableData data];
         _buf = [NSMutableData data];
+        _backlogCap = kZBacklogCapBytes;
         NSMutableString *p = [NSMutableString string];
         for (int i = 0; i < 8; i++) [p appendFormat:@"%02x", arc4random_uniform(256)];
         _pair = p;
@@ -101,12 +102,13 @@ static NSString *const kBase = @"https://www.google.com/speech-api/full-duplex/v
     [_pending appendData:pcm];
     // شبکه خیلی عقب افتاده: به‌جای رشد بی‌نهایت (که تاخیر تشخیص را همیشه بیشتر
     // می‌کند)، قدیمی‌ترین صدا را دور بریز؛ خیلی بهتر از cancel که همه را می‌بَرد.
-    if (_pending.length > kZBacklogCapBytes) {
-        NSUInteger drop = _pending.length - kZBacklogCapBytes;
+    if (_pending.length > _backlogCap) {
+        NSUInteger drop = _pending.length - _backlogCap;
         [_pending replaceBytesInRange:NSMakeRange(0, drop) withBytes:NULL length:0];
         if (!_backlogWarned) {
             _backlogWarned = YES;
-            ZLog(@"stream %@ backlog over %ds, dropping oldest audio", _pair, kZBacklogSec);
+            ZLog(@"stream %@ backlog over %.0fs, dropping oldest audio", _pair,
+                 _backlogCap / kZPcmBytesPerSec);
         }
     }
     [_lock unlock];

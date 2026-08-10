@@ -120,6 +120,9 @@ static NSData *ZReadWav(NSString *path, NSString **err) {
 
 @interface ZMeasureRun : NSObject <ZEngineDelegate>
 @property (nonatomic, copy) NSString *text, *second;
+@property (nonatomic, copy) NSString *preview;      // آخرین متنِ خامِ پیش‌نمایش
+@property (nonatomic) NSInteger previewUpdates;
+@property (nonatomic) BOOL echoPreview;
 @property (nonatomic) NSTimeInterval took;
 @property (nonatomic) NSInteger degraded;
 @property (nonatomic) BOOL done;
@@ -128,6 +131,13 @@ static NSData *ZReadWav(NSString *path, NSString **err) {
 @implementation ZMeasureRun
 - (void)engineState:(ZEngineState)state message:(NSString *)msg {}
 - (void)engineLevel:(float)rms {}
+// پیش‌نمایش هم باید بی‌میکروفن دیده شود، وگرنه «کار می‌کند» یعنی «حرف زدم و خوب به
+// نظر رسید»، و همان جمله بود که نسخه یک را پنج دور به وصله کشاند.
+- (void)enginePreview:(NSString *)text {
+    _preview = text;
+    _previewUpdates++;
+    if (_echoPreview) fprintf(stderr, "preview> %s\n", (text ?: @"").UTF8String);
+}
 - (void)engineDidFinish:(NSString *)text second:(NSString *)second took:(NSTimeInterval)took {
     _text = text;
     _second = second;
@@ -154,10 +164,12 @@ static NSString *ZFixedCuts(NSData *pcm, NSString *lang, double sec) {
 }
 
 // یک فایل، کل خط لوله. برمی‌گرداند: متن، و ثانیه‌ی «از پایان صدا تا آماده شدن متن».
-static ZMeasureRun *ZRunWav(NSData *pcm, NSString *lang, double speed) {
+static ZMeasureRun *ZRunWav(NSData *pcm, NSString *lang, double speed, BOOL preview) {
     ZMeasureRun *run = [ZMeasureRun new];
+    run.echoPreview = preview;
     ZEngine *eng = [[ZEngine alloc] initWithLang:lang];
     eng.delegate = run;
+    eng.previewInFileMode = preview;
     NSError *e = nil;
     if (![eng startFromPCM:pcm speed:speed error:&e]) {
         fprintf(stderr, "شروع نشد: %s\n", e.localizedDescription.UTF8String ?: "?");
@@ -192,7 +204,7 @@ static int ZTable(NSArray<NSString *> *takes, NSString *lang, double speed) {
             return 1;
         }
         NSString *ref = [NSString stringWithContentsOfFile:md encoding:NSUTF8StringEncoding error:nil];
-        ZMeasureRun *r = ZRunWav(pcm, lang, speed);
+        ZMeasureRun *r = ZRunWav(pcm, lang, speed, NO);
         if (!r) return 1;
         ZScore s = ZScoreText(ZScript(ref ?: @""), r.text ?: @"");
         double sec = pcm.length / kZPcmBytesPerSec;
@@ -268,6 +280,7 @@ int ZLiveWavMain(NSArray<NSString *> *args) {
     double speed = 0;      // صفر یعنی تندترین ممکن؛ ۱ یعنی زمان واقعی
     double fixed = 0;      // برش ثابت، فقط برای بازتولید خط مبنا
     BOOL table = NO;
+    BOOL preview = NO;     // استریم نمایشی را هم روشن کن و متنش را چاپ کن
     NSUInteger i = [args indexOfObject:@"--livewav"] + 1;
     for (; i < args.count; i++) {
         NSString *a = args[i];
@@ -276,6 +289,7 @@ int ZLiveWavMain(NSArray<NSString *> *args) {
         else if ([a isEqualToString:@"--ref"] && i + 1 < args.count) refPath = args[++i];
         else if ([a isEqualToString:@"--fixed"] && i + 1 < args.count) fixed = args[++i].doubleValue;
         else if ([a isEqualToString:@"--table"]) table = YES;
+        else if ([a isEqualToString:@"--preview"]) preview = YES;
         else if (![a hasPrefix:@"--"] && !file) file = a;
     }
 
@@ -285,7 +299,7 @@ int ZLiveWavMain(NSArray<NSString *> *args) {
                       lang, speed);
     }
     if (!file) {
-        fprintf(stderr, "zemzeme --livewav <file.wav> [--lang fa-IR] [--speed 1] [--ref متن.md]\n"
+        fprintf(stderr, "zemzeme --livewav <file.wav> [--lang fa-IR] [--speed 1] [--ref متن.md] [--preview]\n"
                         "zemzeme --livewav --table\n");
         return 2;
     }
@@ -308,12 +322,16 @@ int ZLiveWavMain(NSArray<NSString *> *args) {
         }
         return 0;
     }
-    ZMeasureRun *r = ZRunWav(pcm, lang, speed);
+    ZMeasureRun *r = ZRunWav(pcm, lang, speed, preview);
     if (!r) return 1;
     printf("%s\n", (r.text ?: @"").UTF8String);
     if (r.second.length) fprintf(stderr, "\n[en-US] %s\n", r.second.UTF8String);
     fprintf(stderr, "\nصدا %.1f ثانیه، از پایان صدا تا متن %.1f ثانیه، %ld برش تحمیلی\n",
             pcm.length / kZPcmBytesPerSec, r.took, (long)r.degraded);
+    if (preview) {
+        fprintf(stderr, "\nپیش‌نمایش: %ld بازنویسی، %lu نویسه در آخر\n",
+                (long)r.previewUpdates, (unsigned long)(r.preview ?: @"").length);
+    }
     if (refPath) {
         NSString *ref = [NSString stringWithContentsOfFile:refPath encoding:NSUTF8StringEncoding error:nil];
         ZScore s = ZScoreText(ZScript(ref ?: @""), r.text ?: @"");

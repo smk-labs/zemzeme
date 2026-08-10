@@ -114,9 +114,6 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
     NSUInteger _previewLoc;
     NSString *_previewText;
     BOOL _previewGaveUp;          // کاربر در دُم تایپ کرد: تا نوشتنِ کاملِ بعدی دست نگه دار
-    NSTimer *_fadeTimer;          // فِیدِ ورودِ تکه‌ی تازه
-    NSRange _fadeRange;
-    NSInteger _fadeStep;
     NSTimer *_saveOriginTimer;
     BOOL _pulsing;
     BOOL _editorVisible;
@@ -199,11 +196,10 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
         _chipLabel.alignment = NSTextAlignmentCenter;
         [_chipBg addSubview:_chipLabel];
 
-        // سرنویسِ دُم خاکستری. یک جمله و بس، و جمله عمدا **عذرخواهی نمی‌کند، توضیح
-        // می‌دهد**: کاربری که می‌بیند حرفِ همین ثانیه‌اش روی صفحه نیست باید بداند
-        // دلیلش عقب بودنِ پیش‌نمایش است، نه نشنیدنِ اپ. بی این یک خط، همان سکوتِ چند
-        // ثانیه‌ای دقیقا شبیه خرابی به نظر می‌رسد.
-        _previewTag = [NSTextField labelWithString:@"پیش‌نمایش ﹒ کمی عقب‌تر از حرفت"];
+        // سرنویسِ دُم خاکستری، و کوتاه‌ترین چیزی که باید بگوید: این متن **خام** است و
+        // متنِ درست سر پایان می‌آید. بی این یک خط، کاربر متنِ خام را نتیجه می‌بیند و
+        // فکر می‌کند رونویسی افتضاح است، در حالی که چیزی که تحویل می‌گیرد آن نیست.
+        _previewTag = [NSTextField labelWithString:@"پیش‌نمایش خام ﹒ متن درست سر پایان"];
         _previewTag.font = ZFont(10.5, NO);
         _previewTag.textColor = NSColor.tertiaryLabelColor;
         _previewTag.alignment = NSTextAlignmentRight;
@@ -473,12 +469,11 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
 
 // خاکستریِ دُم. از labelColor ساخته می‌شود نه از secondaryLabelColor، چون آن یکی خودش
 // آلفا دارد و ضرب کردنِ آلفا در آلفا در حالت تاریک متن را عملا ناخوانا می‌کرد.
-static NSColor *ZPreviewColor(CGFloat f) {
-    return [NSColor.labelColor colorWithAlphaComponent:0.45 * MIN(MAX(f, 0.0), 1.0)];
+static NSColor *ZPreviewColor(void) {
+    return [NSColor.labelColor colorWithAlphaComponent:0.45];
 }
 
 - (void)forgetPreview {
-    [self stopFade];
     _previewText = nil;
     _previewLoc = 0;
     _previewGaveUp = NO;
@@ -501,7 +496,6 @@ static NSColor *ZPreviewColor(CGFloat f) {
         NSUInteger end = _previewLoc + _previewText.length;
         if (end != ts.length ||
             ![[ts.string substringFromIndex:_previewLoc] isEqualToString:_previewText]) {
-            [self stopFade];
             _previewText = nil;
             _previewGaveUp = YES;
             return;
@@ -517,16 +511,16 @@ static NSColor *ZPreviewColor(CGFloat f) {
     NSString *body = text ?: @"";
     if (body.length && _previewLoc > 0) body = [@" " stringByAppendingString:body];
 
-    // فقط تکه‌ی **تازه** فِید می‌خورد. متنِ قبلی که از نو نوشته می‌شود نباید هر بار
-    // دوباره روشن و خاموش شود؛ چشم آن را به‌عنوان «چیزی عوض شد» می‌خواند.
-    NSUInteger settled = [body hasPrefix:_previewText ?: @""] ? (_previewText ?: @"").length : 0;
-    [self stopFade];
+    // بی فِید، بی انیمیشن. یک نسخه فِیدِ ورودِ تکه داشت و آن وقتی معنی داشت که هر ~۱۰
+    // ثانیه یک بار تکه‌ی تازه می‌نشست. حالا متن هم‌گام با حرف زدن جلو می‌رود و interim
+    // خودش را بازنویسی می‌کند، پس فِید یعنی کلِ متن چند بار در ثانیه پلک بزند. متنی که
+    // مدام حرکت می‌کند، حرکتِ اضافه لازم ندارد.
     [ts beginEditing];
     [ts replaceCharactersInRange:NSMakeRange(_previewLoc, ts.length - _previewLoc) withString:body];
     if (body.length) {
         NSRange r = NSMakeRange(_previewLoc, body.length);
         [ts addAttribute:NSFontAttributeName value:ZFont(15, NO) range:r];
-        [ts addAttribute:NSForegroundColorAttributeName value:ZPreviewColor(1) range:r];
+        [ts addAttribute:NSForegroundColorAttributeName value:ZPreviewColor() range:r];
     }
     [ts endEditing];
 
@@ -535,56 +529,13 @@ static NSColor *ZPreviewColor(CGFloat f) {
         return;
     }
     _previewText = [body copy];
-    if (settled < body.length) {
-        [self startFade:NSMakeRange(_previewLoc + settled, body.length - settled)];
-    }
-    // اسکرول به آخر، وگرنه بعد از سه تکه دیگر هیچ چیز تازه‌ای دیده نمی‌شود و کل
-    // فیچر یک بلوکِ بی‌حرکت می‌شود.
+    // اسکرول به آخر، وگرنه متن از پایین کادر بیرون می‌رود و کاربر یک بلوکِ بی‌حرکت
+    // می‌بیند در حالی که پایینش دارد تند جلو می‌رود.
     [_editor scrollRangeToVisible:NSMakeRange(ts.length, 0)];
     if (_previewTag.hidden) {
         _previewTag.hidden = NO;
         [self layoutViews];
     }
-}
-
-// فِیدِ ۱۵۰ میلی‌ثانیه‌ای، پنج پله. ظاهر شدنِ ناگهانیِ یک خط متن چشم را از کاری که
-// دارد می‌کند می‌کَند؛ آمدنِ نرم همان خبر را می‌دهد بی آنکه نگاه را بدزدد.
-//
-// و از **صفر شروع نمی‌شود**، عمدا: متنی که تا فیر شدنِ یک تایمر نامرئی است، اگر آن
-// تایمر به هر دلیلی نچرخد نامرئی می‌ماند، و متنِ نامرئی از پرشِ ناگهانی خیلی بدتر
-// است. پس بدترین حالتِ ممکنِ این فِید، خاکستریِ کم‌رنگِ خوانا است، نه هیچ.
-static const NSInteger kZFadeSteps = 5;
-static const NSInteger kZFadeFrom = 2;    // پله‌ی شروع، یعنی ۴۰٪ رنگِ نهایی
-
-- (void)startFade:(NSRange)r {
-    _fadeRange = r;
-    _fadeStep = kZFadeFrom;
-    [_editor.textStorage addAttribute:NSForegroundColorAttributeName
-                                value:ZPreviewColor((CGFloat)kZFadeFrom / kZFadeSteps) range:r];
-    __weak typeof(self) ws = self;
-    _fadeTimer = [NSTimer timerWithTimeInterval:0.03 repeats:YES block:^(NSTimer *t) {
-        [ws fadeTick];
-    }];
-    // common modes: وسط کشیدنِ پنل هم ران‌لوپِ درگ می‌چرخد و فِید نباید نیمه‌کاره بماند
-    [NSRunLoop.currentRunLoop addTimer:_fadeTimer forMode:NSRunLoopCommonModes];
-}
-
-- (void)fadeTick {
-    NSTextStorage *ts = _editor.textStorage;
-    // متن زیر پای فِید عوض شده (نوشتنِ کامل، یا تایپ کاربر): بی‌سروصدا بایست
-    if (NSMaxRange(_fadeRange) > ts.length) {
-        [self stopFade];
-        return;
-    }
-    _fadeStep++;
-    CGFloat f = MIN(1.0, (CGFloat)_fadeStep / kZFadeSteps);
-    [ts addAttribute:NSForegroundColorAttributeName value:ZPreviewColor(f) range:_fadeRange];
-    if (f >= 1.0) [self stopFade];
-}
-
-- (void)stopFade {
-    [_fadeTimer invalidate];
-    _fadeTimer = nil;
 }
 
 // ---------- اندازه ----------
@@ -683,7 +634,6 @@ static const NSInteger kZFadeFrom = 2;    // پله‌ی شروع، یعنی ۴�
     _saveOriginTimer = nil;
     [self saveOrigin];
     [self stopPulse];
-    [self stopFade];
     [_panel orderOut:nil];
 }
 
@@ -758,12 +708,12 @@ static NSString *ZClock(NSTimeInterval sec) {
     [self setButton:_btnPreview symbol:prev ? @"captions.bubble.fill" : @"captions.bubble"];
     _btnPreview.contentTintColor = prev ? NSColor.systemBlueColor : nil;
     _btnPreview.toolTip = prev
-        ? @"پیش‌نمایش روشن است: هر چند ثانیه، تکه‌ی تازه خاکستری در پنل می‌نشیند و سر "
-           "پایان همه‌اش سفید می‌شود. متن هیچ فرقی نمی‌کند، فقط زودتر دیده می‌شود. "
-           "برای تمرکز بیشتر خاموشش کن (Command راست + P)"
-        : @"پیش‌نمایش (آزمایشی): متن را همان‌طور که می‌رسد، تکه‌تکه و خاکستری، نشان "
-           "می‌دهد. خاموش بماند بهتر است: خواندنِ حرفِ خودت وسط حرف زدن حواست را پرت "
-           "می‌کند (Command راست + P)";
+        ? @"پیش‌نمایش روشن است: متنِ خاکستری هم‌گام با حرف زدنت جلو می‌رود، ولی خام است "
+           "و غلط دارد. متنِ درست سر پایان می‌آید و سفید می‌شود. برای تمرکز بیشتر "
+           "خاموشش کن (Command راست + P)"
+        : @"پیش‌نمایش (آزمایشی): متن را هم‌گام با حرف زدنت نشان می‌دهد، خاکستری و خام. "
+           "روی متنِ نهایی هیچ اثری ندارد. خاموش بماند بهتر است: خواندنِ حرفِ خودت وسط "
+           "حرف زدن حواست را پرت می‌کند (Command راست + P)";
     // حالت کنار کرسر پنلی ندارد که چیزی در آن نشان داده شود، پس دکمه هم آنجا معنا
     // ندارد. مثل بقیه‌ی نوار غیب نمی‌شود، فقط خاموش و بی‌رنگ می‌ماند و می‌گوید چرا.
     if (!collect) {
@@ -934,14 +884,14 @@ static NSString *ZClock(NSTimeInterval sec) {
                                 @"تهش با دکمه‌ی درج، یکجا سر کرسر می‌نشیند."];
         }
         if (m == preview) {
-            // عمدا **تکه‌تکه**، همان‌طور که سشن واقعی می‌فرستد: هر بار کلِ متنِ جمع‌شده
-            // از نو. اگر لنگر یا فاصله یا رنگ جایی بلغزد، دقیقا همین‌جا پیدا می‌شود.
+            // عمدا **چند بار پشت سر هم**، همان‌طور که استریم می‌فرستد: هر بار کلِ متن
+            // از نو، و بار آخر یک بازنویسیِ واقعی (interim که نظرش عوض شده). اگر لنگر
+            // یا فاصله یا رنگ جایی بلغزد، دقیقا همین‌جا پیدا می‌شود.
             [self setEditorText:@"این تکه قبلا تحویل شده و سفید است."];
-            NSString *acc = @"";
-            for (NSString *part in @[@"و این تکه‌ها تازه رسیده‌اند", @"و هنوز خاکستری‌اند،",
-                                     @"تا وقتی که حرفت تمام شود."]) {
-                acc = acc.length ? [NSString stringWithFormat:@"%@ %@", acc, part] : part;
-                [self setPreviewText:acc];
+            for (NSString *step in @[@"و این متن",
+                                     @"و این متن خام هم‌گام با حرف",
+                                     @"و این متن خام هم‌گام با حرف زدن جلو می‌رود، با غلط، تا آخر."]) {
+                [self setPreviewText:step];
             }
         }
         [self render:m];

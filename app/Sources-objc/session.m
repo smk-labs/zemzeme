@@ -45,10 +45,6 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
     // پیدا نمی‌کرد و متن فقط در کلیپ‌بورد می‌ماند.
     NSUInteger _inserted;            // چقدر از متن واقعا سر کرسر رفته
     NSString *_polished;             // آخرین متنی که مدل نوشته؛ پایه‌ی جوشِ دور بعد
-    // تکه‌های همین دورِ شنیدن، برای دُمِ خاکستری. عمدا از `_text` جداست: آن یکی
-    // حقیقتِ سشن است و این فقط یک نما. اگر پیش‌نمایش خاموش باشد هیچ‌کدام از این‌ها
-    // نوشته نمی‌شود و `_text` مو به مو همان چیزی است که قبلا بود.
-    NSString *_preview;
     NSTimeInterval _secondsBefore;   // ثانیه‌ی دورهای قبلی؛ ساعت روی هم جمع می‌شود
     NSInteger _round;                // چندمین دورِ شنیدن در همین سشن
     BOOL _listening;
@@ -189,18 +185,21 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
     else [_panel pulseLevel:rms];
 }
 
-// یک تکه‌ی تمام‌شده رسید. **هیچ تصمیمی از اینجا نمی‌گذرد**: متن سشن دست نمی‌خورد،
-// چیزی درج نمی‌شود، هیچ حالتی عوض نمی‌شود. فقط همان تکه خاکستری روی پنل می‌نشیند تا
-// کاربر ببیند دارد شنیده می‌شود. خاموش که باشد، این متد یک return است و بس.
+// متنِ خامِ پیش‌نمایش. **هیچ تصمیمی از اینجا نمی‌گذرد**: متن سشن دست نمی‌خورد، چیزی
+// درج نمی‌شود، چیزی کپی نمی‌شود، هیچ حالتی عوض نمی‌شود. فقط دُم خاکستری بازنویسی
+// می‌شود. خاموش که باشد، این متد یک return است و بس.
 //
-// و چرا این «متنِ لحظه‌ای» نسخه یک نیست: آنچه اینجا می‌آید تکه‌ی **قطعی** است، دقیقا
-// همان چیزی که سر پایان هم تحویل می‌شود. پس هیچ‌وقت لازم نیست پس گرفته شود، و تمام
-// آن دفتر و راچت و پاک‌کن که نسخه یک را ساخت، اینجا موضوعیت ندارد.
-- (void)enginePart:(NSString *)text {
+// و چرا این برگشتِ نسخه یک نیست: آن متنِ لحظه‌ای **نتیجه** بود، پس باید پس گرفته
+// می‌شد و دفتر و راچت و پاک‌کن لازم داشت. این نتیجه نیست و هیچ‌وقت نمی‌شود؛ سر پایان
+// دور ریخته می‌شود و جایش را متنِ واقعی می‌گیرد. چیزی که دور ریختنی است، دوخت لازم
+// ندارد.
+//
+// جایگزین، نه اضافه: استریم هر بار کلِ متنش را می‌دهد و اینجا هیچ حسابی نگه داشته
+// نمی‌شود. حساب نگه داشتن یعنی دو منبع حقیقت برای یک متنِ دورریختنی.
+- (void)enginePreview:(NSString *)text {
     if (!ZSettings.shared.previewStream || _mode != ZModeCollect) return;
-    if (!_listening || !text.length) return;
-    _preview = _preview.length ? [NSString stringWithFormat:@"%@ %@", _preview, text] : text;
-    [_panel setPreviewText:_preview];
+    if (!_listening) return;
+    [_panel setPreviewText:text];
 }
 
 // متن آماده است. از اینجا به بعد دیگر صدایی در کار نیست، فقط متن.
@@ -291,7 +290,6 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
     // اگر پاس هوش مصنوعی روشن باشد، deliver تا نشستنِ آن پاس اصلا صدا زده نمی‌شود، پس
     // دُم خاکستری دقیقا همان‌قدر می‌ماند که کار واقعا تمام نشده. رنگ یک معنی دارد و
     // همین است.
-    _preview = nil;
     [_panel setPreviewText:nil];
     NSString *all = [_text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     [self writeTranscript:all];
@@ -409,9 +407,6 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
     _paused = NO;
     _stopping = NO;
     _round++;
-    // دورِ تازه، دُمِ تازه: متنِ دورِ قبل الان سفید و تحویل‌شده ته ادیتور نشسته و
-    // پیش‌نمایشِ این دور باید بعد از آن لنگر بیندازد، نه اینکه ادامه‌اش حساب شود.
-    _preview = nil;
     _engine = [[ZEngine alloc] initWithLang:ZSettings.shared.lang];
     _engine.delegate = self;
     _engine.recorder = _recorder;
@@ -459,10 +454,12 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
 - (void)dropPending {
     _text = @"";
     _polished = nil;
-    _preview = nil;
     _inserted = 0;
     _secondsBefore = 0;
     [_engine resetClock];
+    // پیش‌نمایش هم از صفر، وگرنه حرف‌های دورریخته چند ثانیه بعد دوباره خاکستری
+    // برمی‌گشتند: استریم هر بار کلِ متنِ جمع‌شده‌اش را می‌دهد و از دور ریختن خبر ندارد.
+    [_engine resetPreview];
     [_recorder discard];
     [_panel clearEditor];
     ZPlay(ZSoundTrash);
@@ -478,8 +475,7 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
     _mode = next;
     ZSettings.shared.mode = next;
     // دُم خاکستری مالِ پنل است و پنل دارد می‌رود (یا تازه آمده و لنگرش دیگر معتبر
-    // نیست). لنگرِ تازه از تکه‌ی بعدی گرفته می‌شود.
-    _preview = nil;
+    // نیست). لنگرِ تازه از اولین متنِ بعدیِ استریم گرفته می‌شود.
     [_panel setPreviewText:nil];
     if (next == ZModeCursor) {
         [_panel hide];
