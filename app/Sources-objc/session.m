@@ -128,7 +128,11 @@ static NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کر
 - (void)wirePanel {
     __weak typeof(self) ws = self;
     _panel.onClose      = ^{ [ws finish]; };
-    _panel.onPauseToggle = ^{ [ws togglePause]; };
+    // `pauseToggle` و نه `togglePause`: دکمه سه چهره دارد (مکث، ادامه، تلاش دوباره) و
+    // فقط این یکی هر سه را می‌بندد. با `togglePause` دقیقا در دو حالتی که دکمه
+    // «ادامه بده» و «دوباره تلاش کن» نشان می‌داد هیچ کاری نمی‌کرد: آن متد سرِ
+    // `_paused` همان اول برمی‌گردد.
+    _panel.onPauseToggle = ^{ [ws pauseToggle]; };
     _panel.onCopyNow    = ^{ [ws copyNow]; };
     _panel.onInsertAll  = ^{ [ws insertHere]; };
     _panel.onTrash      = ^{ [ws dropPending]; };

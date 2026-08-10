@@ -415,6 +415,9 @@ typedef NS_ENUM(NSInteger, ZWriteProof) {
 // F: پنل رونویسی فایل. تنها میان‌بری که بی‌سشن هم کار می‌کند، چون به سشن ربطی ندارد
 @property (nonatomic, copy) void (^onFilePanel)(void);      // F
 @property (nonatomic, copy) void (^onSensToggle)(void);     // S
+// B: همین صدا را انگلیسی هم بشنو. مثل A بی‌سشن هم کار می‌کند، چون تنظیم است نه کارِ
+// سشن. «نگه داشتن صدا» عمدا میان‌بر ندارد: یک ترجیحِ یک‌باره است و جایش «پیشرفته».
+@property (nonatomic, copy) void (^onSecondPass)(void);     // B
 @property (nonatomic) BOOL sessionActive;
 @property (nonatomic, readonly) BOOL enabled;   // تپ واقعا بالا است، نه فقط enable صدا خورده
 - (void)enable;
@@ -510,6 +513,9 @@ CFAbsoluteTime ZLastForeignInputAt(void);
 // zemzeme --caretprobe [ثانیه‌ی صبر] [--watch]
 int ZCaretProbeMain(NSArray<NSString *> *args);
 
+// نوار پنل همه‌ی یازده دکمه را دارد و همان‌جا می‌ماند: دستِ کاربر روی پنل است، پس
+// هر کاری که وسط دیکته به ذهنش می‌رسد باید همان‌جا یک کلیک باشد. مرتب کردن، کارِ
+// منوی منوبار است نه کم کردن این‌ها.
 @interface ZPanel : NSObject
 @property (nonatomic, copy) void (^onClose)(void);
 @property (nonatomic, copy) void (^onPauseToggle)(void);   // دکمه‌ی مکث؛ تک‌تپ کلید یعنی پایان، نه مکث
@@ -519,11 +525,12 @@ int ZCaretProbeMain(NSArray<NSString *> *args);
 @property (nonatomic, copy) void (^onLangSwitch)(void); // چرخش زبان
 @property (nonatomic, copy) void (^onModeToggle)(void); // چرخش حالت: جمع ← کرسر
 @property (nonatomic, copy) void (^onFilePanel)(void);  // باز کردن پنل رونویسی فایل
-@property (nonatomic, copy) void (^onSensToggle)(void); // حساسیت بالای میکروفن (بتا)
+@property (nonatomic, copy) void (^onSensToggle)(void); // حساسیت بالای میکروفن
 // راهنما از خود نوار. در نسخه یک اختیاری بود چون کاربر لازم نبود چیزی بداند؛ حالا
 // باید بداند تک‌تپ یعنی پایان، پس کارت باید از خودِ پنل هم پیدا شود.
 @property (nonatomic, copy) void (^onHelp)(void);
 @property (nonatomic, copy) void (^onAIToggle)(void);   // A: روشن/خاموش کردن پاس هوش مصنوعی
+@property (nonatomic, copy) void (^onSecondPass)(void); // B: شنیدنِ دوزبانه، سومین تاگلِ نوار
 - (void)show;
 - (void)hide;
 - (void)render:(ZPanelModel *)m;

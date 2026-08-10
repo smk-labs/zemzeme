@@ -98,7 +98,7 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
     NSTextField *_chipLabel;
     ZBarButton *_btnClose, *_btnPause, *_btnCopy, *_btnTrash, *_btnInsert;
     ZBarButton *_btnLang, *_btnMode, *_btnFile, *_btnHelp;
-    ZBarButton *_btnSens, *_btnAI;
+    ZBarButton *_btnSens, *_btnAI, *_btnSecond;
     NSView *_sep1, *_sep2;   // جداکننده‌ی دسته‌ها
     NSProgressIndicator *_spinner;    // جای نشان، وقتی کاری در جریان است
     NSArray<ZBarButton *> *_bar;
@@ -220,6 +220,10 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
         // همین‌جاست.
         _btnAI = [self makeButton:@"sparkles" key:@"A"
                               tip:@"" action:@selector(aiTap)];
+        // دو زبانه: همان صدا، هم‌زمان انگلیسی هم شنیده می‌شود. تاگل است، پس کنار آن
+        // دو تای دیگر و با همان قاعده: روشن که باشد رنگ می‌گیرد.
+        _btnSecond = [self makeButton:@"character.book.closed" key:@"B"
+                                  tip:@"" action:@selector(secondTap)];
         _btnFile = [self makeButton:@"arrow.up.doc" key:@"F"
                                 tip:@"رونویسی فایل صوتی: چند فایل پشت هم، با متن قابل ویرایش (Command راست + F)"
                              action:@selector(fileTap)];
@@ -235,12 +239,12 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
         // ردیفِ بی‌فاصله فقط یک دیوار است و کاربر هیچ‌کدام را پیدا نمی‌کند.
         // layoutViews از همین یک لیست می‌خواند، پس پیدا و ناپیدا شدن دکمه‌ها
         // هیچ‌وقت با عدد هاردکد ناهمخوان نمی‌شود.
-        // دسته‌ی سوم مالِ **تاگل‌ها**ست، نه فقط پاس هوش مصنوعی: حساسیت میکروفن هم
-        // یک تاگل است و جایش کنار همان است، نه لای تنظیم‌های لحظه‌ای. هر دو هم وقتی
-        // روشن‌اند رنگ می‌گیرند، پس از روی نوار معلوم است چه چیزی فعال است.
+        // دسته‌ی سوم مالِ **تاگل‌ها**ست، نه فقط پاس هوش مصنوعی: حساسیت میکروفن و
+        // شنیدنِ دوزبانه هم تاگل‌اند و جایشان کنار همان است، نه لای تنظیم‌های لحظه‌ای.
+        // هر سه هم وقتی روشن‌اند رنگ می‌گیرند، پس از روی نوار معلوم است چه چیزی فعال است.
         _bar = @[_btnClose, _btnPause, _btnCopy, _btnInsert, _btnTrash,
                  _btnLang, _btnMode, _btnFile, _btnHelp,
-                 _btnSens, _btnAI];
+                 _btnSens, _btnAI, _btnSecond];
         _groupEnds = @[@4, @8];      // اندیس آخرین دکمه‌ی هر دسته
         _sep1 = [NSView new]; _sep1.wantsLayer = YES; [_effect addSubview:_sep1];
         _sep2 = [NSView new]; _sep2.wantsLayer = YES; [_effect addSubview:_sep2];
@@ -575,6 +579,18 @@ static NSString *ZClock(NSTimeInterval sec) {
              : @"تمیز کردن متن خاموش است: متن همان‌طور که شنیده شده تحویل می‌شود. برای "
                 "روشن کردن بزن (A)";
 
+    // دو زبانه، سومین تاگل و با همان قاعده‌ی دو تای قبلی: کتابِ بسته یعنی خاموش،
+    // کتابِ باز و رنگی یعنی همین صدا انگلیسی هم شنیده می‌شود. اثرش از دور بعدیِ
+    // شنیدن است، چون خط لوله‌ها سر ساختِ موتور بسته می‌شوند.
+    BOOL two = ZSettings.shared.secondPass;
+    [self setButton:_btnSecond symbol:two ? @"character.book.closed.fill" : @"character.book.closed"];
+    _btnSecond.contentTintColor = two ? NSColor.systemBlueColor : nil;
+    _btnSecond.toolTip = two
+        ? @"دوزبانه روشن است: همین صدا از دور بعد انگلیسی هم شنیده می‌شود، تا اصطلاح‌های "
+           "فنی از دست نروند. برای خاموش کردن بزن (Command راست + B)"
+        : @"دوزبانه: همین صدا را هم‌زمان انگلیسی هم بشنو. برای متنِ پر از اصطلاح فنی؛ "
+           "روی گفتار روزمره فرقی نمی‌کند (Command راست + B)";
+
     // **هیچ دکمه‌ای غیب نمی‌شود.** قبلا سرِ مکث نصفشان می‌رفتند، با این استدلال که
     // «دکمه‌ای که کار نمی‌کند دروغ است». ولی در نسخه دو مکث یعنی سشن هنوز زنده است
     // و همه‌ی آن دکمه‌ها واقعا کار می‌کنند، پس آن استدلال اینجا اصلا صدق نمی‌کرد و
@@ -696,6 +712,7 @@ static NSString *ZClock(NSTimeInterval sec) {
 - (void)sensTap { if (self.onSensToggle) self.onSensToggle(); }
 - (void)helpTap { if (self.onHelp) self.onHelp(); }
 - (void)aiTap { if (self.onAIToggle) self.onAIToggle(); }
+- (void)secondTap { if (self.onSecondPass) self.onSecondPass(); }
 
 // اسکرین‌شات برای بازبینی طراحی (بدون نیاز به اجازه ضبط صفحه)
 - (void)makeShots:(NSString *)dir {
