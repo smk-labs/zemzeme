@@ -112,6 +112,10 @@ NSString *ZTranscribeSegment(NSData *pcm, NSString *lang, BOOL rawUpload,
     dispatch_queue_t _q;        // سریال: ترتیب تکه‌ها همین‌جا تضمین می‌شود
     dispatch_group_t _group;
     NSInteger _next;            // شماره‌ی تکه‌ی بعدی، فقط برای لاگ
+    // نوبتِ متن. `discard` یکی جلو می‌بردش و تکه‌هایی که با نوبتِ قبلی رفته‌اند
+    // متنشان را دور می‌ریزند. بی این، دور ریختن فقط چیزی را پاک می‌کرد که **رسیده**
+    // بود و تکه‌ی در راه دو ثانیه بعد بی‌صدا برمی‌گشت.
+    NSInteger _epoch;
     NSInteger _degraded;
     BOOL _done;
     unsigned long long _bytesUp;
@@ -178,6 +182,24 @@ NSString *ZTranscribeSegment(NSData *pcm, NSString *lang, BOOL rawUpload,
     [_lock unlock];
 }
 
+// سطل آشغال، و «همه‌چیز» یعنی هر سه جایی که متن می‌تواند قایم شود: تکه‌های
+// رونویسی‌شده، صدای نبریده‌ی داخل بافر، و تکه‌هایی که همین حالا روی صف‌اند.
+//
+// آن سومی نکته‌ی اصلی است و باگ از همان‌جا می‌آمد: تکه‌ای که یک ثانیه پیش فرستاده شده
+// دو ثانیه بعد متنش می‌رسد و بی‌صدا به `_parts` اضافه می‌شود. پس دور ریختن اگر فقط
+// پاک کردنِ اینجا و الان باشد، حرفِ دورریخته چند ثانیه بعد خودش برمی‌گردد.
+//
+// برخلاف `cancel` این خط لوله را نمی‌کشد: کاربر «از صفر» خواسته، نه «تمامش کن».
+- (void)discard {
+    [_lock lock];
+    NSUInteger had = _parts.count;
+    [_parts removeAllObjects];
+    [_buf setLength:0];
+    _epoch++;
+    [_lock unlock];
+    ZLog(@"pipe[%@]: دور ریخته شد، %lu تکه‌ی متن و بافر خالی شد", _lang, (unsigned long)had);
+}
+
 // هرچه تکه‌ی کامل در بافر هست را بیرون بکش و بفرست. سر نخِ صدا صدا زده می‌شود، پس
 // اینجا فقط بریدن انجام می‌شود و رونویسی می‌رود روی صف.
 - (void)drain:(BOOL)eof {
@@ -191,6 +213,7 @@ NSString *ZTranscribeSegment(NSData *pcm, NSString *lang, BOOL rawUpload,
         NSData *piece = [_buf subdataWithRange:NSMakeRange(0, c.cut)];
         [_buf replaceBytesInRange:NSMakeRange(0, c.cut) withBytes:NULL length:0];
         NSInteger idx = _next++;
+        NSInteger epoch = _epoch;    // زیر همین قفل، وگرنه تکه با نوبتِ بعدی برچسب می‌خورد
         if (c.degraded) _degraded++;
         [_lock unlock];
 
@@ -205,16 +228,29 @@ NSString *ZTranscribeSegment(NSData *pcm, NSString *lang, BOOL rawUpload,
             ZLog(@"pipe[%@] %ld: %.1fs، مکث %.0fms، امتیاز %.2f", _lang, (long)idx, sec,
                  c.quietSec * 1000, c.score);
         }
-        [self run:piece index:idx];
+        [self run:piece index:idx epoch:epoch];
         if (c.tail) return;
     }
 }
 
-- (void)run:(NSData *)pcm index:(NSInteger)idx {
+- (BOOL)stale:(NSInteger)epoch {
+    [_lock lock];
+    BOOL old = epoch != _epoch;
+    [_lock unlock];
+    return old;
+}
+
+- (void)run:(NSData *)pcm index:(NSInteger)idx epoch:(NSInteger)epoch {
     dispatch_group_async(_group, _q, ^{
         if (!ZSegHasVoice(pcm)) {
             ZLog(@"pipe[%@] %ld: سکوت، رد شد", self->_lang, (long)idx);
             return;    // یک رفت‌وبرگشت شبکه صرفه ندارد
+        }
+        // پیش از شبکه، نه بعدش: صدای دورریخته اصلا لازم نیست رونویسی شود. صف سریال
+        // است، پس تکه‌های پشتِ سطل آشغال همه همین‌جا و ارزان می‌افتند.
+        if ([self stale:epoch]) {
+            ZLog(@"pipe[%@] %ld: دور ریخته شده بود، فرستاده نشد", self->_lang, (long)idx);
+            return;
         }
         unsigned long long up = 0;
         NSString *t = ZTranscribeSegment(pcm, self->_lang, NO, &up);
@@ -227,9 +263,18 @@ NSString *ZTranscribeSegment(NSData *pcm, NSString *lang, BOOL rawUpload,
             t = ZTranscribeSegment(pcm, self->_lang, NO, &up);
         }
         [self->_lock lock];
+        // بایت‌ها را هرجور که شد بشمار: واقعا روی سیم رفته‌اند و این شمارنده‌ی شبکه
+        // است نه دفترِ متن. ولی متن، فقط اگر نوبتش هنوز همان باشد.
         self->_bytesUp += up;
-        if (t.length) [self->_parts addObject:t];
+        BOOL stale = epoch != self->_epoch;
+        if (t.length && !stale) [self->_parts addObject:t];
         [self->_lock unlock];
+        if (stale) {
+            // وسط رفت‌وبرگشت شبکه، کاربر دور ریخت. این متن مالِ صدایی است که دیگر
+            // وجود ندارد، پس نه در متن می‌نشیند نه به پیش‌نمایش خبر می‌دهد.
+            ZLog(@"pipe[%@] %ld: متن رسید ولی دور ریخته شده بود، انداخته شد", self->_lang, (long)idx);
+            return;
+        }
         ZLog(@"pipe[%@] %ld ← %lu نویسه", self->_lang, (long)idx, (unsigned long)t.length);
         if (t.length && self.onPart) self.onPart(t);
     });

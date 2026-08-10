@@ -39,6 +39,34 @@ static NSString *ZGThinking(void) {
     return t.length ? t : @"minimal";
 }
 #define kGTimeout 300.0
+// کلیدسنج سقفِ خودش را دارد و کوتاه: پشتش یک آدم ایستاده که تازه دکمه‌ی «ذخیره» را
+// زده. سه دقیقه چرخنده برای یک پینگ، یعنی کاربر فکر کند اپ گیر کرده.
+#define kGProbeTimeout 20.0
+
+// ---------- کلیدسنج: یک درخواست عمدا کوچک، پیش از ذخیره ----------
+// تا امروز نبود و هزینه‌اش را کاربر داد: چیزی که کلید نبود (۵۷۶ نویسه، بی هیچ شباهتی
+// به یک کلید Google) بی‌صدا ذخیره شد، منو تیک «کلید هست» زد، تاگل آبی شد، و هر سشن
+// یک ۴۰۰ گرفت و متن خام تحویل داد. یعنی رابط سه جا می‌گفت «آماده‌ام» و هیچ‌کدام راست
+// نبود، و تنها جایی که راستش نوشته می‌شد لاگ بود.
+//
+// همان اندپوینت، همان مدل، همان thinking و همان مسیر ساختِ درخواست: سنجه‌ای که راه
+// دیگری برود، روزی سبز می‌دهد در حالی که پاس واقعی رد می‌شود. یک تلاش، بی retry، با
+// سقف کوتاه: پشتش یک آدم ایستاده.
+//
+// سه جوابِ ممکن، نه دو. «نشد پرسید» با «کلید بد» یکی نیست و یکی گرفتنشان یعنی کسی
+// که اینترنتش قطع است هیچ‌وقت نتواند کلید بگذارد.
+typedef NS_ENUM(NSInteger, ZKeyVerdict) {
+    ZKeyGood = 0,      // سرور جواب داد
+    ZKeyBad,           // سرور کلید را رد کرد
+    ZKeyUnknown,       // نشد پرسید: شبکه نبود، یا سرور بالا نبود
+};
+
+// درونی، و در هدر نیست و نباید باشد: کلید از این فایل بیرون نمی‌رود. مسیر خط فرمان
+// (`ZCheckKeyMain`، ته همین فایل) هم از همین‌جا می‌خواندشان.
+@interface ZFinalPass (Internal)
+- (NSString *)keyAllowingUI:(BOOL)allowUI;
+- (ZKeyVerdict)checkKey:(NSString *)key note:(NSString **)note;
+@end
 
 @implementation ZFinalPass {
     NSString *_key;
@@ -49,6 +77,7 @@ static NSString *ZGThinking(void) {
     // یک پرسشِ چندثانیه‌ای گرفته بماند.
     NSLock *_fetchLock;
     NSLock *_logLock;
+    BOOL _keyRejected;   // سرور همین کلید را رد کرد؛ «هست» گفتنش دیگر دروغ است
     // نوبتِ کل پاس. دیگر قفلِ مشترکی با ZEnhance نیست: آپلودِ چندمگابایتیِ صدا که لغو
     // بخواهد از میان رفت، یک تماسِ متنیِ کوتاه ماند، پس یک بولینِ ساده کافی است.
     BOOL _busy;
@@ -229,7 +258,68 @@ static NSString *ZKeyFromSecurityTool(void) {
     // مسیر اصلی حالا داخل خود اپ است: منوی زمزمه، «کلید Gemini…» (کلیدسنج پایین همین
     // فایل). ترمینال فقط برای کسی می‌ماند که با دست می‌خواهد Keychain را دستکاری کند؛
     // `-T` آنجا هنوز لازم است چون سازنده‌ی آیتم آنجا `security` است نه خودِ اپ.
+    //
+    // و «نیست» با «پذیرفته نشد» یکی نیست: اولی یعنی برو کلید بگیر، دومی یعنی کلیدی
+    // که داری کار نمی‌کند. یک جمله برای هر دو، کاربر را دنبال کارِ اشتباه می‌فرستد.
+    ZFinalPass *s = ZFinalPass.shared;
+    [s->_keyLock lock];
+    BOOL rejected = s->_keyRejected;
+    [s->_keyLock unlock];
+    if (rejected) return @"کلید Gemini پذیرفته نشد. از منوی زمزمه «کلید Gemini…» را بزن و کلید تازه بگذار.";
     return @"کلید Gemini نیست. از منوی زمزمه «کلید Gemini…» را بزن.";
+}
+
+// سرور کلید را رد کرد. از این لحظه اپ نباید بگوید کلید دارد: تاگل آبی و تیکِ «کلید
+// هست» روی کلیدی که سرور نمی‌شناسد، همان حالت بینابینی است که این اپ جای دیگری
+// اجازه‌اش را نمی‌دهد (روشن، و بی‌کار). فقط کشِ حافظه پاک می‌شود، نه خودِ آیتم
+// Keychain: آن مالِ کاربر است و پاک کردنش کارِ دکمه‌ی «پاک کردن کلید» است.
+- (void)noteKeyRejected {
+    [_keyLock lock];
+    BOOL first = !_keyRejected;
+    _key = nil;
+    _keyChecked = YES;
+    _keyRejected = YES;
+    [_keyLock unlock];
+    if (first) ZLog(@"final: سرور کلید را رد کرد؛ از حالا «کلید نیست» حساب می‌شود");
+}
+
+// ---------- کلیدسنج ----------
+- (ZKeyVerdict)checkKey:(NSString *)key note:(NSString **)note {
+    NSMutableURLRequest *req = [self requestFor:@"Reply with exactly: ok"
+                                          parts:@[@{@"type": @"text", @"text": @"ping"}]
+                                            key:key thinking:ZGThinking()];
+    if (!req) {
+        if (note) *note = @"درخواست تست ساخته نشد";
+        return ZKeyUnknown;
+    }
+    NSInteger st = 0;
+    NSDate *t0 = NSDate.date;
+    NSData *raw = [self http:req timeout:kGProbeTimeout status:&st headers:nil];
+    NSString *body = [[NSString alloc] initWithData:raw ?: [NSData data]
+                                          encoding:NSUTF8StringEncoding] ?: @"";
+    NSTimeInterval dt = [NSDate.date timeIntervalSinceDate:t0];
+    ZLog(@"final: کلیدسنج HTTP %ld در %.1f ثانیه", (long)st, dt);
+    if (st == 200) {
+        if (note) *note = @"تست شد و کار کرد.";
+        return ZKeyGood;
+    }
+    if (ZKeyRejected(st, body)) {
+        ZLog(@"final: کلیدسنج کلید را رد کرد: %@",
+             [body substringToIndex:MIN((NSUInteger)300, body.length)]);
+        if (note) *note = @"گوگل این کلید را نشناخت. مطمئن شو کلِ کلید را از AI Studio "
+                           "کپی کرده‌ای (یک رشته‌ی کوتاه که با AIza شروع می‌شود) و چیز دیگری "
+                           "به‌جایش نچسبیده.";
+        return ZKeyBad;
+    }
+    // ۴۲۹ یعنی کلید **شناخته شد** و سهمش تمام شده: سهم مالِ یک کلید واقعی است. پس
+    // این «کلید بد» نیست و رد کردنش یعنی کسی که امروز بیست درخواستش را خرج کرده
+    // نتواند کلید درستش را ذخیره کند.
+    if (st == 429) {
+        if (note) *note = ZHumanError(@"کلیدسنج", st, raw);
+        return ZKeyGood;
+    }
+    if (note) *note = [NSString stringWithFormat:@"نشد تستش کنیم (%@)", ZHumanError(@"کلیدسنج", st, raw)];
+    return ZKeyUnknown;
 }
 
 // ---------- نوشتن (از منو، «کلید Gemini…») ----------
@@ -237,38 +327,59 @@ static NSString *ZKeyFromSecurityTool(void) {
 // راه ترمینالی: سازنده‌ی این آیتم خودِ همین پروسه است، و مک از سازنده‌ی یک آیتم برای
 // خواندنِ بعدیِ همان آیتم هیچ‌وقت اجازه نمی‌پرسد. یعنی `-T` اینجا لازم نیست؛ آن فقط
 // برای وقتی بود که سازنده یک ابزار دیگر (`security`) باشد.
-+ (BOOL)saveKey:(NSString *)key error:(NSError **)err {
++ (ZKeySave)saveKey:(NSString *)key message:(NSString **)msg {
     NSString *k = [key stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (!k.length) {
-        if (err) *err = [NSError errorWithDomain:@"Zemzeme" code:1
-            userInfo:@{NSLocalizedDescriptionKey: @"کلید خالی است"}];
-        return NO;
+        if (msg) *msg = @"کلید خالی است";
+        return ZKeySaveBadInput;
+    }
+    // ورودیِ به‌وضوح غلط را بی رفت‌وبرگشت شبکه بگیر: کلید Google یک رشته‌ی کوتاه و
+    // بی‌فاصله است. چیزی که فاصله دارد یا صدها نویسه است، یک چیز دیگر است که اشتباهی
+    // چسبانده شده (توکن، JSON، یا کلِ یک فایل). عمدا سقفِ گشاد و بی شرطِ «با AIza
+    // شروع شود»: قالبِ کلید مالِ گوگل است و روزی عوض می‌شود، ولی «فاصله ندارد و
+    // دویست نویسه نیست» تا آن روز هم درست می‌ماند.
+    if ([k rangeOfCharacterFromSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].location != NSNotFound
+        || k.length > 200) {
+        ZLog(@"final: ورودی شبیه کلید نبود (%lu نویسه)", (unsigned long)k.length);
+        if (msg) *msg = @"این شبیه کلید Gemini نیست: کلید یک رشته‌ی کوتاه و بی‌فاصله است "
+                         "(معمولا با AIza شروع می‌شود). از AI Studio دوباره کپی کن.";
+        return ZKeySaveBadInput;
+    }
+    // تست، بعد نوشتن. برعکسش یعنی همان حالتی که این تابع دارد از بین می‌بردش: کلیدِ
+    // غلطِ ذخیره‌شده و رابطی که می‌گوید همه‌چیز آماده است.
+    NSString *note = nil;
+    ZKeyVerdict v = [ZFinalPass.shared checkKey:k note:&note];
+    if (v == ZKeyBad) {
+        if (msg) *msg = note;
+        return ZKeySaveRejected;
     }
     NSData *d = [k dataUsingEncoding:NSUTF8StringEncoding];
     NSDictionary *q = @{(id)kSecClass: (id)kSecClassGenericPassword,
                         (id)kSecAttrService: kKeychainService};
-    // اول به‌روزرسانی: اگر آیتمِ قدیمی (حتی ساخته‌شده با `security -T`) موجود باشد،
-    // همان جایگزین می‌شود، نه یک آیتم دوم با ACL دیگر.
-    OSStatus st = SecItemUpdate((__bridge CFDictionaryRef)q,
-                                (__bridge CFDictionaryRef)@{(id)kSecValueData: d});
-    if (st == errSecItemNotFound) {
-        NSMutableDictionary *add = [q mutableCopy];
-        add[(id)kSecAttrAccount] = NSUserName();
-        add[(id)kSecValueData] = d;
-        st = SecItemAdd((__bridge CFDictionaryRef)add, NULL);
-    }
+    // **یک آیتم، نه یک آیتمِ بیشتر.** روی همین دستگاه دو آیتم با همین سرویس پیدا شد
+    // (یکی از `security` و یکی از خودِ اپ) و نتیجه‌اش بدترین حالت ممکن بود: خواندن با
+    // kSecMatchLimitOne هر بار می‌توانست آن یکی را بدهد، پس «کلید تازه را گذاشتم» و
+    // «اپ کلید قبلی را می‌خواند» هم‌زمان راست بودند. SecItemUpdate این تضمین را
+    // نمی‌داد (روی آیتمِ دوم دست نمی‌زد)، پس اول همه پاک، بعد یکی نوشته می‌شود.
+    SecItemDelete((__bridge CFDictionaryRef)q);
+    NSMutableDictionary *add = [q mutableCopy];
+    add[(id)kSecAttrAccount] = NSUserName();
+    add[(id)kSecValueData] = d;
+    OSStatus st = SecItemAdd((__bridge CFDictionaryRef)add, NULL);
     if (st != errSecSuccess) {
         ZLog(@"final: نوشتنِ کلید در Keychain رد شد (OSStatus %d)", (int)st);
-        if (err) *err = [NSError errorWithDomain:@"Zemzeme" code:st userInfo:@{
-            NSLocalizedDescriptionKey: [NSString stringWithFormat:@"Keychain کلید را نپذیرفت (کد %d)", (int)st]}];
-        return NO;
+        if (msg) *msg = [NSString stringWithFormat:@"Keychain کلید را نپذیرفت (کد %d)", (int)st];
+        return ZKeySaveKeychainNo;
     }
     ZFinalPass *s = ZFinalPass.shared;
     [s->_keyLock lock];
     s->_key = [k copy];
     s->_keyChecked = YES;
+    s->_keyBlocked = NO;
+    s->_keyRejected = NO;    // کلیدِ تازه، پرونده‌ی تازه
     [s->_keyLock unlock];
-    return YES;
+    if (msg) *msg = note;
+    return v == ZKeyGood ? ZKeySaveOK : ZKeySaveUntested;
 }
 
 + (void)clearKey {
@@ -279,6 +390,7 @@ static NSString *ZKeyFromSecurityTool(void) {
     [s->_keyLock lock];
     s->_key = nil;
     s->_keyChecked = NO;
+    s->_keyRejected = NO;
     [s->_keyLock unlock];
 }
 
@@ -304,14 +416,15 @@ static NSString *ZKeyFromSecurityTool(void) {
 // پس ۴۲۹ فقط **یک** تلاش دوباره دارد و آن هم با سقف ۶۰ ثانیه: اگر سقف دقیقه‌ای باشد
 // همان یک صبر جوابش است، و اگر روزانه باشد کاربر بیست ثانیه بعد جوابِ روشن می‌گیرد
 // نه سه دقیقه چرخنده.
-- (NSData *)http:(NSMutableURLRequest *)req status:(NSInteger *)status headers:(NSDictionary **)headers {
+- (NSData *)http:(NSMutableURLRequest *)req timeout:(NSTimeInterval)timeout
+          status:(NSInteger *)status headers:(NSDictionary **)headers {
     __block NSData *body = nil;
     __block NSInteger code = 0;
     __block NSDictionary *hd = nil;
     dispatch_semaphore_t sem = dispatch_semaphore_create(0);
     NSURLSessionConfiguration *cfg = NSURLSessionConfiguration.ephemeralSessionConfiguration;
-    cfg.timeoutIntervalForRequest = kGTimeout;
-    cfg.timeoutIntervalForResource = kGTimeout;
+    cfg.timeoutIntervalForRequest = timeout;
+    cfg.timeoutIntervalForResource = timeout;
     NSURLSession *s = [NSURLSession sessionWithConfiguration:cfg];
     NSURLSessionDataTask *task = [s dataTaskWithRequest:req
                                      completionHandler:^(NSData *d, NSURLResponse *r, NSError *e) {
@@ -326,7 +439,7 @@ static NSString *ZKeyFromSecurityTool(void) {
     // arm/disarm (قفلِ ZPassLock) با حذفِ صدا از این پاس رفتند: آن‌ها برای لغوِ آپلودِ
     // چندمگابایتیِ وسطِ کار بودند؛ حالا بدنه‌ی هر تماس یک متنِ کوتاه است و لغو معنا ندارد.
     [task resume];
-    dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)((kGTimeout + 30) * NSEC_PER_SEC)));
+    dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)((timeout + 30) * NSEC_PER_SEC)));
     [s finishTasksAndInvalidate];
     if (status) *status = code;
     if (headers) *headers = hd;
@@ -373,7 +486,7 @@ static NSTimeInterval ZRetryAfter(NSData *body, NSTimeInterval fallback) {
     NSInteger st = 0;
     int rateTries = 0;
     for (int try = 0; try < 3; try++) {
-        body = [self http:req status:&st headers:outHeaders];
+        body = [self http:req timeout:kGTimeout status:&st headers:outHeaders];
         if (st == 200) break;
         if (try == 2) break;
         NSTimeInterval wait = 2.0 * (try + 1);
@@ -395,6 +508,18 @@ static NSTimeInterval ZRetryAfter(NSData *body, NSTimeInterval fallback) {
     return body;
 }
 
+// کلیدِ غلط **۴۰۰** می‌گیرد، نه ۴۰۱ و نه ۴۰۳. این یک خط، یک شب کامل عیب‌یابی را
+// خورد: کلیدی که کلید نبود ذخیره شده بود و اپ هر بار «سرور این درخواست را نپذیرفت
+// (۴۰۰)» می‌گفت، یعنی دقیقا آن جمله‌ای که کاربر را دنبال هیچ می‌فرستد. جواب واقعیِ
+// گوگل در بدنه است: `API_KEY_INVALID`.
+static BOOL ZKeyRejected(NSInteger st, NSString *body) {
+    if (st == 401 || st == 403) return YES;
+    if (st != 400) return NO;
+    return [body rangeOfString:@"API_KEY_INVALID"].location != NSNotFound
+        || [body rangeOfString:@"API key not valid" options:NSCaseInsensitiveSearch].location != NSNotFound
+        || [body rangeOfString:@"API_KEY_SERVICE_BLOCKED"].location != NSNotFound;
+}
+
 // پیام برای خودِ کاربر، نه کد HTTP. «HTTP 429» به کسی نمی‌گوید چه کند؛ «سهم مجانی
 // کلید تمام شد» می‌گوید.
 static NSString *ZHumanError(NSString *label, NSInteger st, NSData *raw) {
@@ -405,7 +530,7 @@ static NSString *ZHumanError(NSString *label, NSInteger st, NSData *raw) {
                "فردا دوباره امتحان کن."
             : @"سرور Gemini فعلا جواب نمی‌دهد. چند دقیقه بعد دوباره بزن.";
     }
-    if (st == 403 || st == 401) return @"کلید Gemini پذیرفته نشد؛ از منوی زمزمه یک کلید تازه بگذار.";
+    if (ZKeyRejected(st, body)) return @"کلید Gemini پذیرفته نشد؛ از منوی زمزمه یک کلید تازه بگذار.";
     if (st == 400) return @"سرور Gemini این درخواست را نپذیرفت (۴۰۰)";
     if (st < 0) return @"اینترنت نیست؛ متن تمیز نشد";
     return [NSString stringWithFormat:@"تمیز کردن متن نشد (HTTP %ld)", (long)st];
@@ -473,25 +598,33 @@ static NSString *ZDropPreamble(NSString *t) {
 // `thinking` پارامتر است نه پیش‌فرض، چون دو مصرف‌کننده دو جواب می‌خواهند: پاس نهایی
 // `minimal` (توکن فکر مثل خروجی پول می‌گیرد و کاربر منتظر متنِ خودش است) و پاس بهبود
 // پرامپت `low` (کاربر خودش دکمه را زده و منتظر یک کارِ فکری است).
-- (NSString *)ask:(NSString *)system parts:(NSArray *)parts label:(NSString *)label
-              key:(NSString *)key thinking:(NSString *)thinking
-            usage:(NSMutableDictionary *)usage error:(NSString **)err {
-    NSMutableDictionary *body = [@{@"model": ZGModel(),
-                                   @"system_instruction": system,
-                                   @"input": parts,
-                                   @"generation_config": @{@"thinking_level": thinking}} mutableCopy];
-    NSError *jerr = nil;
-    NSData *json = [NSJSONSerialization dataWithJSONObject:body options:0 error:&jerr];
-    if (!json) {
-        if (err) *err = @"درخواست ساخته نشد";
-        return nil;
-    }
+// یک درخواست، یک جا. کلیدسنج و خودِ پاس باید **عین هم** ساخته شوند، وگرنه روزی
+// کلیدسنج سبز می‌دهد و پاس ۴۰۰ می‌گیرد؛ آن‌وقت سنجه‌ای داریم که فقط خودش را می‌سنجد.
+- (NSMutableURLRequest *)requestFor:(NSString *)system parts:(NSArray *)parts
+                                key:(NSString *)key thinking:(NSString *)thinking {
+    NSDictionary *body = @{@"model": ZGModel(),
+                           @"system_instruction": system,
+                           @"input": parts,
+                           @"generation_config": @{@"thinking_level": thinking}};
+    NSData *json = [NSJSONSerialization dataWithJSONObject:body options:0 error:nil];
+    if (!json) return nil;
     NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:
         [NSURL URLWithString:[kGBase stringByAppendingString:@"/v1beta/interactions"]]];
     req.HTTPMethod = @"POST";
     req.HTTPBody = json;
     [req setValue:key forHTTPHeaderField:@"x-goog-api-key"];
     [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+    return req;
+}
+
+- (NSString *)ask:(NSString *)system parts:(NSArray *)parts label:(NSString *)label
+              key:(NSString *)key thinking:(NSString *)thinking
+            usage:(NSMutableDictionary *)usage error:(NSString **)err {
+    NSMutableURLRequest *req = [self requestFor:system parts:parts key:key thinking:thinking];
+    if (!req) {
+        if (err) *err = @"درخواست ساخته نشد";
+        return nil;
+    }
     NSDate *t0 = NSDate.date;
     NSInteger st = 0;
     NSData *raw = [self send:req label:label status:&st headers:nil];
@@ -502,6 +635,12 @@ static NSString *ZDropPreamble(NSString *t) {
                                              encoding:NSUTF8StringEncoding];
         if (err) *err = ZHumanError(label, st, raw);
         ZLog(@"final: %@ HTTP %ld در %.1f ثانیه: %@", label, (long)st, dt, msg ?: @"?");
+        // کلیدی که سرور ردش کرد، دفعه‌ی بعد هم رد می‌شود. پس همین‌جا علامت می‌خورد،
+        // وگرنه رابط تا ری‌استارت بعدی «آماده‌ام» می‌گفت و هر سشن یک رفت‌وبرگشت
+        // بی‌فایده خرج می‌کرد تا آخرش همان متن خام تحویل بدهد.
+        NSString *full = [[NSString alloc] initWithData:raw ?: [NSData data]
+                                              encoding:NSUTF8StringEncoding] ?: @"";
+        if (ZKeyRejected(st, full)) [self noteKeyRejected];
         return nil;
     }
     id doc = [NSJSONSerialization JSONObjectWithData:raw options:0 error:nil];
@@ -629,3 +768,23 @@ static NSUInteger ZWordCount(NSString *s) {
 }
 
 @end
+
+// ---------- zemzeme --checkkey ----------
+// همان کلیدسنجی که منو می‌زند، روی کلیدِ ذخیره‌شده، بی‌پنجره و بی‌آدم. دلیل وجودش همان
+// شرط سختِ بقیه‌ی اپ است: ادعای «کلید کار می‌کند» باید بی‌آدم تکرارپذیر باشد. چاپ هم
+// همین‌جا انجام می‌شود و **خود کلید هیچ‌وقت چاپ نمی‌شود**، فقط طولش: کلید از این فایل
+// بیرون نمی‌رود، از خروجی ترمینال هم نه.
+int ZCheckKeyMain(void) {
+    NSString *k = [ZFinalPass.shared keyAllowingUI:YES];
+    if (!k.length) {
+        fprintf(stderr, "%s\n", ZFinalPass.missingKeyHint.UTF8String);
+        return 2;
+    }
+    NSString *note = nil;
+    ZKeyVerdict v = [ZFinalPass.shared checkKey:k note:&note];
+    const char *verdict = v == ZKeyGood ? "کلید کار می‌کند"
+                        : v == ZKeyBad ? "کلید پذیرفته نشد" : "نشد تستش کرد";
+    fprintf(v == ZKeyGood ? stdout : stderr, "%s (کلیدِ %lu نویسه‌ای): %s\n",
+            verdict, (unsigned long)k.length, note.UTF8String ?: "?");
+    return v == ZKeyGood ? 0 : 1;
+}

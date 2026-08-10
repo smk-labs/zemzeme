@@ -45,6 +45,7 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
     // پیدا نمی‌کرد و متن فقط در کلیپ‌بورد می‌ماند.
     NSUInteger _inserted;            // چقدر از متن واقعا سر کرسر رفته
     NSString *_polished;             // آخرین متنی که مدل نوشته؛ پایه‌ی جوشِ دور بعد
+    NSInteger _dropEpoch;            // چند بار دور ریخته شده؛ جوابِ پاسِ کهنه را می‌اندازد
     NSTimeInterval _secondsBefore;   // ثانیه‌ی دورهای قبلی؛ ساعت روی هم جمع می‌شود
     NSInteger _round;                // چندمین دورِ شنیدن در همین سشن
     BOOL _listening;
@@ -237,11 +238,20 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
         [self render];
         __weak typeof(self) ws = self;
         NSString *before = _polished;
+        NSInteger epoch = _dropEpoch;
         void (^landed)(NSString *, NSString *) = ^(NSString *out, NSString *err) {
             __strong typeof(ws) s = ws;
             if (!s) return;
             s->_busy = ZBusyNone;
             s->_workingMsg = nil;
+            // وسط پاس، کاربر دور ریخت. این جواب مالِ متنی است که دیگر وجود ندارد و
+            // نوشتنش یعنی برگشتنِ همان حرف‌هایی که کاربر گفت پاکشان کن. deliver
+            // همان‌طور صدا زده می‌شود، چون متن خالی است و خودش می‌داند چه بگوید.
+            if (s->_dropEpoch != epoch) {
+                ZLog(@"session: پاس رسید ولی متنش دور ریخته شده بود، انداخته شد");
+                [s deliver];
+                return;
+            }
             if (out.length) {
                 s->_text = out;
                 s->_polished = out;
@@ -275,7 +285,10 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
         return;
     }
     if (ZSettings.shared.finalPassEnabled) {
-        _warning = @"کلید Gemini نیست؛ متن تمیز نشد";
+        // یک منبع حقیقت برای این جمله. «نیست» و «پذیرفته نشد» دو کارِ مختلف از کاربر
+        // می‌خواهند، و تا امروز هر دو «نیست» می‌گفتند: کسی که کلیدش رد شده بود
+        // می‌رفت دنبال کلیدِ نداشته، در حالی که مشکل همان کلیدِ داشته بود.
+        _warning = ZFinalPass.missingKeyHint;
     }
     [self deliver];
 }
@@ -457,11 +470,20 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
 // سطل آشغال: **از صفر**، و صفر یعنی صفر. متن، صدای روی دیسک، و ساعت، هر سه.
 // ساعت هم عمدا: کاربر که «از نو» می‌زند انتظار دارد شمارنده هم از نو شروع کند،
 // وگرنه عددی می‌بیند که به هیچ صدایی که هنوز هست مربوط نیست.
+//
+// و «هر سه» تا امروز دو تا بود. متن دو جا زندگی می‌کند و اینجا فقط یکی‌شان پاک
+// می‌شد: نسخه‌ی سشن. تکه‌های رونویسی‌شده داخل خط لوله‌ی موتور می‌ماندند و سر پایان
+// از همان‌جا برمی‌گشتند، پس پنل می‌گفت «همه‌چیز دور ریخته شد» و Esc بعدی همان
+// حرف‌ها را سر کرسر می‌ریخت. پیامی که کاربر می‌خواند و کاری که اپ می‌کرد، دو چیز.
 - (void)dropPending {
+    [_engine discardText];
     _text = @"";
     _polished = nil;
     _inserted = 0;
     _secondsBefore = 0;
+    // و درِ سومِ برگشت: پاسِ هوش مصنوعیِ در جریان. نتیجه‌اش چند ثانیه بعد می‌رسد و
+    // متنِ **قبلِ** دور ریختن را می‌نویسد. یک نوبت کافی است که آن جواب بی‌اثر بماند.
+    _dropEpoch++;
     [_engine resetClock];
     // پیش‌نمایش هم از صفر، وگرنه حرف‌های دورریخته چند ثانیه بعد دوباره خاکستری
     // برمی‌گشتند: استریم هر بار کلِ متنِ جمع‌شده‌اش را می‌دهد و از دور ریختن خبر ندارد.

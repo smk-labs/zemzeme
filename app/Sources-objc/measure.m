@@ -170,7 +170,7 @@ static NSString *ZFixedCuts(NSData *pcm, NSString *lang, double sec) {
 // تازه را نشان می‌داد و متن به زبان قبلی می‌آمد، و چنین چیزی نباید دوباره بی‌صدا
 // برگردد. با speed=۰ (تندترین) این تست چند ثانیه بیشتر طول نمی‌کشد.
 static ZMeasureRun *ZRunWav(NSData *pcm, NSString *lang, double speed, BOOL preview,
-                            NSArray<NSArray *> *switches) {
+                            NSArray<NSArray *> *switches, NSArray<NSNumber *> *drops) {
     ZMeasureRun *run = [ZMeasureRun new];
     run.echoPreview = preview;
     ZEngine *eng = [[ZEngine alloc] initWithLang:lang];
@@ -187,7 +187,7 @@ static ZMeasureRun *ZRunWav(NSData *pcm, NSString *lang, double speed, BOOL prev
     // یک تله که یک بار خورده شد: با speed=۰ کل فایل داخل یک بلوکِ پس‌زمینه و بی هیچ
     // مکثی بلعیده می‌شود، پس این حلقه تازه بعد از تمام شدنِ صدا نوبتش می‌رسد و مرز
     // همیشه آخرِ فایل می‌افتد. برای این تست speed باید متناهی باشد (۱ تا ۴).
-    NSUInteger nextSwitch = 0;
+    NSUInteger nextSwitch = 0, nextDrop = 0;
     while (!run.done) {
         while (nextSwitch < switches.count
                && eng.seconds >= [switches[nextSwitch][0] doubleValue]) {
@@ -195,6 +195,14 @@ static ZMeasureRun *ZRunWav(NSData *pcm, NSString *lang, double speed, BOOL prev
             nextSwitch++;
             fprintf(stderr, "--- ثانیه %.1f: زبان → %s ---\n", eng.seconds, to.UTF8String);
             [eng switchLang:to];
+        }
+        // سطل آشغال سر همان ثانیه‌ی صدا. معیار پذیرش عینی است و نه چشمی: متنِ چاپ‌شده
+        // باید **فقط** حرف‌های بعد از این مرز را داشته باشد. تا امروز نداشت، و همان
+        // باگ بود: تکه‌های قبلِ مرز داخل خط لوله می‌ماندند و سر پایان برمی‌گشتند.
+        while (nextDrop < drops.count && eng.seconds >= drops[nextDrop].doubleValue) {
+            nextDrop++;
+            fprintf(stderr, "--- ثانیه %.1f: دور ریختن ---\n", eng.seconds);
+            [eng discardText];
         }
         [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
     }
@@ -224,7 +232,7 @@ static int ZTable(NSArray<NSString *> *takes, NSString *lang, double speed) {
             return 1;
         }
         NSString *ref = [NSString stringWithContentsOfFile:md encoding:NSUTF8StringEncoding error:nil];
-        ZMeasureRun *r = ZRunWav(pcm, lang, speed, NO, nil);
+        ZMeasureRun *r = ZRunWav(pcm, lang, speed, NO, nil, nil);
         if (!r) return 1;
         ZScore s = ZScoreText(ZScript(ref ?: @""), r.text ?: @"");
         double sec = pcm.length / kZPcmBytesPerSec;
@@ -304,6 +312,9 @@ int ZLiveWavMain(NSArray<NSString *> *args) {
     // هر بار --switchlang یک مرز اضافه می‌کند، پس «هر چند بار که خواستی» هم آزمودنی
     // است نه فقط یک بار. هر عضو: @[@(ثانیه), @"زبان"].
     NSMutableArray<NSArray *> *switches = [NSMutableArray array];
+    // و هر بار --drop یک «سطل آشغال» سر همان ثانیه‌ی صدا. جفتِ --switchlang است و
+    // برای همان دلیل: ادعای «دور ریختن واقعا پاک می‌کند» باید بی‌میکروفن دیده شود.
+    NSMutableArray<NSNumber *> *drops = [NSMutableArray array];
     NSUInteger i = [args indexOfObject:@"--livewav"] + 1;
     for (; i < args.count; i++) {
         NSString *a = args[i];
@@ -317,6 +328,9 @@ int ZLiveWavMain(NSArray<NSString *> *args) {
             double at = args[++i].doubleValue;
             [switches addObject:@[@(at), args[++i]]];
         }
+        else if ([a isEqualToString:@"--drop"] && i + 1 < args.count) {
+            [drops addObject:@(args[++i].doubleValue)];
+        }
         else if (![a hasPrefix:@"--"] && !file) file = a;
     }
 
@@ -327,7 +341,7 @@ int ZLiveWavMain(NSArray<NSString *> *args) {
     }
     if (!file) {
         fprintf(stderr, "zemzeme --livewav <file.wav> [--lang fa-IR] [--speed 1] [--ref متن.md] [--preview]\n"
-                        "                        [--switchlang <ثانیه> <fa-IR|en-US>] ...\n"
+                        "                        [--switchlang <ثانیه> <fa-IR|en-US>] [--drop <ثانیه>] ...\n"
                         "zemzeme --livewav --table\n");
         return 2;
     }
@@ -350,7 +364,7 @@ int ZLiveWavMain(NSArray<NSString *> *args) {
         }
         return 0;
     }
-    ZMeasureRun *r = ZRunWav(pcm, lang, speed, preview, switches);
+    ZMeasureRun *r = ZRunWav(pcm, lang, speed, preview, switches, drops);
     if (!r) return 1;
     printf("%s\n", (r.text ?: @"").UTF8String);
     if (r.second.length) fprintf(stderr, "\n[en-US] %s\n", r.second.UTF8String);

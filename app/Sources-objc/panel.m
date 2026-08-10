@@ -777,8 +777,10 @@ static NSString *ZClock(NSTimeInterval sec) {
     BOOL ai = ZSettings.shared.finalPassEnabled;
     BOOL key = ZFinalPass.hasKey;
     _btnAI.contentTintColor = ai ? (key ? NSColor.systemBlueColor : NSColor.systemOrangeColor) : nil;
+    // جمله‌ی بی‌کلید از یک جا می‌آید (ZFinalPass)، چون سه حالت دارد و اینجا هاردکد
+    // شدنش یعنی دو تایش دروغ باشد: کلید نیست، کلید قفل است، یا کلید رد شده.
     _btnAI.toolTip = !key
-        ? @"تمیز کردن متن: کلید Gemini نیست. از منوی زمزمه «کلید Gemini…» را بزن (A)"
+        ? [@"تمیز کردن متن: " stringByAppendingString:ZFinalPass.missingKeyHint]
         : ai ? @"تمیز کردن متن روشن است: سر پایان، متن برای نقطه‌گذاری و اصلاح واژه‌های "
                 "غلط به Gemini می‌رود. صدا هیچ‌وقت فرستاده نمی‌شود. برای خاموش کردن بزن (A)"
              : @"تمیز کردن متن خاموش است: متن همان‌طور که شنیده شده تحویل می‌شود. برای "

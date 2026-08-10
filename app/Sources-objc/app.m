@@ -833,18 +833,7 @@ int ZSelfTest(NSString *file, NSString *lang) {
     a.window.initialFirstResponder = field;
     NSModalResponse resp = [a runModal];
     if (resp == [a.buttons indexOfObject:save] + NSAlertFirstButtonReturn) {
-        NSError *err = nil;
-        if ([ZFinalPass saveKey:field.stringValue error:&err]) {
-            NSAlert *ok = [NSAlert new];
-            ok.messageText = @"کلید ذخیره شد";
-            [ok runModal];
-        } else {
-            NSAlert *e = [NSAlert new];
-            e.alertStyle = NSAlertStyleWarning;
-            e.messageText = @"ذخیره نشد";
-            e.informativeText = err.localizedDescription ?: @"خطای نامشخص";
-            [e runModal];
-        }
+        [self saveKeyTested:field.stringValue had:had];
     } else if (resp == [a.buttons indexOfObject:get] + NSAlertFirstButtonReturn) {
         [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@"https://aistudio.google.com/apikey"]];
         [self menuSetKey];    // برگشت به همین شیت، چون کاربر رفت کلید بگیرد و برمی‌گردد بچسباند
@@ -857,6 +846,79 @@ int ZSelfTest(NSString *file, NSString *lang) {
             [_panel flash:@"کلید پاک شد؛ تمیز کردن متن هم خاموش شد"];
         }
     }
+}
+
+// ذخیره‌ی کلید، با تست. دو قاعده اینجا با هم دعوا دارند و هر دو باید نگه داشته شوند:
+// تست یک درخواست شبکه است (پس نه روی نخ اصلی، چون تپ کیبورد روی همان نخ نشسته و یخ
+// زدنش یعنی Esc و Command راست از کار بیفتند)، و کاربر تازه «ذخیره» را زده (پس نباید
+// چند ثانیه هیچ اتفاقی نیفتد و بعد یکهو یک پنجره بپرد بالا).
+//
+// پس کار می‌رود پس‌زمینه و نخ اصلی یک شیتِ «در حال بررسی…» را مودال نگه می‌دارد؛
+// جواب که رسید، abortModal همان لحظه می‌بنددش. ران‌لوپ در طول مودال می‌چرخد، پس تپ
+// زنده می‌ماند. کاربر اگر خودش شیت را بست، حلقه‌ی پایین منتظر جواب می‌ماند بی‌آنکه
+// نخ را بلوکه کند: کلید نصفه‌کاره ذخیره نمی‌شود.
+- (void)saveKeyTested:(NSString *)key had:(BOOL)had {
+    NSAlert *wait = [NSAlert new];
+    wait.messageText = @"در حال بررسی کلید…";
+    wait.informativeText = @"یک درخواست کوچک به Gemini می‌رود تا معلوم شود کلید کار می‌کند. "
+                            "چند ثانیه بیشتر طول نمی‌کشد.";
+    NSProgressIndicator *spin = [[NSProgressIndicator alloc] initWithFrame:NSMakeRect(0, 0, 300, 20)];
+    spin.style = NSProgressIndicatorStyleBar;
+    spin.indeterminate = YES;
+    [spin startAnimation:nil];
+    wait.accessoryView = spin;
+    [wait addButtonWithTitle:@"صبر می‌کنم"];
+
+    __block BOOL landed = NO;
+    __block ZKeySave verdict = ZKeySaveKeychainNo;
+    __block NSString *msg = nil;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSString *m = nil;
+        ZKeySave v = [ZFinalPass saveKey:key message:&m];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            verdict = v;
+            msg = m;
+            landed = YES;
+            if (NSApp.modalWindow == wait.window) [NSApp abortModal];
+        });
+    });
+    [wait runModal];
+    while (!landed) {
+        [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode
+                               beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+    }
+
+    NSAlert *r = [NSAlert new];
+    switch (verdict) {
+        case ZKeySaveOK:
+            r.messageText = @"کلید ذخیره شد و کار می‌کند";
+            break;
+        case ZKeySaveUntested:
+            r.alertStyle = NSAlertStyleWarning;
+            r.messageText = @"کلید ذخیره شد، ولی تست نشد";
+            break;
+        case ZKeySaveRejected:
+        case ZKeySaveBadInput:
+            r.alertStyle = NSAlertStyleWarning;
+            // صریح، چون سکوت اینجا همان باگ است: کاربر باید بداند **چیزی عوض نشد**.
+            r.messageText = had ? @"این کلید کار نکرد؛ کلید قبلی سر جایش ماند"
+                                : @"این کلید کار نکرد، پس ذخیره نشد";
+            break;
+        case ZKeySaveKeychainNo:
+            r.alertStyle = NSAlertStyleWarning;
+            r.messageText = @"ذخیره نشد";
+            break;
+    }
+    r.informativeText = msg.length ? msg : @"خطای نامشخص";
+    if (verdict == ZKeySaveRejected || verdict == ZKeySaveBadInput) {
+        [r addButtonWithTitle:@"دوباره امتحان می‌کنم"];
+        [r addButtonWithTitle:@"بی‌خیال"];
+        // درِ برگشت، همان‌جا: کسی که کلید را غلط چسبانده، الان دستش روی کلیدِ درست
+        // است. بستنِ پنجره و فرستادنش دوباره به منو، فقط یک قدم اضافه بود.
+        if ([r runModal] == NSAlertFirstButtonReturn) [self menuSetKey];
+        return;
+    }
+    [r runModal];
 }
 
 // یک جا برای هر دو در: میان‌بر A و ردیف منو. دو پیاده‌سازی یعنی دو رفتار واگرا، و
@@ -1007,6 +1069,9 @@ int main(int argc, const char *argv[]) {
         // سرتاسری باید تکرارپذیر باشد. مثل حالت دسته‌ای پیش از NSApplication برمی‌گردد.
         if ([args containsObject:@"--livewav"]) return ZLiveWavMain(args);
         if ([args containsObject:@"--aipass"]) return ZAIPassMain(args);
+        // کلیدسنج از بیرون: «کلید کار می‌کند» باید بی‌آدم و بی‌پنجره هم قابل پرسیدن
+        // باشد، وگرنه تنها راهِ فهمیدنش باز می‌شود یک سشن واقعی و خواندن لاگ.
+        if ([args containsObject:@"--checkkey"]) return ZCheckKeyMain();
         // آیکون بسته برای build.sh؛ مثل حالت دسته‌ای قبل از NSApplication برمی‌گردد
         NSUInteger ic = [args indexOfObject:@"--appicon"];
         if (ic != NSNotFound && ic + 1 < args.count) return ZMarkIconMain(args[ic + 1]);
