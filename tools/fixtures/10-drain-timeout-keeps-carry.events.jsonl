@@ -1,6 +1,0 @@
-{"k": "note", "text": "row 10: the 8s drain timeout used to drop the carried text silently"}
-{"k": "final", "text": "جمله‌ی اول", "weld": false}
-{"k": "interim", "text": "و این چند کلمه‌ی آخر که سر چرخش معلق مانده بود"}
-{"k": "rotate", "carry": "و این چند کلمه‌ی آخر که سر چرخش معلق مانده بود"}
-{"k": "drainend"}
-{"k": "expect", "text": "جمله‌ی اول و این چند کلمه‌ی آخر که سر چرخش معلق مانده بود"}

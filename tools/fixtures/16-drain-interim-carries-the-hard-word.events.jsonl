@@ -1,8 +1,0 @@
-{"k": "note", "text": "row 16 (reported 2026-08-09, session 10-44-26): a hard English term mid-Persian. Google goes quiet on it, the rotation cuts, and the OLD stream works the word out a few hundred ms LATER. Its interims used to be thrown away (only its finals were heard), so when no final arrived the word existed nowhere: not in the carry, which was snapshotted at the cut, and not in the new stream, which never heard that audio. drainInterim can only lengthen the carry, so the word survives and endDrain commits it."}
-{"k": "overlap", "sec": 2.0}
-{"k": "interim", "text": "اما فیچرهای خوب و در واقع اون دیزاین"}
-{"k": "rotate", "carry": "اما فیچرهای خوب و در واقع اون دیزاین"}
-{"k": "draininterim", "text": "اما فیچرهای خوب و در واقع اون دیزاین تینکینگ"}
-{"k": "drainend"}
-{"k": "final", "text": "اون هدف درستیو پشتش عنوان کنه که", "weld": true}
-{"k": "expect", "text": "اما فیچرهای خوب و در واقع اون دیزاین تینکینگ اون هدف درستیو پشتش عنوان کنه که"}

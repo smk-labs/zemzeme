@@ -21,12 +21,30 @@
     ZMic *_mic;
     ZPipe *_fa;
     ZPipe *_en;              // پاس دوم انگلیسی؛ نال یعنی خاموش
+    // خط لوله‌هایی که زبانشان عوض شده و بازنشسته‌اند. زنده‌اند تا متنشان برسد، و سر
+    // پایان به ترتیب جلوی متنِ خط لوله‌ی فعلی چیده می‌شوند. خالی، مگر اینکه کاربر
+    // وسط دیکته زبان را عوض کرده باشد.
+    NSMutableArray<ZPipe *> *_retired;
+    NSMutableArray<ZPipe *> *_retiredSecond;
     ZPreviewStream *_preview;   // نمایشی و دور ریختنی؛ نال یعنی خاموش
     NSDate *_startedAt;
     NSTimeInterval _seconds; // ثانیه‌ی صدای بلعیده‌شده، از بایت‌ها نه از ساعت دیوار
     BOOL _stopping;
     BOOL _fileMode;
     dispatch_source_t _cap;
+}
+
+// متنِ یک زنجیره‌ی خط لوله: بازنشسته‌ها به ترتیب، بعد زنده. همان قاعده‌ی سرهم کردنِ
+// تکه‌ها، یک پله بالاتر: با یک فاصله به هم می‌چسبند و بس.
+static NSString *ZChainText(NSArray<ZPipe *> *retired, ZPipe *live) {
+    NSMutableArray<NSString *> *parts = [NSMutableArray array];
+    for (ZPipe *p in retired) {
+        NSString *t = p.text;
+        if (t.length) [parts addObject:t];
+    }
+    NSString *t = live.text;
+    if (t.length) [parts addObject:t];
+    return [parts componentsJoinedByString:@" "];
 }
 
 - (instancetype)initWithLang:(NSString *)lang {
@@ -91,14 +109,62 @@
 }
 
 - (void)buildPipes {
+    if (!_retired) {
+        _retired = [NSMutableArray array];
+        _retiredSecond = [NSMutableArray array];
+    }
     _fa = [[ZPipe alloc] initWithLang:_lang];
     // پاس دوم انگلیسی روی همان صدا: رایگان، موازی، و روی متنِ پر از اصطلاح خیلی خوب.
     // اندازه‌گیری روی ضبط ۰۲: پاس فارسی از «دیتابیس پستگرس» به بعد را کامل انداخته
     // بود و پاس انگلیسی همان‌جا شنیده بود. ولی روی ۰۷ (اصطلاح‌های رایج) تقریبا هیچ،
     // پس بیمه است نه ستون، و پیش‌فرض خاموش.
-    if (ZSettings.shared.secondPass && [_lang hasPrefix:@"fa"]) {
-        _en = [[ZPipe alloc] initWithLang:@"en-US"];
-    }
+    //
+    // و نال کردنِ صریح در حالت دیگر لازم است، نه اضافه: این تابع حالا بار دوم هم صدا
+    // زده می‌شود (سر عوض کردن زبان). بی این خط، رفتن از فارسی به انگلیسی خط لوله‌ی
+    // بازنشسته‌ی پاس دوم را زنده نگه می‌داشت و صدای تازه را هم به آن می‌داد.
+    _en = (ZSettings.shared.secondPass && [_lang hasPrefix:@"fa"])
+        ? [[ZPipe alloc] initWithLang:@"en-US"] : nil;
+}
+
+// ---------- زبان، وسط سشن ----------
+//
+// چرا این‌قدر کوچک است: در نسخه دو هر تکه سشنِ مستقل خودش را می‌گیرد و تکه‌ها فقط با
+// یک فاصله به هم می‌چسبند. پس «زبان عوض شد» یعنی «این خط لوله را همین‌جا ببند، بعدی
+// را با زبان تازه باز کن». درزی نیست که بخواهد دوخته شود، و همین است که کاری را که
+// در نسخه یک شدنی نبود اینجا به چند خط تبدیل می‌کند.
+//
+// صدایی که تا این لحظه در بافر مانده با زبان **قبلی** رونویسی می‌شود. این مصالحه
+// نیست، درست است: آن صدا به همان زبان گفته شده. تنها هزینه‌اش یک برش سر همین نقطه
+// است، و آدم عملا وقتی زبان را عوض می‌کند که جمله‌اش تمام شده.
+//
+// قبلا این تابع وجود نداشت و switchLang فقط تنظیم را می‌نوشت. نتیجه بدترین حالت
+// ممکن بود: دکمه‌ی نوار همان لحظه زبان تازه را نشان می‌داد و موتور تا آخر سشن به
+// زبان قبلی می‌نوشت، یعنی رابط دروغ می‌گفت.
+- (void)switchLang:(NSString *)lang {
+    if (_stopping || !lang.length || [lang isEqualToString:_lang]) return;
+
+    // بازنشسته، نه کشته: صدایشان گفته شده و متنش حق کاربر است. finish بلوکه است
+    // (منتظر شبکه می‌ماند) پس روی نخ پس‌زمینه می‌رود؛ نخ اصلی وسط دیکته حق ندارد
+    // حتی یک لحظه بایستد. سر پایان، stop دوباره finish می‌زند و آن یکی بی‌ضرر است:
+    // ZPipe با پرچم _done از تکرار محافظت می‌کند.
+    NSMutableArray<ZPipe *> *closing = [NSMutableArray array];
+    if (_fa) { [_retired addObject:_fa]; [closing addObject:_fa]; }
+    if (_en) { [_retiredSecond addObject:_en]; [closing addObject:_en]; }
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        for (ZPipe *p in closing) [p finish];
+    });
+
+    _lang = [lang copy];
+    [self buildPipes];
+
+    // پیش‌نمایش هم زبان دارد و همان لحظه باید عوض شود، وگرنه دُم خاکستری به یک زبان
+    // حدس می‌زند و متن نهایی به زبان دیگر می‌آید. نال کردنش کافی است: syncPreview سر
+    // تکه‌ی صدای بعدی خودش دوباره و با زبان تازه می‌سازدش.
+    [_preview stop];
+    _preview = nil;
+
+    ZLog(@"engine: زبان وسط سشن شد %@، %lu خط لوله بازنشسته",
+         _lang, (unsigned long)(_retired.count + _retiredSecond.count));
 }
 
 // ---------- صدا ----------
@@ -200,13 +266,19 @@
     // خالی کردن صف بلوکه است، پس روی نخ پس‌زمینه. نخ اصلی باید آزاد بماند تا پنل
     // بتواند «یک لحظه…» را نشان بدهد؛ یخ زدنِ رابط سر پایان بدترین لحظه‌ی ممکن است.
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        // بازنشسته‌ها هم منتظر می‌مانند. تقریبا همیشه از قبل تمام شده‌اند (سر عوض
+        // کردن زبان finish خورده‌اند) و این حلقه آنی رد می‌شود؛ ولی اگر کاربر یک
+        // ثانیه بعدِ عوض کردن زبان سشن را ببندد، متنِ آن تکه هنوز در راه است و
+        // نباید جا بماند.
+        for (ZPipe *p in self->_retired) [p finish];
+        for (ZPipe *p in self->_retiredSecond) [p finish];
         [self->_fa finish];
         [self->_en finish];
-        NSString *fa = self->_fa.text;
-        NSString *en = self->_en.text;
+        NSString *fa = ZChainText(self->_retired, self->_fa);
+        NSString *en = ZChainText(self->_retiredSecond, self->_en);
         NSTimeInterval took = [NSDate.date timeIntervalSinceDate:t0];
         ZLog(@"engine: پایان، %.0f ثانیه صدا، %.1f ثانیه تا متن، %lu نویسه، %ld برش تحمیلی",
-             self->_seconds, took, (unsigned long)fa.length, (long)self->_fa.degradedCuts);
+             self->_seconds, took, (unsigned long)fa.length, (long)self.degradedCuts);
         dispatch_async(dispatch_get_main_queue(), ^{
             [self->_delegate engineDidFinish:fa second:en.length ? en : nil took:took];
         });
@@ -225,10 +297,18 @@
     _preview = nil;
     [_fa cancel];
     [_en cancel];
+    for (ZPipe *p in _retired) [p cancel];
+    for (ZPipe *p in _retiredSecond) [p cancel];
     [_recorder discard];
 }
 
-- (NSInteger)degradedCuts { return _fa.degradedCuts; }
+// جمعِ کل سشن، نه فقط خط لوله‌ی فعلی: اگر کاربر وسط راه زبان را عوض کرده باشد،
+// برش‌های تحمیلیِ قبل از آن هم مالِ همین سشن‌اند و در شمارش می‌آیند.
+- (NSInteger)degradedCuts {
+    NSInteger n = _fa.degradedCuts;
+    for (ZPipe *p in _retired) n += p.degradedCuts;
+    return n;
+}
 
 @end
 
