@@ -449,13 +449,27 @@ int ZSelfTest(NSString *file, NSString *lang) {
     _statusItem.menu = menu;
 }
 
+// منو و نوارِ پنل حالا **یک چیدمان** دارند: همان سه دسته، به همان ترتیب.
+//
+// قبلا هرکدام ساز خودشان را می‌زدند. سطل آشغال فقط روی نوار بود؛ رونویسی فایل بالای
+// منو ولی وسط نوار؛ تاگل‌ها روی نوار یک دسته‌ی جمع‌وجور بودند و در منو پخش در دو جای
+// مختلف. یعنی کاربر برای یک اپ باید دو نقشه‌ی جدا در سر می‌داشت، و هر بار که از یکی
+// به آن یکی می‌رفت دنبال چیزی می‌گشت که جایش عوض شده بود.
+//
+// حالا هر دکمه‌ی نوار، در همان دسته و تقریبا همان ترتیب، یک ردیف در منو دارد:
+//   دسته‌ی یک — کارهای همین دیکته:  × ⌘ C I D
+//   دسته‌ی دو — زبان و حالت و ابزار: L E F H
+//   دسته‌ی سه — تاگل‌ها:              S B A
+// منو **کامل‌تر** است، نه متفاوت: چیزی که روی یک آیکون جا نمی‌شود همان‌جا در دسته‌ی
+// خودش اضافه می‌شود (انتخاب زبان و حالت به‌جای چرخاندنشان، کلید Gemini زیر تاگلی که
+// به آن نیاز دارد)، و آخر از همه چیزهایی که اصلا روی نوار نیستند.
 - (void)menuNeedsUpdate:(NSMenu *)menu {
     [menu removeAllItems];
     menu.autoenablesItems = NO;
     BOOL active = _session != nil;
     BOOL paused = active && _session.engine.paused;
 
-    // بالا: ۴ اقدام اصلی (فقط وقتی سشن فعال است بیشتر از شروع معنا دارد)
+    // ---------- دسته‌ی یک: کارهای همین دیکته (آینه‌ی × ⌘ C I D) ----------
     //
     // **عنوان کوتاه، توضیح در تولتیپ.** ردیف منو جای جمله نیست: چشم آن را در یک نگاه
     // می‌خواند و هر واژه‌ی اضافه همان نگاه را کند می‌کند. پس عنوان‌ها دو کلمه‌اند و
@@ -476,41 +490,85 @@ int ZSelfTest(NSString *file, NSString *lang) {
         NSMenuItem *ins = [self item:menu title:@"درج متن" action:@selector(menuInsertHere) key:@"i"];
         [self icon:ins symbol:@"text.insert"];
         ins.toolTip = @"متن را در همان برنامه‌ای بنویس که پشت پنل باز است";
+        // سطل آشغال تا امروز فقط روی نوار و روی میان‌بر بود. کاری که برگشت ندارد باید
+        // از هر سه در پیدا باشد، نه فقط از دری که پنل جلوی چشم است.
+        NSMenuItem *trash = [self item:menu title:@"دور ریختن" action:@selector(menuTrash) key:@"d"];
+        [self icon:trash symbol:@"trash"];
+        trash.toolTip = @"هرچه هنوز درج نشده، به‌علاوه‌ی صدای ضبط‌شده‌اش، دور ریخته می‌شود";
     }
-    // رونویسی فایل: کنار «شروع دیکته» می‌نشیند چون هم‌رده‌ی آن است، دو راه رسیدن به متن.
-    // همیشه فعال است: به سشن ربطی ندارد و وسط دیکته هم می‌شود بازش کرد.
-    NSMenuItem *batch = [self icon:[self item:menu title:@"رونویسی فایل…"
-                                       action:@selector(menuBatch) key:@""]
-                             symbol:@"arrow.up.doc"];
-    batch.toolTip = @"فایل صوتی یا تصویری را به متن تبدیل کن. چند فایل پشت هم، با پیشرفت "
-                     "زنده و یک متن قابل ویرایش (Command راست + F)";
     [menu addItem:NSMenuItem.separatorItem];
 
-    // ---------- تنظیم‌ها: دسته‌بندی با خط جداکننده، نه با زیرمنو ----------
-    // بالای این خط «کار»هاست، پایینش «تنظیم». دسته‌بندی لازم بود، ولی **زیرمنو
-    // هزینه‌اش یک کلیک اضافه و یک قدم قایم شدن است**. یک بار تاگل‌های روزمره را توی
-    // زیرمنوی «شنیدن» بردم و نتیجه‌اش این شد که کاربر فکر کرد فیچر حذف شده. پس
-    // قاعده: هرچه ممکن است هفته‌ای یک بار لمس شود، همین‌جا و یک کلیکه می‌ماند و فقط
-    // با خطِ جداکننده دسته می‌شود؛ زیرمنو فقط برای چیزی که واقعا کم‌استفاده است
-    // (پیشرفته) یا ذاتا انتخابِ چندگزینه‌ای است (زبان).
-
-    // رادیوی حالت‌ها اینجا نیست و با آمدن حالت سوم (کرسر) هم برنمی‌گردد: دکمه‌ی E وسط
-    // سشن بین دو حالت می‌چرخد، و دو جای تنظیم برای یک چیز فقط گیج‌کننده بود.
-    NSMenuItem *langItem = [self icon:[[NSMenuItem alloc] initWithTitle:@"زبان" action:nil keyEquivalent:@""]
+    // ---------- دسته‌ی دو: زبان و حالت و ابزارها (آینه‌ی L E F H) ----------
+    // **زیرمنو فقط برای انتخابِ چندگزینه‌ای**، و همین دو تا. یک بار تاگل‌های روزمره را
+    // توی زیرمنوی «شنیدن» بردم و کاربر فکر کرد فیچر حذف شده؛ پس هرچه تاگل است یک
+    // کلیکه می‌ماند و فقط با خط جداکننده دسته می‌شود.
+    //
+    // عنوانِ ردیفِ پدر مقدارِ فعلی را هم می‌گوید، پس برای **دانستن** حالت لازم نیست
+    // زیرمنو باز شود؛ باز کردنش فقط برای **عوض کردن** است.
+    BOOL fa = [ZSettings.shared.lang hasPrefix:@"fa"];
+    NSMenuItem *langItem = [self icon:[[NSMenuItem alloc]
+                                       initWithTitle:fa ? @"زبان: فارسی" : @"زبان: English"
+                                              action:nil keyEquivalent:@""]
                                 symbol:@"globe"];
+    langItem.toolTip = @"زبان دیکته. عوض کردنش از سشن بعد اثر می‌کند، نه وسط همین یکی "
+                        "(Command راست + L)";
     NSMenu *langMenu = [NSMenu new];
+    langMenu.autoenablesItems = NO;
     [self item:langMenu title:@"فارسی" action:@selector(menuLangFa) key:@""].state =
-        [ZSettings.shared.lang isEqualToString:@"fa-IR"] ? NSControlStateValueOn : NSControlStateValueOff;
+        fa ? NSControlStateValueOn : NSControlStateValueOff;
     [self item:langMenu title:@"English" action:@selector(menuLangEn) key:@""].state =
-        [ZSettings.shared.lang isEqualToString:@"en-US"] ? NSControlStateValueOn : NSControlStateValueOff;
+        fa ? NSControlStateValueOff : NSControlStateValueOn;
     langItem.submenu = langMenu;
     [menu addItem:langItem];
 
-    // حساسیت میکروفن و شنیدنِ دوزبانه: دو تاگلِ **شنیدن**، پشت سر هم و یک کلیکه.
+    // حالت، به‌جای تاگلِ چرخشی. دکمه‌ی E روی نوار بین دو حالت می‌چرخد، و چرخاندن یعنی
+    // کاربر باید **اول بداند الان کجاست** تا بفهمد زدنش او را کجا می‌برد. منو جای آن
+    // دانستن است: هر دو حالت با اسم دیده می‌شوند و تیک می‌گوید کدام روشن است.
+    // قبلا این ردیف اصلا نبود، با این استدلال که «دو جای تنظیم برای یک چیز گیج‌کننده
+    // است». ولی دو جا وقتی گیج‌کننده است که دو **رفتار** باشند؛ اینجا یک تنظیم است با
+    // دو نما: نوار می‌چرخاندش، منو انتخابش می‌کند.
+    ZMode mode = ZSettings.shared.mode;
+    NSMenuItem *modeItem = [self icon:[[NSMenuItem alloc]
+                                       initWithTitle:[@"جای متن: " stringByAppendingString:ZModeLabel(mode)]
+                                              action:nil keyEquivalent:@""]
+                                symbol:mode == ZModeCursor ? @"text.cursor" : @"square.and.pencil"];
+    modeItem.toolTip = @"متن کجا بنشیند (Command راست + E)";
+    NSMenu *modeMenu = [NSMenu new];
+    modeMenu.autoenablesItems = NO;
+    NSMenuItem *mCollect = [self item:modeMenu title:ZModeLabel(ZModeCollect)
+                               action:@selector(menuModeCollect) key:@""];
+    mCollect.state = mode == ZModeCollect ? NSControlStateValueOn : NSControlStateValueOff;
+    mCollect.toolTip = @"متن در خود پنل جمع می‌شود و می‌توانی ویرایشش کنی؛ سر پایان یک‌جا درج می‌شود";
+    NSMenuItem *mCursor = [self item:modeMenu title:ZModeLabel(ZModeCursor)
+                              action:@selector(menuModeCursor) key:@""];
+    mCursor.state = mode == ZModeCursor ? NSControlStateValueOn : NSControlStateValueOff;
+    mCursor.toolTip = @"پنل می‌رود و فقط یک نقطه کنار کرسر می‌ماند؛ متن سر پایان همان‌جا نوشته می‌شود";
+    modeItem.submenu = modeMenu;
+    [menu addItem:modeItem];
+
+    // رونویسی فایل و راهنما: دو ابزارِ همیشه‌فعال، دقیقا مثل جایشان روی نوار (F و H).
+    // به سشن ربطی ندارند و وسط دیکته هم باز می‌شوند.
+    NSMenuItem *batch = [self icon:[self item:menu title:@"رونویسی فایل…"
+                                       action:@selector(menuBatch) key:@"f"]
+                             symbol:@"arrow.up.doc"];
+    batch.toolTip = @"فایل صوتی یا تصویری را به متن تبدیل کن. چند فایل پشت هم، با پیشرفت "
+                     "زنده و یک متن قابل ویرایش (Command راست + F)";
+    // یک آیتم، یک کارت. زیرمنوی قبلی فهرستی از ردیف‌های غیرفعال بود: خاکستری، بی‌آیکون،
+    // و متن فارسی و لاتینِ یک‌خطی جابه‌جا خوانده می‌شد. حالا کارت واقعی باز می‌شود
+    // (ZCheatSheet) که کی‌کپ و آیکون دارد و کنار دستت باز می‌ماند تا کلیدها را تمرین کنی.
+    NSMenuItem *keysItem = [self icon:[self item:menu title:@"راهنمای میان‌برها"
+                                          action:@selector(menuCheatSheet) key:@"h"]
+                                symbol:@"questionmark.circle"];
+    keysItem.toolTip = @"کارت میان‌برها با Command راست + H؛ شناور می‌ماند و با Esc بسته می‌شود";
+    [menu addItem:NSMenuItem.separatorItem];
+
+    // ---------- دسته‌ی سه: تاگل‌ها (آینه‌ی S B A) ----------
+    // همان سه تاگلِ نوار، به همان ترتیب: دو تای اول مالِ **شنیدن**اند و کنار هم، سومی
+    // مالِ **متن** است و آخر می‌آید تا کلیدش بتواند درست زیرش بنشیند.
     // حساسیت از «پیشرفته» دور می‌ماند و عمدا: یک ترجیحِ یک‌باره نیست، تنظیمی است که
     // کاربر بسته به اتاق و میکروفن عوض می‌کند.
     NSMenuItem *sens = [self icon:[self item:menu title:@"حساسیت بالا"
-                                       action:@selector(menuToggleSensitivity) key:@""]
+                                       action:@selector(menuToggleSensitivity) key:@"s"]
                             symbol:ZSettings.shared.highSensitivity ? @"ear.fill" : @"ear.badge.waveform"];
     sens.state = ZSettings.shared.highSensitivity ? NSControlStateValueOn : NSControlStateValueOff;
     sens.toolTip = @"حساسیت میکروفن، برای پچ‌پچ کردن، اتاق ساکت، یا میکروفنی که صدایش "
@@ -518,7 +576,7 @@ int ZSelfTest(NSString *file, NSString *lang) {
     // پاس دوم انگلیسی روی همان صدا. رایگان و موازی، ولی پیش‌فرض خاموش چون سودش فقط
     // روی متنِ پر از اصطلاح فنی دیده می‌شود و در عوض یک سشن به ازای هر تکه خرج دارد.
     NSMenuItem *sec = [self icon:[self item:menu title:@"شنیدن دوزبانه"
-                                     action:@selector(menuToggleSecondPass) key:@""]
+                                     action:@selector(menuToggleSecondPass) key:@"b"]
                            symbol:ZSettings.shared.secondPass ? @"character.book.closed.fill"
                                                               : @"character.book.closed"];
     sec.state = ZSettings.shared.secondPass ? NSControlStateValueOn : NSControlStateValueOff;
@@ -526,16 +584,16 @@ int ZSelfTest(NSString *file, NSString *lang) {
                    "دست نروند. رایگان است ولی دو برابر سهم کلید را می‌برد. روی گفتار "
                    "روزمره تقریبا هیچ فرقی نمی‌کند؛ برای متنِ پر از اصطلاح روشنش کن "
                    "(دکمه‌ی B روی نوار، یا Command راست + B)";
-    [menu addItem:NSMenuItem.separatorItem];
 
-    // تمیز کردن متن و کلیدش، پشت سر هم و در دسته‌ی خودشان: یکی بی آن یکی کار نمی‌کند.
+    // تمیز کردن متن و کلیدش، پشت سر هم: یکی بی آن یکی کار نمی‌کند. کلید **کار** است نه
+    // تنظیم، پس در «پیشرفته» جایی ندارد؛ جایش دقیقا زیر همان تاگلی است که به آن نیاز دارد.
     BOOL hasKey = ZFinalPass.hasKey;
     // حالت سوم: کلید در کی‌چین هست ولی ACL آیتم این اپ را نمی‌شناسد (معمولا چون یک بار
     // با `security` در ترمینال ساخته شده). منو پنجره‌ی رمز را بالا نمی‌آورد، پس اینجا
     // فقط راستش را می‌گوید؛ یک بار «کلید Gemini…» و ذخیره‌ی دوباره، تمامش می‌کند.
     BOOL keyLocked = !hasKey && ZFinalPass.keyNeedsPermission;
     NSMenuItem *fin = [self icon:[self item:menu title:@"تمیز کردن متن"
-                                     action:@selector(menuToggleFinalPass) key:@""]
+                                     action:@selector(menuToggleFinalPass) key:@"a"]
                            symbol:@"sparkles"];
     fin.state = ZSettings.shared.finalPassEnabled ? NSControlStateValueOn : NSControlStateValueOff;
     fin.toolTip = hasKey
@@ -558,9 +616,16 @@ int ZSelfTest(NSString *file, NSString *lang) {
            "فقط برای «تمیز کردن متن» لازم است؛ بدون آن، اصلا لازم نیست.";
     [menu addItem:NSMenuItem.separatorItem];
 
-    // پیشرفته: همه‌چیزهای کم‌استفاده در یک زیرمنو
+    // ---------- آخر از همه: چیزهایی که روی نوار نیستند ----------
+    //
+    // «پیشرفته» فقط **پیش‌فرض‌ها**ست: تنظیم‌هایی که کاربر یک بار سرِ نصب می‌بیند و بعد
+    // شاید هیچ‌وقت دست نزند. کارها اینجا جایی ندارند و بیرون آمدند: «پوشه‌ی دیکته‌ها» و
+    // «اجازه‌های مک» چیزی را عوض نمی‌کنند، یک پنجره باز می‌کنند، و پشتِ در «پیشرفته»
+    // گذاشتنشان یعنی کسی که دنبال فایل دیکته‌اش می‌گردد اول باید بپذیرد کار پیشرفته‌ای
+    // می‌کند. حالا ردیف خودشان را دارند، همین‌جا و یک کلیکه.
     NSMenuItem *advItem = [self icon:[[NSMenuItem alloc] initWithTitle:@"پیشرفته" action:nil keyEquivalent:@""]
                                symbol:@"gearshape"];
+    advItem.toolTip = @"پیش‌فرض‌هایی که یک بار تنظیم می‌شوند: صدا، روش نوشتن، راه‌اندازی";
     NSMenu *adv = [NSMenu new];
     adv.autoenablesItems = NO;
 
@@ -588,24 +653,49 @@ int ZSelfTest(NSString *file, NSString *lang) {
     flac.toolTip = @"حجم صدایی که فرستاده می‌شود را تا نصف کم می‌کند؛ اگر جواب نداد، خودش به حالت عادی برمی‌گردد";
     [adv addItem:NSMenuItem.separatorItem];
 
-    NSArray *modes = @[@[@"تایپ مستقیم", @(ZInsertType), @"keyboard"],
-                       @[@"چسباندن", @(ZInsertPaste), @"doc.on.clipboard"]];
-    for (NSArray *m in modes) {
-        NSMenuItem *mi = [self icon:[self item:adv title:m[0] action:@selector(menuInsertMode:) key:@""]
-                              symbol:m[2]];
-        mi.representedObject = m[1];
-        mi.state = ZSettings.shared.insertMode == [m[1] integerValue]
-            ? NSControlStateValueOn : NSControlStateValueOff;
-        mi.toolTip = @"روش نوشتن متن در همه‌ی برنامه‌ها؛ Windows App استثنای خودش را دارد (ردیف بعد)";
-    }
+    // **یک سوال، یک ردیف.** قبلا دو ردیفِ تیک‌دار بود، «تایپ مستقیم» و «چسباندن»، و
+    // هیچ‌کدام نمی‌گفت موضوع چیست: نه معلوم بود این دو با هم یک انتخاب‌اند، نه اینکه
+    // اصلا دارند درباره‌ی چه چیزی تصمیم می‌گیرند. حالا مثل «زبان» و «جای متن»، یک ردیف
+    // که مقدار فعلی را در خودش نوشته و زیرمنویی که همان دو راه را با اسمِ کامل می‌گوید.
+    BOOL typing = ZSettings.shared.insertMode == ZInsertType;
+    NSMenuItem *insItem = [self icon:[[NSMenuItem alloc]
+                                      initWithTitle:typing ? @"روش نوشتن: تایپ" : @"روش نوشتن: چسباندن"
+                                             action:nil keyEquivalent:@""]
+                               symbol:typing ? @"keyboard" : @"doc.on.clipboard"];
+    insItem.toolTip = @"متن آماده چطور در برنامه‌ی مقصد نوشته شود: حرف‌به‌حرف تایپ شود، "
+                       "یا یک‌جا چسبانده شود";
+    NSMenu *insMenu = [NSMenu new];
+    insMenu.autoenablesItems = NO;
+    NSMenuItem *iType = [self item:insMenu title:@"تایپ کردن، حرف‌به‌حرف"
+                            action:@selector(menuInsertMode:) key:@""];
+    iType.representedObject = @(ZInsertType);
+    iType.state = typing ? NSControlStateValueOn : NSControlStateValueOff;
+    iType.toolTip = @"زمزمه متن را حرف‌به‌حرف تایپ می‌کند، مثل کسی که پشت کیبورد نشسته. "
+                     "تقریبا همه‌جا کار می‌کند، ولی متن بلند کند نوشته می‌شود.";
+    NSMenuItem *iPaste = [self item:insMenu title:@"چسباندن، یک‌جا با Command+V"
+                             action:@selector(menuInsertMode:) key:@""];
+    iPaste.representedObject = @(ZInsertPaste);
+    iPaste.state = typing ? NSControlStateValueOff : NSControlStateValueOn;
+    iPaste.toolTip = @"متن در کلیپ‌بورد می‌نشیند و زمزمه Command+V را می‌زند: آنی، حتی برای "
+                      "متن بلند. برنامه‌ی مقصد باید چسباندن را قبول کند.";
+    insItem.submenu = insMenu;
+    [adv addItem:insItem];
+
     // استثنای Windows App جدا و دیدنی، نه پنهان در کد: پیست آنجا به کلیپ‌بورد ریموت
     // وابسته است و کلیپ‌بورد ریموت گیر می‌کند، ولی تایپ مستقیم فقط وقتی جواب می‌دهد
     // که خود Windows App روی Keyboard Mode = Unicode باشد. پس تصمیمش مال کاربر است.
-    NSMenuItem *rdp = [self icon:[self item:adv title:@"Windows App: تایپ مستقیم" action:@selector(menuToggleRDPType) key:@""]
+    // اینجا هم مقدار در خودِ عنوان است نه پشت یک تیک: تیکِ «تایپ مستقیم» جواب می‌داد
+    // که کاربر بداند نبودنش یعنی چسباندن، و همان دانستن چیزی بود که کم داشت.
+    BOOL rdpType = [ZSettings.shared insertModeForBundleId:kZRDPBundleId] == ZInsertType;
+    NSMenuItem *rdp = [self icon:[self item:adv
+                                       title:rdpType ? @"Windows App: تایپ" : @"Windows App: چسباندن"
+                                      action:@selector(menuToggleRDPType) key:@""]
                            symbol:@"display"];
-    rdp.state = [ZSettings.shared insertModeForBundleId:kZRDPBundleId] == ZInsertType
-        ? NSControlStateValueOn : NSControlStateValueOff;
-    rdp.toolTip = @"اول در نوار منوی Windows App: Keyboard Mode ← Unicode. بی آن، فارسی در ریموت درست تایپ نمی‌شود";
+    rdp.toolTip = rdpType
+        ? @"استثنای Windows App. برای برگشتن به چسباندن بزن. تایپ آنجا فقط وقتی جواب "
+           "می‌دهد که در نوار منوی خودِ Windows App هم Keyboard Mode ← Unicode باشد."
+        : @"استثنای Windows App: ریموت کلیدهای یونیکد را مطمئن نمی‌فرستد، پس آنجا "
+           "چسباندن پیش‌فرض است. برای عوض کردنش بزن.";
     [adv addItem:NSMenuItem.separatorItem];
 
     NSMenuItem *hk = [self icon:[self item:adv title:@"میان‌بر داخلی" action:@selector(menuToggleHotkey) key:@""]
@@ -623,23 +713,17 @@ int ZSelfTest(NSString *file, NSString *lang) {
     li.state = ZLoginItemOn() ? NSControlStateValueOn : NSControlStateValueOff;
     li.toolTip = @"زمزمه بعد از روشن شدن مک خودش بالا می‌آید. با این، میان‌بر داخلی به "
                   "تنهایی کافی است و به Karabiner یا هیچ ابزار جانبی دیگری نیازی نیست";
-    [adv addItem:NSMenuItem.separatorItem];
-
-    [self icon:[self item:adv title:@"پوشه‌ی دیکته‌ها" action:@selector(menuOpenSessions) key:@""] symbol:@"folder"];
-    [self icon:[self item:adv title:@"اجازه‌های مک" action:@selector(menuOpenAccessibility) key:@""] symbol:@"lock.shield"];
     advItem.submenu = adv;
     [menu addItem:advItem];
 
-    // یک آیتم، یک کارت. زیرمنوی قبلی فهرستی از ردیف‌های غیرفعال بود: خاکستری، بی‌آیکون،
-    // و متن فارسی و لاتینِ یک‌خطی جابه‌جا خوانده می‌شد. حالا کارت واقعی باز می‌شود
-    // (ZCheatSheet) که کی‌کپ و آیکون دارد و کنار دستت باز می‌ماند تا کلیدها را تمرین کنی.
-    NSMenuItem *keysItem = [self icon:[self item:menu title:@"راهنما"
-                                          action:@selector(menuCheatSheet) key:@""]
-                                symbol:@"questionmark.circle"];
-    // نشانه‌ی ⌘H فقط برای دیده شدن است: کار واقعی را تپ سراسری می‌کند، با Command راست
-    keysItem.keyEquivalent = @"h";
-    keysItem.keyEquivalentModifierMask = NSEventModifierFlagCommand;
-    keysItem.toolTip = @"کارت میان‌برها با Command راست + H؛ شناور می‌ماند و با Esc بسته می‌شود";
+    NSMenuItem *fold = [self icon:[self item:menu title:@"پوشه‌ی دیکته‌ها"
+                                      action:@selector(menuOpenSessions) key:@""]
+                            symbol:@"folder"];
+    fold.toolTip = @"متن و صدای هر سشن، روی همین دستگاه. صدا فقط اگر «نگه داشتن صدا» روشن باشد می‌ماند";
+    NSMenuItem *perm = [self icon:[self item:menu title:@"اجازه‌های مک"
+                                      action:@selector(menuOpenAccessibility) key:@""]
+                            symbol:@"lock.shield"];
+    perm.toolTip = @"تنظیمات سیستم، بخش Accessibility: بی این اجازه، متن سر کرسر نوشته نمی‌شود";
 
     [menu addItem:NSMenuItem.separatorItem];
     [self icon:[self item:menu title:@"خروج" action:@selector(menuQuit) key:@"q"] symbol:@"power"];
@@ -669,7 +753,23 @@ int ZSelfTest(NSString *file, NSString *lang) {
 - (void)menuPauseToggle { [self sessionDo:@selector(pauseToggle)]; }
 - (void)menuCopyNow { [self sessionDo:@selector(copyNow)]; }
 - (void)menuInsertHere { [self sessionDo:@selector(insertHere)]; }
+- (void)menuTrash { [self sessionDo:@selector(dropPending)]; }
 - (void)menuCheatSheet { [ZCheatSheet toggle]; }
+- (void)menuModeCollect { [self setMode:ZModeCollect]; }
+- (void)menuModeCursor { [self setMode:ZModeCursor]; }
+
+// حالت از دو در عوض می‌شود و باید یک رفتار داشته باشد. سشن باز باشد، از راهِ خودِ
+// سشن می‌رویم تا پنل و نقطه همان لحظه جابه‌جا شوند و صدا و فیدبکش هم بیاید؛ نباشد،
+// فقط تنظیم عوض می‌شود و سشن بعدی با آن بالا می‌آید. چون حالت‌ها دقیقا دوتا هستند،
+// «رفتن به آن یکی» همان toggle است.
+- (void)setMode:(ZMode)m {
+    if (ZSettings.shared.mode == m) return;
+    if (_session) {
+        [self sessionDo:@selector(toggleMode)];
+        return;
+    }
+    ZSettings.shared.mode = m;
+}
 // سه راه دسترسی، یک پنل و یک صف: منوبار، Command راست + F، و دکمه‌ی نوار پنل
 - (void)openBatchPanel { [ZBatchPanel.shared show]; }
 - (void)menuBatch { [self openBatchPanel]; }

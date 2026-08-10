@@ -53,6 +53,10 @@ typedef NS_ENUM(NSInteger, ZMode) {
     ZModeCursor = 2,     // بی‌پنل، فقط یک نقطه کنار کرسر. متن سر پایان یک بار درج می‌شود
 };
 
+// نام حالت، یک بار. سشن آن را روی خط وضعیت فلش می‌کند و منو با همان دو ردیفِ
+// انتخابش را می‌سازد؛ دو رشته‌ی جدا یعنی روزی منو یک اسم بگوید و پنل اسمی دیگر.
+NSString *ZModeLabel(ZMode m);
+
 @interface ZSettings : NSObject
 + (instancetype)shared;
 @property (nonatomic, copy) NSString *lang;         // fa-IR | en-US

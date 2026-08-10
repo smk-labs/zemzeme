@@ -21,7 +21,7 @@ NSString *const ZStopHint = @"حرفت که تمام شد، یک بار Command 
 
 // نام حالت برای لاگ و برای فیدبک روی صفحه؛ دو جا، یک منبع
 static NSString *ZModeSlug(ZMode m) { return m == ZModeCursor ? @"cursor" : @"collect"; }
-static NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" : @"جمع در پنل"; }
+NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" : @"جمع در پنل"; }
 
 @implementation ZSession {
     ZPanel *_panel;

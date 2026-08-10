@@ -242,9 +242,12 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
         // دسته‌ی سوم مالِ **تاگل‌ها**ست، نه فقط پاس هوش مصنوعی: حساسیت میکروفن و
         // شنیدنِ دوزبانه هم تاگل‌اند و جایشان کنار همان است، نه لای تنظیم‌های لحظه‌ای.
         // هر سه هم وقتی روشن‌اند رنگ می‌گیرند، پس از روی نوار معلوم است چه چیزی فعال است.
+        // ترتیب داخل همین دسته: اول دو تاگلِ **شنیدن** (حساسیت، دوزبانه) و بعد تاگلِ
+        // **متن** (هوش مصنوعی). آخر بودنِ A تصادفی نیست: در منو کلید Gemini درست زیر
+        // همین ردیف می‌نشیند، و اگر A وسط می‌ماند آن کلید صفِ تاگل‌ها را می‌شکست.
         _bar = @[_btnClose, _btnPause, _btnCopy, _btnInsert, _btnTrash,
                  _btnLang, _btnMode, _btnFile, _btnHelp,
-                 _btnSens, _btnAI, _btnSecond];
+                 _btnSens, _btnSecond, _btnAI];
         _groupEnds = @[@4, @8];      // اندیس آخرین دکمه‌ی هر دسته
         _sep1 = [NSView new]; _sep1.wantsLayer = YES; [_effect addSubview:_sep1];
         _sep2 = [NSView new]; _sep2.wantsLayer = YES; [_effect addSubview:_sep2];
