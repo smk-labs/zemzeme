@@ -50,6 +50,17 @@ static NSString *ZGThinking(void) {
     NSString *t = NSProcessInfo.processInfo.environment[@"ZEMZEME_FINAL_THINKING"];
     return t.length ? t : @"low";
 }
+
+// کفِ شمارشِ کلمه: خروجیِ کوتاه‌تر از این نسبتِ ورودی رد می‌شود. تورِ ایمنی است، ولی
+// **تورِ ایمنی هم می‌تواند خودش قاتل باشد** و یک بار همین شد: پرامپت‌هایی که اجازه‌ی
+// حذفِ زائدِ گفتار می‌دادند، خروجیِ درست تولید می‌کردند و همین کف بی‌صدا دورشان
+// می‌ریخت، پس هر سه واریانتِ خوب «جواب ناقص بود» می‌گرفتند. عدد از اندازه‌گیری
+// می‌آید (tools/aipass_ab.sh)، و این متغیر محیطی برای همان اندازه‌گیری است: با صفر
+// تور برداشته می‌شود تا بشود دید چه چیزی دور ریخته می‌شد.
+static double ZGMinWordRatio(void) {
+    NSString *v = NSProcessInfo.processInfo.environment[@"ZEMZEME_FINAL_MINWORDS"];
+    return v.length ? v.doubleValue : 0.55;
+}
 #define kGTimeout 300.0
 // سقفِ کلیدسنج، و عددش **اندازه‌گیری است نه سلیقه**. اول ۱۲ ثانیه بود و غلط بود: پشتِ
 // VPN همین اندپوینت برای یک متنِ کوچک ۱۹ ثانیه گرفت، پس کلیدسنج سر ۱۲ می‌بُرید و
@@ -862,12 +873,20 @@ static NSUInteger ZWordCount(NSString *s) {
                 NSUInteger outWords = ZWordCount(result);
                 if (!result.length) {
                     err = aerr ?: @"جوابی نیامد";
-                } else if (inWords > 0 && (double)outWords < (double)inWords * 0.7) {
+                } else if (inWords > 0 && (double)outWords < (double)inWords * ZGMinWordRatio()) {
                     // تنها تورِ ایمنی: بازنویسیِ مولد می‌تواند بی‌سروصدا یک جمله را
                     // ببلعد. متنِ خامِ فراخوان همیشه فال‌بکِ امن است، پس خروجیِ
                     // به‌وضوح کوتاه‌تر رد می‌شود.
-                    ZLog(@"final: %@ متن را کوتاه کرد (ورودی %lu کلمه، خروجی %lu کلمه)",
-                         promptName, (unsigned long)inWords, (unsigned long)outWords);
+                    //
+                    // و **خودِ متنِ ردشده هم لاگ می‌شود**. تا امروز نمی‌شد و همین
+                    // پنهانش کرد: سه پرامپتِ درست پشت این تور مردند و تنها چیزی که
+                    // دیده می‌شد یک «جواب ناقص بود» بی‌مدرک بود. چیزی که دور می‌ریزیم
+                    // باید قابل دیدن باشد، وگرنه تور را نمی‌شود تنظیم کرد.
+                    ZLog(@"final: %@ متن را کوتاه کرد (ورودی %lu کلمه، خروجی %lu کلمه، "
+                          "نسبت %.0f٪، کف %.0f٪)، ردشده: «%@»",
+                         promptName, (unsigned long)inWords, (unsigned long)outWords,
+                         100.0 * outWords / inWords, 100.0 * ZGMinWordRatio(),
+                         [result substringToIndex:MIN((NSUInteger)200, result.length)]);
                     err = @"جواب ناقص بود، پس رد شد";
                 } else {
                     out = result;
