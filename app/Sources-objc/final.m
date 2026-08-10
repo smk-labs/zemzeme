@@ -31,12 +31,24 @@ static NSString *ZGModel(void) {
     return m.length ? m : @"gemini-3.6-flash";
 }
 
-// مقادیر مجاز: minimal، low، high. `none` و `off` خطای ۴۰۰ می‌دهند. minimal صفر توکن
-// فکر می‌دهد و همان چیزی است که می‌خواهیم: توکن فکر مثل خروجی پول می‌گیرد و در
-// اندازه‌گیری بیشترِ هزینه همان بود (۶۱۰۰ در برابر ۱۶۵۴).
+// مقادیر مجاز: minimal، low، high. `none` و `off` خطای ۴۰۰ می‌دهند.
+//
+// پیش‌فرض از minimal به **low** آمد، و دلیلش یک خرابیِ دیده‌شده است نه سلیقه: کارِ این
+// پاس فقط فرمتینگ نیست، یک **قضاوت** است. باید تشخیص بدهد کدام کلمه‌ها حرفِ گوینده‌اند
+// و کدام‌ها داربستی که با صدا گفته («بولت اول»، «شماره دو»). با minimal مدل به
+// خوانشِ تحت‌اللفظی می‌افتد: داربست را هم متن حساب می‌کند، نگهش می‌دارد، و چون از او
+// فرمتینگ خواسته‌ایم تزئینش هم می‌کند. خروجی‌اش شد `* **بولت اول:** …`.
+//
+// هزینه‌اش صریح است (توکن فکر مثل خروجی پول می‌گیرد) و بودجه‌ی زمانی‌اش هم صریح:
+// ۵ تا ۷ ثانیه سقفِ قابل‌قبول است. اگر low از آن رد شد، این عدد باید برگردد نه اینکه
+// کاربر منتظر بماند.
+//
+// و یک باگِ جا افتاده همین‌جا بود: مسیرِ واقعیِ پاس این تابع را **صدا نمی‌زد** و
+// `minimal` را هاردکد کرده بود، پس این متغیر محیطی فقط روی کلیدسنج اثر داشت و شیر
+// اطمینان عملا بسته بود.
 static NSString *ZGThinking(void) {
     NSString *t = NSProcessInfo.processInfo.environment[@"ZEMZEME_FINAL_THINKING"];
-    return t.length ? t : @"minimal";
+    return t.length ? t : @"low";
 }
 #define kGTimeout 300.0
 // سقفِ کلیدسنج، و عددش **اندازه‌گیری است نه سلیقه**. اول ۱۲ ثانیه بود و غلط بود: پشتِ
@@ -845,7 +857,7 @@ static NSUInteger ZWordCount(NSString *s) {
                 NSMutableDictionary *usage = [NSMutableDictionary dictionary];
                 NSString *aerr = nil;
                 NSString *result = [self askText:sys parts:parts label:promptName
-                                        thinking:@"minimal" usage:usage error:&aerr];
+                                        thinking:ZGThinking() usage:usage error:&aerr];
                 NSUInteger inWords = ZWordCount(guardText);
                 NSUInteger outWords = ZWordCount(result);
                 if (!result.length) {
