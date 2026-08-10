@@ -981,7 +981,9 @@ int ZSelfTest(NSString *file, NSString *lang) {
 - (void)toggleAIPass {
     BOOL on = !ZSettings.shared.finalPassEnabled;
     ZSettings.shared.finalPassEnabled = on;
-    if (on) [ZFinalPass.shared prefetchKey];
+    // با پنجره، و عمدا همین‌جا: کاربر تازه خودش این فیچر را خواسته، پس اگر کی‌چین
+    // اجازه می‌خواهد الان وقتش است، نه سرِ پایانِ دیکته که فوکوس را وسط کار ببرد.
+    if (on) [ZFinalPass.shared warmKeyAllowingUI];
     [_panel flash:on ? @"تمیز کردن متن روشن شد؛ سر پایان انجام می‌شود"
                      : @"تمیز کردن متن خاموش شد"];
     ZPlay(ZSoundMode);

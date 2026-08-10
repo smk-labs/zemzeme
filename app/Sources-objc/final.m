@@ -102,6 +102,7 @@ typedef NS_ENUM(NSInteger, ZKeyVerdict) {
     BOOL _keyChecked;    // یک بار پرسیده شد؛ «نبود» هم جواب است و دوباره پرسیده نمی‌شود
     BOOL _keyBlocked;    // پرسشِ بی‌پنجره خورد به ACL: کلید شاید هست، ولی اجازه‌اش نه
     BOOL _noUITried;     // پرسشِ بی‌پنجره یک بار انجام شد؛ تکرارش جوابِ تازه نمی‌دهد
+    BOOL _uiTried;       // پرسشِ **با پنجره** یک بار انجام شد؛ دومی فقط یک پنجره‌ی تکراری است
     NSLock *_keyLock;    // فقط کلید
     // ...و این یکی فقط دور خودِ *پرسش*. جدا از `_keyLock` و عمدا: آن قفل نباید در طول
     // یک پرسشِ چندثانیه‌ای گرفته بماند.
@@ -251,9 +252,17 @@ static NSString *ZKeyFromSecurityTool(void) {
     [_keyLock lock];
     NSString *k = _key;
     BOOL checked = _keyChecked;
-    BOOL noUIDone = _noUITried;
+    BOOL noUIDone = _noUITried, uiDone = _uiTried;
     [_keyLock unlock];
     if (k.length || checked) return k.length ? k : nil;
+    // **حداکثر یک پنجره‌ی کی‌چین در هر اجرای اپ.** بی این خط، پرسشِ با پنجره سر هر
+    // سشن از نو می‌رفت: از وقتی «نشد بخوانم» دیگر مثل «نبود» بایگانی نمی‌شود،
+    // `_keyChecked` در حالتِ قفل هیچ‌وقت YES نمی‌شود، پس هر پایانِ دیکته یک پنجره‌ی
+    // تازه بالا می‌آورد. کاربر همین را دید: «هر بار که حرکتی می‌زنم اجازه می‌خواهد».
+    //
+    // یک بار پرسیده شد و نشد، تمام. راهِ کاربر باز است: «کلید Gemini…» در منو، که
+    // کلید را مستقیم در حافظه می‌نشاند و اصلا از کی‌چین نمی‌پرسد.
+    if (allowUI && uiDone) return nil;
     // پرسشِ بی‌پنجره **یک بار**، و بس. حالا که «نشد بخوانم» دیگر مثل «نبود» بایگانی
     // نمی‌شود، `_keyChecked` در حالتِ قفل هیچ‌وقت YES نمی‌شود؛ و `hasKey` هر بار که
     // جواب نداشته باشد یک prefetch می‌اندازد، و خودش سر هر رندرِ پنل صدا زده می‌شود.
@@ -281,7 +290,8 @@ static NSString *ZKeyFromSecurityTool(void) {
     // ری‌استارت بعدی خاموش می‌ماند با اینکه کلید سر جایش است.
     _keyChecked = k.length || !blocked;
     _keyBlocked = blocked;
-    if (!allowUI) _noUITried = YES;
+    if (allowUI) _uiTried = YES;
+    else _noUITried = YES;
     if (k.length) _key = [k copy];
     [_keyLock unlock];
     [_fetchLock unlock];
@@ -293,6 +303,17 @@ static NSString *ZKeyFromSecurityTool(void) {
 // بایستانند پای رمز کی‌چین.
 - (void)prefetchKey {
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{ [self keyAllowingUI:NO]; });
+}
+
+// همان پرسش، ولی **با اجازه‌ی پنجره** و عمدا در یک لحظه‌ی آرام. تنها فراخوانش جایی است
+// که کاربر تازه «تمیز کردن متن» را روشن کرده، یعنی همین حالا خودش این فیچر را خواسته.
+//
+// چرا لازم است: پیش از این، تنها مسیرِ با-پنجره داخل خودِ پاس بود، یعنی پنجره‌ی رمزِ
+// کی‌چین دقیقا سرِ **پایان دیکته** بالا می‌آمد؛ بدترین لحظه‌ی ممکن، چون فوکوس را وسط
+// تحویلِ متن می‌برد. حالا اگر پرسشی لازم باشد، همان لحظه‌ی زدنِ تاگل پرسیده می‌شود و
+// جوابش تا آخرِ اجرای اپ در حافظه می‌ماند، پس دیکته هیچ‌وقت پنجره نمی‌بیند.
+- (void)warmKeyAllowingUI {
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{ [self keyAllowingUI:YES]; });
 }
 
 // جوابِ کش‌شده، و روی نخ اصلی **هیچ‌وقت** پرسشِ تازه. سه فراخوان از نخ اصلی می‌آیند
@@ -492,7 +513,8 @@ static NSString *ZKeyFromSecurityTool(void) {
     s->_keyChecked = !still.length;
     s->_keyBlocked = still.length ? NO : blocked;
     s->_keyRejected = NO;
-    s->_noUITried = NO;      // پرونده‌ی تازه: پرسشِ بی‌پنجره دوباره حق دارد یک بار بپرسد
+    s->_noUITried = NO;      // پرونده‌ی تازه: هر دو پرسش دوباره حق دارند یک بار بروند
+    s->_uiTried = NO;
     [s->_keyLock unlock];
     if (still.length) {
         ZLog(@"final: کلید پاک نشد، هنوز در Keychain است");
