@@ -75,6 +75,100 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
 }
 @end
 
+// ---------- نشانِ «دارم کار می‌کنم» ----------
+// دو انتظار داریم و شکلشان باید فرق کند، چون کاربر باید بی‌خواندنِ خط وضعیت بفهمد
+// منتظر چیست: انتظارِ چندثانیه‌ایِ خودِ دیکته، یا انتظارِ تا ~۲۰ ثانیه‌ایِ یک تنظیمِ
+// اختیاری که می‌شود اصلا خاموشش کرد. یک چرخنده‌ی خاکستری برای هر دو، این را نمی‌گفت.
+//
+// پس هرکدام شکلِ کارِ خودش را دارد:
+//   صدا←متن:  سه میله‌ی صدا که بالا و پایین می‌روند، همان سه میله‌ی نشانِ خودِ زمزمه
+//   پاس هوش مصنوعی:  سه جرقه که پشت سر هم روشن و خاموش می‌شوند، همان آیکون دکمه‌ی A
+// و رنگ هم همین را دوباره می‌گوید: نارنجی (همان رنگِ «در حال کار» در ZStatusColor) و
+// آبی (همان رنگی که دکمه‌ی A روشن که باشد می‌گیرد).
+@interface ZBusyView : NSView
+@property (nonatomic) ZBusy mode;
+@end
+
+// یک جرقه‌ی چهارپر. قوس‌ها با کنترل‌پوینتِ نزدیک به مرکز کشیده می‌شوند، پس پرها
+// مقعرند و شکل واقعا «جرقه» درمی‌آید نه لوزی.
+static NSBezierPath *ZSparkPath(NSPoint c, CGFloat r) {
+    CGFloat k = r * 0.22;
+    NSBezierPath *p = [NSBezierPath bezierPath];
+    NSPoint tip[4] = {{c.x, c.y + r}, {c.x + r, c.y}, {c.x, c.y - r}, {c.x - r, c.y}};
+    NSPoint ctl[4] = {{c.x + k, c.y + k}, {c.x + k, c.y - k},
+                      {c.x - k, c.y - k}, {c.x - k, c.y + k}};
+    [p moveToPoint:tip[0]];
+    for (int i = 0; i < 4; i++) {
+        [p curveToPoint:tip[(i + 1) % 4] controlPoint1:ctl[i] controlPoint2:ctl[i]];
+    }
+    [p closePath];
+    return p;
+}
+
+@implementation ZBusyView {
+    NSTimer *_tick;
+    double _phase;
+}
+
+- (void)setMode:(ZBusy)m {
+    if (_mode == m) return;
+    _mode = m;
+    _phase = 0;
+    self.hidden = (m == ZBusyNone);
+    if (m == ZBusyNone) {
+        [_tick invalidate];
+        _tick = nil;
+        return;
+    }
+    if (_tick) return;
+    __weak typeof(self) ws = self;
+    _tick = [NSTimer timerWithTimeInterval:1.0 / 30 repeats:YES block:^(NSTimer *t) {
+        typeof(self) me = ws;
+        if (!me) return;
+        me->_phase += 0.13;
+        me.needsDisplay = YES;
+    }];
+    // common modes: وسط کشیدنِ پنل هم باید بچرخد، وگرنه نشان دقیقا وقتی می‌ایستد که
+    // کاربر دارد پنل را جابه‌جا می‌کند تا بهتر ببیندش.
+    [NSRunLoop.currentRunLoop addTimer:_tick forMode:NSRunLoopCommonModes];
+}
+
+- (void)drawRect:(NSRect)dirty {
+    NSRect b = self.bounds;
+    if (_mode == ZBusySpeech) {
+        // سه میله، با فازِ ۱۲۰ درجه‌ای. هیچ‌وقت به صفر نمی‌رسند: میله‌ی ناپدید یعنی
+        // نشانِ نصفه، و آدم فکر می‌کند چیزی گیر کرده.
+        [[NSColor.systemOrangeColor colorWithAlphaComponent:0.95] set];
+        CGFloat w = 3, gap = 2.5;
+        CGFloat x = (b.size.width - (3 * w + 2 * gap)) / 2;
+        for (int i = 0; i < 3; i++) {
+            double f = 0.5 + 0.5 * sin(_phase + i * 2.094);
+            CGFloat h = b.size.height * (0.34 + 0.66 * f);
+            NSRect r = NSMakeRect(x + i * (w + gap), (b.size.height - h) / 2, w, h);
+            [[NSBezierPath bezierPathWithRoundedRect:r xRadius:w / 2 yRadius:w / 2] fill];
+        }
+        return;
+    }
+    if (_mode != ZBusyPolish) return;
+    // سه جرقه با اندازه و فازِ متفاوت: یکی بزرگ و دو تای ریز، پس چشم یک «درخشش»
+    // می‌بیند نه سه چیزِ هم‌وزن که با هم چشمک بزنند.
+    CGFloat s = MIN(b.size.width, b.size.height);
+    struct { CGFloat x, y, r, ph; } sp[3] = {
+        {0.38, 0.42, 0.30, 0.0},
+        {0.76, 0.74, 0.17, 2.1},
+        {0.78, 0.24, 0.13, 4.2},
+    };
+    for (int i = 0; i < 3; i++) {
+        double f = 0.5 + 0.5 * sin(_phase * 1.6 + sp[i].ph);
+        CGFloat r = s * sp[i].r * (0.55 + 0.45 * f);
+        [[NSColor.systemBlueColor colorWithAlphaComponent:0.35 + 0.65 * f] set];
+        [ZSparkPath(NSMakePoint(b.origin.x + b.size.width * sp[i].x,
+                                b.origin.y + b.size.height * sp[i].y), r) fill];
+    }
+}
+
+@end
+
 // دکمه‌ی نوار، با حرفِ میان‌برش. حرف *داخلِ* خودِ دکمه می‌نشیند، نه در آرایه‌ای موازی.
 // چرا اینقدر تاکید: قبلا caps آرایه‌ی جدایی بود و چیدمان این دو را با اندیس جفت
 // می‌کرد، یعنی «ترتیبِ ساختن باید همان ترتیبِ نوار باشد» یک قاعده‌ی نانوشته بود که
@@ -101,7 +195,7 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
     ZBarButton *_btnLang, *_btnMode, *_btnFile, *_btnHelp;
     ZBarButton *_btnSens, *_btnAI, *_btnSecond, *_btnPreview;
     NSView *_sep1, *_sep2;   // جداکننده‌ی دسته‌ها
-    NSProgressIndicator *_spinner;    // جای نشان، وقتی کاری در جریان است
+    ZBusyView *_busy;                 // جای نشان، وقتی کاری در جریان است
     NSArray<ZBarButton *> *_bar;
     NSArray<NSNumber *> *_groupEnds;  // ترتیب دکمه‌ها؛ یک منبع حقیقت برای چیدمان و پهنای متن
     ZPanelModel *_lastModel;      // برای رندر دوباره بدون سشن (فیدبک لحظه‌ای)
@@ -156,14 +250,13 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
             NSMakeRect(kPW - 16 - 9 * ZMarkAspect, (kBarH - 9) / 2, 9 * ZMarkAspect, 9)];
         [_effect addSubview:_dot];
 
-        // چرخنده، دقیقا جای نشان. پاس نهایی ~۲۰ ثانیه طول می‌کشد و در آن فاصله هیچ
-        // متنی نمی‌آید؛ پنلِ بی‌حرکت در همان لحظه بدترین حالت این فیچر است.
-        _spinner = [[NSProgressIndicator alloc] initWithFrame:
-            NSMakeRect(kPW - 16 - 14, (kBarH - 14) / 2, 14, 14)];
-        _spinner.style = NSProgressIndicatorStyleSpinning;
-        _spinner.controlSize = NSControlSizeSmall;
-        _spinner.displayedWhenStopped = NO;
-        [_effect addSubview:_spinner];
+        // نشانِ کار، دقیقا جای نشانِ زمزمه. هر دو انتظار در همین یک نقطه می‌نشینند، پس
+        // چشم برای فهمیدنِ «الان منتظر چی هستم» جای تازه‌ای یاد نمی‌گیرد؛ فقط شکل و
+        // رنگش عوض می‌شود. پنلِ بی‌حرکت در آن ~۲۰ ثانیه بدترین حالت ممکن است.
+        _busy = [[ZBusyView alloc] initWithFrame:
+            NSMakeRect(kPW - 16 - 15, (kBarH - 15) / 2, 15, 15)];
+        _busy.hidden = YES;
+        [_effect addSubview:_busy];
 
         // دستگیره: یک خطِ کوچکِ وسطِ لبه‌ی بالا، و فقط همین. هیچ کاری نمی‌کند و لازم هم
         // نیست بکند، چون کشیدن از همه‌جای پنل کار می‌کند (hitTest بالای همین فایل).
@@ -196,10 +289,12 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
         _chipLabel.alignment = NSTextAlignmentCenter;
         [_chipBg addSubview:_chipLabel];
 
-        // سرنویسِ دُم خاکستری، و کوتاه‌ترین چیزی که باید بگوید: این متن **خام** است و
-        // متنِ درست سر پایان می‌آید. بی این یک خط، کاربر متنِ خام را نتیجه می‌بیند و
-        // فکر می‌کند رونویسی افتضاح است، در حالی که چیزی که تحویل می‌گیرد آن نیست.
-        _previewTag = [NSTextField labelWithString:@"پیش‌نمایش خام ﹒ متن درست سر پایان"];
+        // سرنویسِ دُم خاکستری. «خام» به‌تنهایی کافی نبود: کاربر غلط را می‌دید و باز
+        // نمی‌دانست تکلیفش چیست. پس این خط سه کار می‌کند و هر سه لازم‌اند: می‌گوید
+        // بتاست، می‌گوید **نگرانِ غلط‌هایش نباش**، و می‌گوید متنِ درست کِی می‌آید.
+        // بی جمله‌ی دوم، هر غلطِ استریم یک لحظه اعتماد کاربر به کلِ رونویسی را می‌خورد.
+        _previewTag = [NSTextField labelWithString:
+            @"پیش‌نمایش (بتا) ﹒ نگرانِ غلط‌هایش نباش، متن درست سر پایان می‌آید"];
         _previewTag.font = ZFont(10.5, NO);
         _previewTag.textColor = NSColor.tertiaryLabelColor;
         _previewTag.alignment = NSTextAlignmentRight;
@@ -349,7 +444,7 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
     // برای متن آزاد بماند. همین یک تصمیم بود که جمله‌ی «حرفت که تمام شد…» را از
     // بریده شدن نجات داد.
     _dot.frame = NSMakeRect(kPW - 16 - 9 * ZMarkAspect, btnY + 17, 9 * ZMarkAspect, 9);
-    _spinner.frame = NSMakeRect(kPW - 16 - 14, btnY + 15, 14, 14);
+    _busy.frame = NSMakeRect(kPW - 16 - 15, btnY + 14, 15, 15);
     if (!_chipBg.hidden) {
         NSRect f = _chipBg.frame;
         f.origin = NSMakePoint(_dot.frame.origin.x - f.size.width - 10, btnY + 13);
@@ -726,7 +821,8 @@ static NSString *ZClock(NSTimeInterval sec) {
     // «دکمه‌ای که کار نمی‌کند دروغ است». ولی در نسخه دو مکث یعنی سشن هنوز زنده است
     // و همه‌ی آن دکمه‌ها واقعا کار می‌کنند، پس آن استدلال اینجا اصلا صدق نمی‌کرد و
     // نتیجه‌اش نواری بود که زیر دست کاربر نصف می‌شد. نوارِ ثابت، حافظه‌ی عضلانی.
-    _btnClose.toolTip = m.working ? @"متن دارد تمیز می‌شود؛ چند لحظه صبر کن"
+    _btnClose.toolTip = m.busy == ZBusyPolish ? @"متن دارد تمیز می‌شود؛ چند لحظه صبر کن"
+                      : m.busy == ZBusySpeech ? @"متن دارد می‌آید؛ چند لحظه صبر کن"
                       : m.review ? @"بستن (Esc)" : @"پایان دیکته و درج متن (Esc)";
     _btnTrash.toolTip = @"دور ریختن هرچه هنوز درج نشده، و صدای ضبط‌شده (D)";
     _btnInsert.hidden = NO;
@@ -753,7 +849,7 @@ static NSString *ZClock(NSTimeInterval sec) {
     // اولویت خط وضعیت: کاری در جریان (پاس نهایی…) از همه مهم‌تر، بعد فیدبک لحظه‌ای
     // دکمه (کپی شد، زبان عوض شد…)، وگرنه وضعیت ساده. نسخه دو هیچ متن میانی‌ای ندارد
     // که با این‌ها رقابت کند؛ همین یک خط کوتاه همیشه کافی است.
-    if (m.working && m.workingMsg.length) {
+    if (m.busy != ZBusyNone && m.workingMsg.length) {
         // کاری در جریان (پاس نهایی): پیام مرحله بر همه‌چیز مقدم است، چون تنها خبرِ
         // زنده‌ای است که در آن بیست ثانیه وجود دارد.
         _text.stringValue = m.workingMsg;
@@ -800,9 +896,10 @@ static NSString *ZClock(NSTimeInterval sec) {
 
     // نشان و چرخنده یک جا می‌نشینند و هیچ‌وقت هر دو دیده نمی‌شوند: تا کاری در جریان
     // است چرخنده حرف می‌زند، بعدش نشان.
-    _dot.hidden = m.working;
-    if (m.working) [_spinner startAnimation:nil];
-    else [_spinner stopAnimation:nil];
+    // نشان و نشانِ کار یک جا می‌نشینند و هیچ‌وقت هر دو دیده نمی‌شوند: تا کاری در
+    // جریان است آن یکی حرف می‌زند، بعدش نشان.
+    _dot.hidden = m.busy != ZBusyNone;
+    _busy.mode = m.busy;
 
     [self resizeTo:editor ? kBarH + kEditorH : kBarH];
 }
@@ -873,8 +970,21 @@ static NSString *ZClock(NSTimeInterval sec) {
     preview.listening = YES;
     preview.status = [@"در حال گوش کردن ﹒ " stringByAppendingString:ZStopHint];
 
+    // دو انتظار، دو شکل. کنار هم عکس گرفته می‌شوند چون تنها معیارِ درستِ این طراحی
+    // همین است: از یک نگاه، بی‌خواندنِ خط وضعیت، معلوم باشد کدام کدام است.
+    ZPanelModel *speech = [ZPanelModel new];
+    speech.mode = ZModeCollect;
+    speech.busy = ZBusySpeech;
+    speech.workingMsg = @"یک لحظه، صدا دارد متن می‌شود…";
+
+    ZPanelModel *polish = [ZPanelModel new];
+    polish.mode = ZModeCollect;
+    polish.busy = ZBusyPolish;
+    polish.workingMsg = @"در حال تمیز کردن متن…";
+
     NSArray *states = @[@[@"listening", listening], @[@"paused", paused],
-                        @[@"error", error], @[@"review", review], @[@"preview", preview]];
+                        @[@"error", error], @[@"review", review], @[@"preview", preview],
+                        @[@"busy-speech", speech], @[@"busy-polish", polish]];
     [_panel orderFrontRegardless];
     for (NSArray *pair in states) {
         ZPanelModel *m = pair[1];
@@ -882,6 +992,9 @@ static NSString *ZClock(NSTimeInterval sec) {
         if (m.review) {
             [self setEditorText:@"متن آماده اینجا جمع می‌شود و با کیبورد خودت قابل ویرایش است. "
                                 @"تهش با دکمه‌ی درج، یکجا سر کرسر می‌نشیند."];
+        }
+        if (m == speech || m == polish) {
+            [self setEditorText:@"متنِ تا اینجا، و پنل منتظرِ بقیه‌اش."];
         }
         if (m == preview) {
             // عمدا **چند بار پشت سر هم**، همان‌طور که استریم می‌فرستد: هر بار کلِ متن

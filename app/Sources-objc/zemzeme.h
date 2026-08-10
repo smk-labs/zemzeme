@@ -504,7 +504,17 @@ typedef NS_ENUM(NSInteger, ZWriteProof) {
 @property (nonatomic) NSTimeInterval elapsed;       // دورِ فعلی، زنده؛ صفر یعنی نشان نده
 @property (nonatomic) NSTimeInterval elapsedTotal;  // روی هم، همه‌ی دورهای این سشن
 @property (nonatomic) NSInteger rounds;             // چند دور شنیدن؛ صفر یعنی هنوز دورِ اول
-@property (nonatomic) BOOL working;              // کاری در جریان است: چرخنده روشن
+// دو انتظار داریم و کاربر باید بی‌خواندن بفهمد کدام است، چون طولشان و دلیلشان فرق
+// دارد: یکی چند ثانیه است و مالِ خودِ دیکته، آن یکی تا ~۲۰ ثانیه و مالِ یک تنظیمِ
+// اختیاری. یک چرخنده‌ی خاکستری برای هر دو، فقط می‌گفت «یک چیزی دارد کار می‌کند» و
+// همین کافی نبود. پس هر کدام شکلِ کارِ خودش را دارد: میله‌های صدا، و جرقه.
+typedef NS_ENUM(NSInteger, ZBusy) {
+    ZBusyNone = 0,
+    ZBusySpeech,     // صدا دارد متن می‌شود (خط لوله در حال خالی شدن)
+    ZBusyPolish,     // پاس هوش مصنوعی روی متن
+};
+
+@property (nonatomic) ZBusy busy;                // کاری در جریان است، و کدام کار
 @property (nonatomic, copy) NSString *workingMsg;
 // سشن تمام شده ولی پنل با متن نهایی باز مانده تا خوانده و ویرایش شود. دکمه‌های
 // شنیدن می‌روند، دکمه‌های متن می‌مانند.

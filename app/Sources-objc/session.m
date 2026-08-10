@@ -49,7 +49,7 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
     NSInteger _round;                // چندمین دورِ شنیدن در همین سشن
     BOOL _listening;
     BOOL _errorState;
-    BOOL _working;                   // پاس هوش مصنوعی در جریان
+    ZBusy _busy;                     // کاری در جریان: صدا←متن، یا پاس هوش مصنوعی
     BOOL _paused;                    // شنیدن ایستاده ولی سشن زنده است
     BOOL _closing;                   // این دور آخری است: تحویل بده و ببند
     BOOL _finished;
@@ -205,6 +205,10 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
 // متن آماده است. از اینجا به بعد دیگر صدایی در کار نیست، فقط متن.
 - (void)engineDidFinish:(NSString *)text second:(NSString *)second took:(NSTimeInterval)took {
     _listening = NO;
+    // انتظارِ صدا←متن تمام شد. اگر پاس هوش مصنوعی در کار باشد، چند خط پایین‌تر
+    // انتظارِ دومی با شکل و رنگِ خودش شروع می‌شود.
+    _busy = ZBusyNone;
+    _workingMsg = nil;
     _stopping = NO;    // دورِ بعد باید بتواند دوباره بایستد
     // **اضافه، نه جایگزین.** یک سشن می‌تواند چند دور شنیدن داشته باشد: تک‌تپ
     // می‌ایستد و تحویل می‌دهد، تک‌تپ بعدی دوباره راه می‌اندازد. اگر اینجا جایگزین
@@ -228,7 +232,7 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
     // پاس هوش مصنوعی، فقط روی متن و فقط اگر خودت خواسته باشی. هیچ‌وقت بلوکه‌کننده
     // نیست: نتیجه‌اش که نیامد، همین متن خام تحویل می‌شود.
     if (ZSettings.shared.finalPassEnabled && ZFinalPass.hasKey) {
-        _working = YES;
+        _busy = ZBusyPolish;
         _workingMsg = @"در حال تمیز کردن متن…";
         [self render];
         __weak typeof(self) ws = self;
@@ -236,7 +240,7 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
         void (^landed)(NSString *, NSString *) = ^(NSString *out, NSString *err) {
             __strong typeof(ws) s = ws;
             if (!s) return;
-            s->_working = NO;
+            s->_busy = ZBusyNone;
             s->_workingMsg = nil;
             if (out.length) {
                 s->_text = out;
@@ -286,6 +290,8 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
 // و درج همیشه فقط **متنِ تازه** را می‌برد (`_inserted`)، وگرنه دورِ دوم کلِ متن
 // را دوباره سر کرسر می‌ریخت.
 - (void)deliver {
+    _busy = ZBusyNone;
+    _workingMsg = nil;
     // اینجا و فقط اینجا خاکستری تمام می‌شود. تا این خط، متن هنوز «در حال آمدن» است:
     // اگر پاس هوش مصنوعی روشن باشد، deliver تا نشستنِ آن پاس اصلا صدا زده نمی‌شود، پس
     // دُم خاکستری دقیقا همان‌قدر می‌ماند که کار واقعا تمام نشده. رنگ یک معنی دارد و
@@ -534,7 +540,13 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
     // آنجا بود و در آن دو سه ثانیه‌ی فاصله، مجموع یک لحظه به عددِ دورِ قبل برمی‌گشت
     // و بعد می‌پرید جلو. عددی که جلوی چشم کاربر عقب برود، از نبودنش بدتر است.
     _secondsBefore += _engine.seconds;
-    _statusText = @"یک لحظه، متن دارد می‌آید…";
+    // از این لحظه تا رسیدنِ متن، پنل باید **حرکت** داشته باشد. قبلا فقط یک جمله بود و
+    // نشانِ بی‌حرکت، و آن چند ثانیه دقیقا شبیه گیر کردنِ اپ به نظر می‌رسید. حالا
+    // میله‌های صدا می‌گویند صدا دارد متن می‌شود، و شکلشان با جرقه‌های پاس هوش مصنوعی
+    // فرق دارد تا معلوم باشد منتظر کدام یکی هستیم.
+    _busy = ZBusySpeech;
+    _workingMsg = @"یک لحظه، صدا دارد متن می‌شود…";
+    _statusText = _workingMsg;
     _listening = NO;
     [self render];
     [_engine stop];    // متن از engineDidFinish: می‌آید
@@ -567,7 +579,7 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
     m.error = _errorState;
     m.lang = ZSettings.shared.lang;
     m.mode = _mode;
-    m.working = _working;
+    m.busy = _busy;
     m.workingMsg = _workingMsg;
     m.review = _paused;
     // دو عدد، چون دو سوال جداست: «الان چند ثانیه است که دارم حرف می‌زنم» و «رویِ
