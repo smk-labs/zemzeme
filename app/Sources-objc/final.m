@@ -40,8 +40,10 @@ static NSString *ZGThinking(void) {
 }
 #define kGTimeout 300.0
 // کلیدسنج سقفِ خودش را دارد و کوتاه: پشتش یک آدم ایستاده که تازه دکمه‌ی «ذخیره» را
-// زده. سه دقیقه چرخنده برای یک پینگ، یعنی کاربر فکر کند اپ گیر کرده.
-#define kGProbeTimeout 20.0
+// زده و تا جواب نیاید هیچ پنجره‌ای نمی‌بیند (شرحش سر saveKeyTested: در app.m: پنجره‌ی
+// انتظار حق ندارد وجود داشته باشد). سه دقیقه چرخنده برای یک پینگ، یعنی کاربر فکر کند
+// اپ گیر کرده. در عمل ~۰٫۷ ثانیه است؛ این عدد فقط سقفِ روزِ بد است.
+#define kGProbeTimeout 12.0
 
 // ---------- کلیدسنج: یک درخواست عمدا کوچک، پیش از ذخیره ----------
 // تا امروز نبود و هزینه‌اش را کاربر داد: چیزی که کلید نبود (۵۷۶ نویسه، بی هیچ شباهتی
@@ -147,6 +149,13 @@ static NSString *ZKeyFromKeychain(BOOL allowUI, BOOL *blocked) {
     return nil;
 }
 
+// سقفِ این یکی، چون **هر انتظاری باید سقف داشته باشد**. `security` می‌تواند سر یک
+// آیتمِ ACL‌دار پنجره‌ی رمز کی‌چین بالا بیاورد و آن پنجره ممکن است هیچ‌وقت دیده نشود
+// (پشت مودال، یا در اجرای بی‌رابط). آن‌وقت readDataToEndOfFile و waitUntilExit **ابدی**
+// می‌شدند و کلِ مسیر کلید روی یک نخ پس‌زمینه می‌خشکید، بی هیچ خط لاگی. نبودنِ سقف،
+// خودش یک باگ است، حتی اگر امروز کسی به آن نخورد.
+#define kZSecurityToolTimeout 5.0
+
 static NSString *ZKeyFromSecurityTool(void) {
     NSTask *t = [NSTask new];
     t.executableURL = [NSURL fileURLWithPath:@"/usr/bin/security"];
@@ -159,8 +168,24 @@ static NSString *ZKeyFromSecurityTool(void) {
         ZLog(@"final: ابزار security اجرا نشد: %@", e.localizedDescription ?: @"?");
         return nil;
     }
-    NSData *d = [p.fileHandleForReading readDataToEndOfFile];
-    [t waitUntilExit];
+    // خواندن روی نخ دیگر و انتظار با سقف: خودِ خواندن هم می‌تواند بلوکه بماند، پس
+    // سقف گذاشتن فقط روی waitUntilExit کافی نیست.
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    __block NSData *out = nil;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        out = [p.fileHandleForReading readDataToEndOfFile];
+        dispatch_semaphore_signal(sem);
+    });
+    if (dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW,
+                                (int64_t)(kZSecurityToolTimeout * NSEC_PER_SEC)))) {
+        // سقف خورد: پروسه را بکش تا نخِ خواننده هم آزاد شود (EOF می‌گیرد)، و برگرد.
+        // «نمی‌دانم» جوابِ درستی است؛ گیر کردن نه.
+        ZLog(@"final: ابزار security در %.0f ثانیه جواب نداد، کشته شد", kZSecurityToolTimeout);
+        [t terminate];
+        return nil;
+    }
+    [t waitUntilExit];    // خروجی‌اش آمده، پس این آنی است
+    NSData *d = out;
     if (t.terminationStatus != 0 || !d.length) {
         ZLog(@"final: ابزار security کلید نداد (exit %d)", t.terminationStatus);
         return nil;

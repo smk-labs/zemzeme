@@ -101,6 +101,7 @@ int ZSelfTest(NSString *file, NSString *lang) {
     BOOL _axPrompted;                // پنجره درخواست اکسسبیلیتی فقط یک بار در هر اجرا
     BOOL _launched;                  // applicationDidFinishLaunching تمام شد و پنل هست
     NSString *_pendingURL;           // آدرسی که پیش از آن رسید و منتظر مانده
+    BOOL _keyCheckBusy;              // کلیدسنج در جریان است؛ دو بار زدن دو تماس نسازد
 }
 
 - (void)applicationWillFinishLaunching:(NSNotification *)n {
@@ -848,46 +849,58 @@ int ZSelfTest(NSString *file, NSString *lang) {
     }
 }
 
-// ذخیره‌ی کلید، با تست. دو قاعده اینجا با هم دعوا دارند و هر دو باید نگه داشته شوند:
-// تست یک درخواست شبکه است (پس نه روی نخ اصلی، چون تپ کیبورد روی همان نخ نشسته و یخ
-// زدنش یعنی Esc و Command راست از کار بیفتند)، و کاربر تازه «ذخیره» را زده (پس نباید
-// چند ثانیه هیچ اتفاقی نیفتد و بعد یکهو یک پنجره بپرد بالا).
+// ذخیره‌ی کلید، با تست. تست یک درخواست شبکه است، پس نه روی نخ اصلی: تپ کیبورد روی
+// همان نخ نشسته و یخ زدنش یعنی Esc و Command راست از کار بیفتند.
 //
-// پس کار می‌رود پس‌زمینه و نخ اصلی یک شیتِ «در حال بررسی…» را مودال نگه می‌دارد؛
-// جواب که رسید، abortModal همان لحظه می‌بنددش. ران‌لوپ در طول مودال می‌چرخد، پس تپ
-// زنده می‌ماند. کاربر اگر خودش شیت را بست، حلقه‌ی پایین منتظر جواب می‌ماند بی‌آنکه
-// نخ را بلوکه کند: کلید نصفه‌کاره ذخیره نمی‌شود.
+// **و هیچ مودالی برای انتظار.** نسخه‌ی اولش یک شیتِ «در حال بررسی…» را مودال نگه
+// می‌داشت و با یک بلاکِ صفِ اصلی می‌بستش، و همان اپ را قفل کرد. دلیلش این است:
+// menuSetKey همیشه از یک رویدادِ منو نمی‌آید؛ از داخلِ یک بلاکِ صفِ اصلی هم صدا زده
+// می‌شود (toggleAIPass → dispatch_after → offerKey → menuSetKey). صفِ اصلی سریال
+// است، پس تا آن بلاک تمام نشود هیچ بلاکِ دیگری رویش نوبت نمی‌گیرد، و چرخاندنِ دستیِ
+// ران‌لوپ هم بازش نمی‌کند: صفِ اصلی بازگشتی نیست. یعنی جوابِ کلیدسنج تا ابد پشتِ
+// همان انتظار می‌ماند و اپ روی «در حال بررسی…» می‌خشکد.
+//
+// پس این تابع **برمی‌گردد** و تمام. جواب در نوبتِ تازه‌ی خودش می‌آید (keySaved:).
+// هزینه‌اش یک ثانیه بی‌پنجره بودن است؛ در عوض هیچ‌وقت قفل نمی‌کند.
 - (void)saveKeyTested:(NSString *)key had:(BOOL)had {
-    NSAlert *wait = [NSAlert new];
-    wait.messageText = @"در حال بررسی کلید…";
-    wait.informativeText = @"یک درخواست کوچک به Gemini می‌رود تا معلوم شود کلید کار می‌کند. "
-                            "چند ثانیه بیشتر طول نمی‌کشد.";
-    NSProgressIndicator *spin = [[NSProgressIndicator alloc] initWithFrame:NSMakeRect(0, 0, 300, 20)];
-    spin.style = NSProgressIndicatorStyleBar;
-    spin.indeterminate = YES;
-    [spin startAnimation:nil];
-    wait.accessoryView = spin;
-    [wait addButtonWithTitle:@"صبر می‌کنم"];
-
-    __block BOOL landed = NO;
-    __block ZKeySave verdict = ZKeySaveKeychainNo;
-    __block NSString *msg = nil;
+    if (_keyCheckBusy) return;    // دو بار زدن، دو تماس و دو پنجره نمی‌سازد
+    _keyCheckBusy = YES;
+    // تنها فیدبکِ حینِ انتظار، و بی‌مودال. پنل که نباشد هم بی‌ضرر است: پیام بعدی
+    // همیشه می‌آید، و «همیشه» را نگهبانِ پایین تضمین می‌کند نه امید.
+    [_panel flash:@"در حال بررسی کلید…"];
+    ZLog(@"app: کلیدسنج شروع شد");
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         NSString *m = nil;
         ZKeySave v = [ZFinalPass saveKey:key message:&m];
-        dispatch_async(dispatch_get_main_queue(), ^{
-            verdict = v;
-            msg = m;
-            landed = YES;
-            if (NSApp.modalWindow == wait.window) [NSApp abortModal];
-        });
+        dispatch_async(dispatch_get_main_queue(), ^{ [self keySaved:v message:m had:had]; });
     });
-    [wait runModal];
-    while (!landed) {
-        [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode
-                               beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
-    }
+    // نگهبان، و **قاعده‌اش عمومی است**: کاری که به پس‌زمینه می‌رود باید سقف داشته
+    // باشد، وگرنه یک روز آنجا می‌خشکد و هیچ‌کس خبردار نمی‌شود. سقف‌های داخلی
+    // (کلیدسنج ۱۲ ثانیه، ابزار security ۵ ثانیه) روی مسیرهایی‌اند که می‌شناسیم؛ این
+    // یکی روی مسیری است که نمی‌شناسیم. مثال واقعی‌اش خودِ Keychain است: پاک کردنِ
+    // آیتمی که ACL‌اش این اپ را نمی‌شناسد می‌تواند پنجره‌ی رمز بالا بیاورد، و آن
+    // پنجره اگر دیده نشود، SecItemDelete بی‌سقف منتظر می‌ماند.
+    //
+    // پس بدترین حالت این است: کاربر بعد از این‌قدر ثانیه یک پیام روشن می‌گیرد. نه
+    // چرخنده‌ی ابدی، نه سکوت.
+    __weak typeof(self) ws = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(25 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        typeof(self) me = ws;
+        if (!me || !me->_keyCheckBusy) return;    // جواب رسیده بود؛ نگهبان کاری ندارد
+        ZLog(@"app: کلیدسنج در ۲۵ ثانیه جواب نداد؛ نگهبان پیام داد");
+        [me keySaved:ZKeySaveStuck message:
+            @"بررسی کلید جواب نداد. اگر مک پنجره‌ی رمز Keychain نشان داد جوابش را بده، "
+             "بعد دوباره امتحان کن. کلید تازه ذخیره نشد." had:had];
+    });
+}
 
+// جوابِ کلیدسنج، روی نخ اصلی و در بلاکِ **خودش**. جدا بودنش از saveKeyTested: تشریفات
+// نیست، همان چیزی است که قفلِ ابدی را از بین می‌برد: تا وقتی یک بلاک روی صف اصلی در
+// حال اجراست، هیچ بلاک دیگری روی آن صف نوبت نمی‌گیرد. پس مسیرِ انتظار باید **تمام
+// شود** و پیام در یک نوبتِ تازه بیاید.
+- (void)keySaved:(ZKeySave)verdict message:(NSString *)msg had:(BOOL)had {
+    _keyCheckBusy = NO;
     NSAlert *r = [NSAlert new];
     switch (verdict) {
         case ZKeySaveOK:
@@ -908,9 +921,13 @@ int ZSelfTest(NSString *file, NSString *lang) {
             r.alertStyle = NSAlertStyleWarning;
             r.messageText = @"ذخیره نشد";
             break;
+        case ZKeySaveStuck:
+            r.alertStyle = NSAlertStyleWarning;
+            r.messageText = @"بررسی کلید طول کشید و رهایش کردیم";
+            break;
     }
     r.informativeText = msg.length ? msg : @"خطای نامشخص";
-    if (verdict == ZKeySaveRejected || verdict == ZKeySaveBadInput) {
+    if (verdict == ZKeySaveRejected || verdict == ZKeySaveBadInput || verdict == ZKeySaveStuck) {
         [r addButtonWithTitle:@"دوباره امتحان می‌کنم"];
         [r addButtonWithTitle:@"بی‌خیال"];
         // درِ برگشت، همان‌جا: کسی که کلید را غلط چسبانده، الان دستش روی کلیدِ درست
