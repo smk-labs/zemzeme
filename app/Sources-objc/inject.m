@@ -15,16 +15,40 @@ CFAbsoluteTime ZLastForeignInputAt(void) { return gLastForeignInputAt; }
 
 // ---------- ZInjector ----------
 
-@implementation ZInjector {
-    dispatch_queue_t _q;
-    CFAbsoluteTime _lastWriteAt;   // مرجعِ مدرکِ سطح دو: از این لحظه به بعد کسی دست زد؟
+// **یک صف برای کلِ اپ، نه یکی به‌ازای هر شیء.** پایین‌تر نوشته شده «همه چیز روی یک
+// صف سریال تا دو پیست مسابقه‌ی کلیپ‌بورد نگیرند»، و تا امروز آن جمله وعده بود نه واقعیت:
+// صف در `init` ساخته می‌شد و هر درج یک `[ZInjector new]` تازه بود (session.m و
+// historyui.m). یعنی دو درج دو صفِ مستقل، و مستقل یعنی هم‌زمان.
+//
+// هم‌زمانی اینجا سه چیز را می‌شکند، هر سه دیده شده‌اند:
+//
+//   کلیپ‌بورد: هر پیست کلیپ‌بورد را می‌نویسد، ۶۰۰ میلی‌ثانیه صبر می‌کند و Cmd+V می‌زند.
+//   دو تا که هم‌زمان بروند، دومی وسطِ مهلتِ اولی کلیپ‌بورد را عوض می‌کند و Cmd+V اولی
+//   متنِ دومی را می‌گذارد. همان متنِ عوضی که کاربر گزارش کرد، و کپیِ پایانی هم هرکدام
+//   دیرتر برسد برنده می‌شود.
+//
+//   پنجره‌ی کلید: فلیک، پنجره را می‌گیرد و ۸۰ میلی‌ثانیه بعد پس می‌دهد. دو فلیکِ درهم
+//   یعنی رگباری از عوض شدنِ پنجره‌ی کلید، و کلاینت ریموت دسکتاپ سرِ **هر** بار کلِ
+//   کلیپ‌بورد را دوباره می‌خواند و به ویندوز می‌فرستد. مدیر کلیپ‌بورد هم هر بار
+//   می‌خواند. کلیپ‌بوردِ سنگین و چنددقیقه‌ای دقیقا همین است.
+//
+//   `ZNoAXWritePids`: یک NSMutableSet که کامنتش می‌گوید «فقط روی صف درج دست می‌خورد،
+//   پس قفل لازم ندارد». با دو صف، آن جمله غلط است و دستکاری هم‌زمانِ یک مجموعه‌ی
+//   ناایمن یعنی خرابیِ حافظه، نه فقط جوابِ غلط.
+//
+// یک صفِ ثابت هر سه را با هم می‌بندد، و همان چیزی است که کامنتِ اصلی از اول ادعا
+// می‌کرد. `dispatch_once` نه `init`: قرارداد به کلاس بند است، نه به شیء.
+static dispatch_queue_t ZInjectQueue(void) {
+    static dispatch_queue_t q;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        q = dispatch_queue_create("zemzeme.inject", DISPATCH_QUEUE_SERIAL);
+    });
+    return q;
 }
 
-- (instancetype)init {
-    if ((self = [super init])) {
-        _q = dispatch_queue_create("zemzeme.inject", DISPATCH_QUEUE_SERIAL);
-    }
-    return self;
+@implementation ZInjector {
+    CFAbsoluteTime _lastWriteAt;   // مرجعِ مدرکِ سطح دو: از این لحظه به بعد کسی دست زد؟
 }
 
 + (BOOL)accessibilityOK {
@@ -79,7 +103,7 @@ static void zPostUnicode(const UniChar *units, NSUInteger n) {
 }
 
 - (void)type:(NSString *)text delayMicros:(useconds_t)d done:(void (^)(void))done {
-    dispatch_async(_q, ^{
+    dispatch_async(ZInjectQueue(), ^{
         [self typeNow:text delayMicros:d leadIn:YES];
         self->_lastWriteAt = CFAbsoluteTimeGetCurrent();
         if (done) dispatch_async(dispatch_get_main_queue(), done);
@@ -120,12 +144,14 @@ static NSMutableSet<NSNumber *> *ZNoAXWritePids(void) {
     static NSMutableSet *s;
     static dispatch_once_t once;
     dispatch_once(&once, ^{ s = [NSMutableSet set]; });
-    return s;    // فقط روی صف درج دست می‌خورد، پس قفل لازم ندارد
+    // فقط روی صف درج دست می‌خورد، پس قفل لازم ندارد. و «صف درج» یعنی `ZInjectQueue`،
+    // یکی برای کلِ اپ: تا دیروز صف مالِ شیء بود و این جمله غلط بود.
+    return s;
 }
 
 - (void)insert:(NSString *)text pid:(pid_t)pid delayMicros:(useconds_t)d
  pasteIfRefused:(BOOL)pasteIfRefused done:(void (^)(BOOL viaAX))done {
-    dispatch_async(_q, ^{
+    dispatch_async(ZInjectQueue(), ^{
         // کشِ عنصرِ فوکوس‌دار را همین‌جا باطل کن. کش فقط می‌پرسد «این عنصر هنوز
         // زنده است؟»، نه «هنوز همان فوکوس‌دار است؟»، پس عنصری که یک بار اشتباه
         // resolve شده باشد (درختِ AX سرد بوده) تا آخر سشن زنده و غلط می‌ماند و
@@ -259,7 +285,7 @@ static BOOL zFrontIsRemoteClient(void) {
 // (باگ واقعی: برگرداندن کلیپ‌بورد قبلی وسط پیست بعدی می‌نشست و متن قدیمی پیست می‌شد؛
 // برای همین «برگرداندن» حذف شد. کپی پایانی Esc به هر حال کلیپ‌بورد را پر می‌کند.)
 - (void)paste:(NSString *)text delayMicros:(useconds_t)d {
-    dispatch_async(_q, ^{ [self pasteNow:text delayMicros:d]; });
+    dispatch_async(ZInjectQueue(), ^{ [self pasteNow:text delayMicros:d]; });
 }
 
 // روی صف درج. مسیرِ درجِ اتمیک از همین‌جا صدایش می‌زند، چون همان‌جا روی صف است و
@@ -285,7 +311,7 @@ static BOOL zFrontIsRemoteClient(void) {
     // (panel.m، `editorText`). ریشه آنجا بسته شد، ولی هر تحویلِ معوقی باید خودش هم
     // مصون باشد: قرارِ این تابع «متنِ حالا»ست، نه «متنِ آن‌وقت».
     text = [text copy];
-    dispatch_async(_q, ^{
+    dispatch_async(ZInjectQueue(), ^{
         dispatch_sync(dispatch_get_main_queue(), ^{
             [ZInjector copyFinal:text];
         });
