@@ -102,6 +102,23 @@ int ZSelfTest(NSString *file, NSString *lang) {
     BOOL _launched;                  // applicationDidFinishLaunching تمام شد و پنل هست
     NSString *_pendingURL;           // آدرسی که پیش از آن رسید و منتظر مانده
     BOOL _keyCheckBusy;              // کلیدسنج در جریان است؛ دو بار زدن دو تماس نسازد
+    NSTimer *_sweepTimer;            // جاروی روزانه‌ی تاریخچه و لاگ
+}
+
+// ---------- جاروی روزانه ----------
+// جاروی سشن‌ها فقط سر لانچ اجرا می‌شود، و برای صدا کافی است. برای تاریخچه نیست:
+// این اپ ماه‌ها بی‌خاموش شدن باز می‌ماند، و جارویی که فقط سرِ لانچ بزند روی چنین
+// دستگاهی هیچ‌وقت نمی‌زند.
+//
+// تایمر ساعتی است نه روزانه، چون خودِ ZHistorySweepIfDue شمارنده‌ی روز را نگه
+// می‌دارد: تایمرِ دقیقا ۲۴ ساعته به خوابِ دستگاه حساس است و یک بار جا انداختن یعنی
+// یک روزِ کامل رد شدن. ساعتی زدن و «امروز جارو شده؟» پرسیدن، هم ارزان است هم
+// خواب‌های طولانی را خودش جبران می‌کند.
+- (void)startDailySweep {
+    ZHistorySweepIfDue();
+    _sweepTimer = [NSTimer scheduledTimerWithTimeInterval:3600 repeats:YES block:^(NSTimer *t) {
+        ZHistorySweepIfDue();
+    }];
 }
 
 - (void)applicationWillFinishLaunching:(NSNotification *)n {
@@ -136,9 +153,26 @@ int ZSelfTest(NSString *file, NSString *lang) {
         [_panel makeShots:dir];
         [ZCheatSheet shot:dir];
         ZMarkShot(dir);
-        // پنل رونویسی آخر می‌آید و خودش خروج را صدا می‌زند: عکس‌هایش پله‌پله و با
-        // فرصت رندر گرفته می‌شوند (جدول ویو-محور بی‌چرخیدن ران‌لوپ خالی درمی‌آید)
-        [ZBatchPanel.shared makeShots:dir then:^{ [NSApp terminate:nil]; }];
+        // دو پنجره‌ی جدول‌دار آخر می‌آیند و آخری خروج را صدا می‌زند: عکسشان پله‌پله و
+        // با فرصت رندر گرفته می‌شود (جدول ویو-محور بی‌چرخیدن ران‌لوپ خالی درمی‌آید)
+        [ZBatchPanel.shared makeShots:dir then:^{
+            [ZHistoryPanel.shared makeShots:dir then:^{ [NSApp terminate:nil]; }];
+        }];
+        return;
+    }
+
+    // خودآزمای پنجره‌ی تاریخچه. مثل --uishot پیش از گاردِ تک‌نمونه می‌آید: کارش را
+    // می‌کند و می‌رود، نه آیتم منوبار می‌سازد نه تپ کیبورد.
+    if ([NSProcessInfo.processInfo.arguments containsObject:@"--historycheck"]) {
+        ZRegisterFonts();
+        // نتیجه در app.log می‌نشیند نه فقط روی stderr: این آزمون باید از راه بسته‌ی
+        // نصب‌شده اجرا شود (اجازه‌ی دسترسی کمکی مالِ همان بسته است، نه هر باینریِ
+        // جدا)، و آن اجرا stderr خودش را جایی نشان نمی‌دهد.
+        [ZHistoryPanel.shared runCheck:^(int fails) {
+            ZLog(fails ? @"historycheck: %d ادعا شکست" : @"historycheck: درج و کپی درست کار کردند",
+                 fails);
+            exit(fails ? 1 : 0);
+        }];
         return;
     }
 
@@ -197,6 +231,11 @@ int ZSelfTest(NSString *file, NSString *lang) {
     // دکمه‌ی «رونویسی فایل» روی نوار پنل شناور: سومین راه دسترسی. اینجا ست می‌شود نه
     // در ZSession، چون به سشن ربطی ندارد و باید حتی بین دو سشن هم زنده باشد.
     _panel.onFilePanel = ^{ [ws openBatchPanel]; };
+    // T: تاریخچه. مثل F تاگل است و مثل F بی‌سشن هم کار می‌کند ــ و اینجا این نکته
+    // مهم‌تر است: کسی که دنبال متنِ دیکته‌ی نیم‌ساعت پیش می‌گردد، همان لحظه سشنی
+    // ندارد که از داخلش بازش کند.
+    _hotkeys.onHistory = ^{ [ZHistoryPanel.shared toggle]; };
+    _panel.onHistory = ^{ [ZHistoryPanel.shared toggle]; };
     // راهنما از خود نوار هم باز می‌شود. در نسخه یک اختیاری بود چون کاربر لازم نبود
     // چیزی بداند؛ حالا باید بداند تک‌تپ یعنی پایان، پس کارت باید از خودِ پنل پیدا شود.
     _panel.onHelp = ^{ [ZCheatSheet toggle]; };
@@ -245,6 +284,7 @@ int ZSelfTest(NSString *file, NSString *lang) {
     }
     // سشن‌های قدیمی‌تر از هفت روز همین‌جا و بی‌صدا جارو می‌شوند
     ZSweepOldSessions();
+    [self startDailySweep];
     ZLog(@"app: launched res=%@ data=%@ ax=%d", ZRes().path, ZSupport().path,
          [ZInjector accessibilityOK]);
 
@@ -390,6 +430,8 @@ int ZSelfTest(NSString *file, NSString *lang) {
         [self sessionDo:@selector(dropPending)];
     } else if ([url isEqualToString:@"zemzeme://files"]) {
         [self openBatchPanel];
+    } else if ([url isEqualToString:@"zemzeme://history"]) {
+        [ZHistoryPanel.shared toggle];
     } else if ([url isEqualToString:@"zemzeme://keys"]) {
         [ZCheatSheet toggle];
     } else if ([url isEqualToString:@"zemzeme://quit"]) {
@@ -563,8 +605,8 @@ int ZSelfTest(NSString *file, NSString *lang) {
     modeItem.submenu = modeMenu;
     [menu addItem:modeItem];
 
-    // رونویسی فایل و راهنما: دو ابزارِ همیشه‌فعال، دقیقا مثل جایشان روی نوار (F و H).
-    // به سشن ربطی ندارند و وسط دیکته هم باز می‌شوند.
+    // رونویسی فایل و تاریخچه و راهنما: سه ابزارِ همیشه‌فعال، دقیقا مثل جایشان روی
+    // نوار (F و T و H). به سشن ربطی ندارند و وسط دیکته هم باز می‌شوند.
     NSMenuItem *batch = [self icon:[self item:menu title:@"رونویسی فایل…"
                                        action:@selector(menuBatch) key:@"f"]
                              symbol:@"arrow.up.doc"];
@@ -573,6 +615,13 @@ int ZSelfTest(NSString *file, NSString *lang) {
     // یک آیتم، یک کارت. زیرمنوی قبلی فهرستی از ردیف‌های غیرفعال بود: خاکستری، بی‌آیکون،
     // و متن فارسی و لاتینِ یک‌خطی جابه‌جا خوانده می‌شد. حالا کارت واقعی باز می‌شود
     // (ZCheatSheet) که کی‌کپ و آیکون دارد و کنار دستت باز می‌ماند تا کلیدها را تمرین کنی.
+    NSMenuItem *hist = [self icon:[self item:menu title:@"تاریخچه‌ی متن‌ها…"
+                                       action:@selector(menuHistory) key:@"t"]
+                            symbol:@"clock.arrow.circlepath"];
+    hist.toolTip = [NSString stringWithFormat:
+        @"هر متنی که تحویل گرفته‌ای، همان لحظه اینجا ذخیره می‌شود. بیست تای آخر با یک "
+         "دکمه درج یا کپی می‌شوند و بقیه %@ روز در فایل می‌مانند (Command راست + T)",
+        ZFaDigits(@(ZSettings.shared.historyKeepDays).stringValue)];
     NSMenuItem *keysItem = [self icon:[self item:menu title:@"راهنمای میان‌برها"
                                           action:@selector(menuCheatSheet) key:@"h"]
                                 symbol:@"questionmark.circle"];
@@ -787,6 +836,7 @@ int ZSelfTest(NSString *file, NSString *lang) {
 - (void)menuInsertHere { [self sessionDo:@selector(insertHere)]; }
 - (void)menuTrash { [self sessionDo:@selector(dropPending)]; }
 - (void)menuCheatSheet { [ZCheatSheet toggle]; }
+- (void)menuHistory { [ZHistoryPanel.shared show]; }
 - (void)menuModeCollect { [self setMode:ZModeCollect]; }
 - (void)menuModeCursor { [self setMode:ZModeCursor]; }
 

@@ -47,23 +47,56 @@ NSURL *ZSessionsDir(void) {
 
 // ---------- لاگ ----------
 
+NSString *const ZLogDayPrefix = @"--- ";
+
+static NSLock *zLogLock(void) {
+    static NSLock *l;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ l = [NSLock new]; });
+    return l;
+}
+
+static NSURL *zLogFile(void) {
+    return [ZSupport() URLByAppendingPathComponent:@"app.log"];
+}
+
+static NSDateFormatter *zLogDayFormatter(void) {
+    static NSDateFormatter *df;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        df = [NSDateFormatter new];
+        df.dateFormat = @"yyyy-MM-dd";
+    });
+    return df;
+}
+
 void ZLog(NSString *fmt, ...) {
     va_list args;
     va_start(args, fmt);
     NSString *msg = [[NSString alloc] initWithFormat:fmt arguments:args];
     va_end(args);
     static NSDateFormatter *df;
-    static NSLock *lock;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         df = [NSDateFormatter new];
         df.dateFormat = @"HH:mm:ss";
-        lock = [NSLock new];
     });
-    NSString *line = [NSString stringWithFormat:@"%@ %@\n", [df stringFromDate:NSDate.date], msg];
-    NSData *d = [line dataUsingEncoding:NSUTF8StringEncoding];
+    NSDate *now = NSDate.date;
+    NSString *line = [NSString stringWithFormat:@"%@ %@\n", [df stringFromDate:now], msg];
+
+    NSLock *lock = zLogLock();
     [lock lock];
-    NSString *path = [ZSupport() URLByAppendingPathComponent:@"app.log"].path;
+    // نشانه‌ی روز، سرِ هر روزِ تازه و سرِ هر اجرا. دو کار می‌کند: خواندنِ دستیِ لاگ
+    // معنی پیدا می‌کند (ساعتِ تنها نمی‌گوید مالِ کدام روز است)، و جاروی روزانه
+    // می‌فهمد از کجا ببرد. بی این، app.log تنها فایلی بود که هیچ‌وقت کوچک نمی‌شد.
+    static NSString *lastDay;
+    NSString *day = [zLogDayFormatter() stringFromDate:now];
+    if (![day isEqualToString:lastDay]) {
+        lastDay = day;
+        line = [NSString stringWithFormat:@"%@%@ ---\n%@", ZLogDayPrefix, day, line];
+    }
+    NSData *d = [line dataUsingEncoding:NSUTF8StringEncoding];
+    NSString *path = zLogFile().path;
     NSFileHandle *h = [NSFileHandle fileHandleForWritingAtPath:path];
     if (!h) {
         [NSFileManager.defaultManager createFileAtPath:path contents:d attributes:nil];
@@ -76,6 +109,40 @@ void ZLog(NSString *fmt, ...) {
     }
     [lock unlock];
     fprintf(stderr, "%s", line.UTF8String);
+}
+
+// جاروی لاگ. اینجاست و نه در history.m چون قفل مالِ نویسنده است: بریدنِ فایل بی این
+// قفل یعنی خطی که همان لحظه نوشته می‌شود روی نسخه‌ی رهاشده بنشیند و گم شود.
+//
+// از روی نشانه‌های روز می‌برد، نه از روی اندازه: اولین نشانه‌ای که از روزِ مرز
+// جوان‌تر باشد سرِ فایلِ تازه می‌شود. نشانه‌ای پیدا نشد یعنی نمی‌دانیم کجا را ببریم،
+// پس دست نمی‌زنیم؛ نبریدن همیشه از بریدنِ کورکورانه بهتر است.
+NSUInteger ZLogTrimBefore(NSDate *cutoff) {
+    if (!cutoff) return 0;
+    NSDate *cutDay = [NSCalendar.currentCalendar startOfDayForDate:cutoff];
+    NSLock *lock = zLogLock();
+    [lock lock];
+    NSUInteger cut = NSNotFound;
+    NSURL *log = zLogFile();
+    NSString *all = [NSString stringWithContentsOfURL:log encoding:NSUTF8StringEncoding error:nil];
+    NSArray<NSString *> *lines = all.length ? [all componentsSeparatedByString:@"\n"] : @[];
+    for (NSUInteger i = 0; i < lines.count; i++) {
+        NSString *ln = lines[i];
+        if (![ln hasPrefix:ZLogDayPrefix] || ln.length < ZLogDayPrefix.length + 10) continue;
+        NSDate *day = [zLogDayFormatter() dateFromString:
+                       [ln substringWithRange:NSMakeRange(ZLogDayPrefix.length, 10)]];
+        if (!day) continue;
+        // روزِ نشانه با **روزِ** مرز سنجیده می‌شود نه با ساعتش، وگرنه هر جارو نیمی
+        // از یک روز را می‌برد و خطوطِ صبحِ همان روز بی‌دلیل می‌رفتند.
+        if ([day compare:cutDay] != NSOrderedAscending) { cut = i; break; }
+    }
+    if (cut != NSNotFound && cut > 0) {
+        NSString *keep = [[lines subarrayWithRange:NSMakeRange(cut, lines.count - cut)]
+                          componentsJoinedByString:@"\n"];
+        [keep writeToURL:log atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    }
+    [lock unlock];
+    return (cut == NSNotFound) ? 0 : cut;
 }
 
 // ---------- صدای کارها ----------
@@ -243,6 +310,15 @@ NSFont *ZFont(CGFloat size, BOOL medium) {
 // همان را می‌گوید، رشته‌ی کلام را پاره می‌کند. پس انتخابِ صریح، نه پیش‌فرض.
 - (BOOL)previewStream { return [self.d boolForKey:@"previewStream"]; }
 - (void)setPreviewStream:(BOOL)v { [self.d setBool:v forKey:@"previewStream"]; }
+
+// نبودنِ کلید یعنی پیش‌فرض، نه صفر. صفر اینجا معنیِ خودش را دارد («هرگز جارو نکن»)،
+// پس اگر مثل بقیه‌ی عددها مستقیم خوانده می‌شد، هر نصبِ تازه بی‌صدا با جاروی خاموش
+// بالا می‌آمد و همان چیزی که این تنظیم برایش هست اتفاق نمی‌افتاد.
+- (NSInteger)historyKeepDays {
+    NSObject *o = [self.d objectForKey:@"historyKeepDays"];
+    return o ? [self.d integerForKey:@"historyKeepDays"] : kZHistoryKeepDays;
+}
+- (void)setHistoryKeepDays:(NSInteger)v { [self.d setInteger:v forKey:@"historyKeepDays"]; }
 
 - (BOOL)upstreamFLAC {
     NSObject *o = [self.d objectForKey:@"upstreamFLAC"];

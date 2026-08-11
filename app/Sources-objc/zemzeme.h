@@ -10,6 +10,13 @@ NSURL *ZRes(void);           // خواندنی‌های همراه اپ: پرا�
 NSURL *ZSupport(void);       // ~/Library/Application Support/Zemzeme: داده، لاگ، venv
 NSURL *ZSessionsDir(void);
 void ZLog(NSString *fmt, ...) NS_FORMAT_FUNCTION(1, 2);
+// خطوط لاگ فقط ساعت دارند، پس به‌تنهایی نمی‌شود گفت کدامشان مالِ کدام روزند. ZLog
+// سرِ هر روزِ تازه (و سرِ هر اجرا) یک خطِ نشانه با همین سرآیند می‌گذارد، و جاروی
+// روزانه از روی همان می‌برد. بی این نشانه، لاگ برای همیشه بزرگ می‌شد.
+extern NSString *const ZLogDayPrefix;                 // "--- " و بعدش yyyy-MM-dd
+// خطوطِ قدیمی‌تر از روزِ مرز را ببر. زیر همان قفلی که ZLog می‌نویسد، وگرنه یک خطِ
+// هم‌زمان روی فایلِ رهاشده می‌نشیند و گم می‌شود. برمی‌گرداند چند خط رفت.
+NSUInteger ZLogTrimBefore(NSDate *cutoff);
 
 // ---------- صدای کارها ----------
 // هر کار صدای خودش را دارد، پس بی‌نگاه کردن به پنل می‌فهمی چه شد. صداهای سیستمی
@@ -87,6 +94,10 @@ NSString *ZModeLabel(ZMode m);
 // می‌دهد، فقط زودتر دیده می‌شود. پیش‌فرض خاموش، چون خواندنِ حرفِ خود آدم در حالی که
 // دارد همان را می‌گوید، رشته‌ی کلام را پاره می‌کند.
 @property (nonatomic) BOOL previewStream;
+// تاریخچه و لاگ چند روز بمانند. پیش‌فرض شصت: بلند است که «آن متنِ هفته‌ی پیش» هنوز
+// پیدا شود، و کوتاه است که حرف‌های آدم تا ابد روی دیسک نمانند. صفر یعنی هرگز جارو
+// نکن، و آن هم انتخابِ صریحِ کاربر است نه پیش‌فرض.
+@property (nonatomic) NSInteger historyKeepDays;
 // روش درج برای یک اپ مشخص. Windows App همیشه پیست، بی‌تنظیم و بی‌استثنا؛ دلیلش در core.m
 - (ZInsertMode)insertModeForBundleId:(NSString *)bundleId;
 - (useconds_t)typeDelayMicros;
@@ -256,6 +267,58 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 
 // جاروی سشن‌های قدیمی‌تر از kZSessionKeepDays. سر لانچ و بی‌صدا.
 void ZSweepOldSessions(void);
+
+// ---------- تاریخچه‌ی متن‌های تحویل‌شده ----------
+// خانه‌ی خودِ اپ برای هر متنی که واقعا به دست کاربر رسیده. کلیپ‌بورد و درج هر دو
+// بیرون از دست ما هستند، و `sessions/<تاریخ>/text.txt` هفت‌روزه جارو می‌شود؛ این
+// یکی همان لحظه‌ی تحویل نوشته می‌شود و شصت روز می‌ماند. شکل و دلیلِ فرمت: history.m
+#define kZHistoryKeepDays 60
+#define kZHistoryPanelRows 20    // چند ردیف در پنل دیده می‌شود؛ بقیه در خودِ فایل
+
+extern NSString *const ZHistoryViaAuto;     // پایان یا مکثِ سشن
+extern NSString *const ZHistoryViaCopy;     // دکمه‌ی کپی
+extern NSString *const ZHistoryViaInsert;   // دکمه‌ی درج
+
+@interface ZHistoryEntry : NSObject
+@property (nonatomic, copy) NSString *text;
+@property (nonatomic, copy) NSString *sid;    // نام پوشه‌ی سشن؛ پلِ برگشت به صدا و متنِ خام
+@property (nonatomic, copy) NSString *via;
+@property (nonatomic, copy) NSString *app;    // اپی که متن قرار بود در آن بنشیند
+@property (nonatomic, strong) NSDate *at;
+@end
+
+NSURL *ZHistoryFile(void);    // ~/Library/Application Support/Zemzeme/history.jsonl
+// یک رکورد به ته فایل. هر تحویل یک عکسِ کامل از متنِ سشن است؛ خواننده با sid
+// جمعشان می‌کند و تازه‌ترین را نگه می‌دارد، پس فایل افزودنیِ خالص می‌ماند.
+void ZHistoryAppend(NSString *text, NSString *sid, NSString *via, NSString *app);
+// تازه‌ترین‌ها، نو به کهنه، یکی به ازای هر سشن.
+NSArray<ZHistoryEntry *> *ZHistoryRecent(NSUInteger max);
+// روزی یک بار، بی‌صدا: رکوردها و خطوط لاگِ قدیمی‌تر از historyKeepDays می‌روند.
+void ZHistorySweepIfDue(void);
+
+// همان سه تا، ولی روی یک فایلِ دلخواه. تنها مصرف‌کننده‌شان تست طلایی است
+// (tools/history_test.sh)، که باید روی فایل خودش کار کند نه روی تاریخچه‌ی کاربر.
+void ZHistoryAppendTo(NSURL *file, NSString *text, NSString *sid, NSString *via, NSString *app);
+NSArray<ZHistoryEntry *> *ZHistoryRecentIn(NSURL *file, NSUInteger max);
+NSUInteger ZHistorySweepFile(NSURL *file, NSDate *cutoff);
+
+// رکوردِ تازه نشست. پنجره‌ی بازِ تاریخچه با همین خودش را تازه می‌کند، وگرنه یک عکسِ
+// کهنه می‌ماند و کاربر فکر می‌کند دیکته‌اش ثبت نشده.
+extern NSString *const ZHistoryDidChangeNotification;
+
+// پنجره‌ی مرور: بیست متن آخر، هر ردیف با یک دکمه‌ی درج و یک دکمه‌ی کپی. عمدا
+// nonactivating است تا کرسرِ کاربر از جایش کنده نشود؛ دلیل کامل در historyui.m.
+@interface ZHistoryPanel : NSObject
++ (instancetype)shared;
+- (void)toggle;
+- (void)show;
+- (void)hide;
+- (BOOL)visible;
+- (void)makeShots:(NSString *)dir then:(void (^)(void))done;   // history.png برای بازبینی طراحی
+// zemzeme --historycheck: دکمه‌های واقعیِ ردیف اول را می‌زند و می‌سنجد چه روی
+// کلیپ‌بورد نشست. از بیرون نمی‌شود زد (اجازه‌ی دسترسی کمکی مالِ خودِ اپ است).
+- (void)runCheck:(void (^)(int fails))done;
+@end
 
 // zemzeme --livewav <file.wav> [--lang] [--speed] [--ref] | --livewav --table
 int ZLiveWavMain(NSArray<NSString *> *args);
@@ -539,6 +602,9 @@ static inline ZWritePath ZChooseWritePath(BOOL alwaysPaste, BOOL axAvailable, NS
 @property (nonatomic, copy) void (^onModeToggle)(void);     // E
 // F: پنل رونویسی فایل. تنها میان‌بری که بی‌سشن هم کار می‌کند، چون به سشن ربطی ندارد
 @property (nonatomic, copy) void (^onFilePanel)(void);      // F
+// T: پنجره‌ی تاریخچه. مثل F و H بی‌سشن هم کار می‌کند، و بیشترِ وقت‌ها دقیقا همان‌جا
+// لازم می‌شود: کسی که دنبال متنِ گم‌شده می‌گردد، سشنی ندارد که از داخلش بازش کند.
+@property (nonatomic, copy) void (^onHistory)(void);        // T
 @property (nonatomic, copy) void (^onSensToggle)(void);     // S
 // B: همین صدا را انگلیسی هم بشنو. مثل A بی‌سشن هم کار می‌کند، چون تنظیم است نه کارِ
 // سشن. «نگه داشتن صدا» عمدا میان‌بر ندارد: یک ترجیحِ یک‌باره است و جایش «پیشرفته».
@@ -661,6 +727,7 @@ int ZCaretProbeMain(NSArray<NSString *> *args);
 @property (nonatomic, copy) void (^onLangSwitch)(void); // چرخش زبان
 @property (nonatomic, copy) void (^onModeToggle)(void); // چرخش حالت: جمع ← کرسر
 @property (nonatomic, copy) void (^onFilePanel)(void);  // باز کردن پنل رونویسی فایل
+@property (nonatomic, copy) void (^onHistory)(void);    // باز کردن پنجره‌ی تاریخچه
 @property (nonatomic, copy) void (^onSensToggle)(void); // حساسیت بالای میکروفن
 // راهنما از خود نوار. در نسخه یک اختیاری بود چون کاربر لازم نبود چیزی بداند؛ حالا
 // باید بداند تک‌تپ یعنی پایان، پس کارت باید از خودِ پنل هم پیدا شود.

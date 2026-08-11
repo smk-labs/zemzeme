@@ -30,6 +30,10 @@ recognition.
 - **File transcription**: audio and video files (voice notes, meeting recordings,
   podcasts) to text, no key and no ffmpeg. Also usable from Claude Code through the
   plugin in `tools/claude-plugin/`.
+- **A history of every delivered transcript**, written the instant the text is
+  handed over, so neither the clipboard nor the insertion has to have worked for the
+  text to survive. Right Command + T opens the last 20, each with a one-click insert
+  and copy. The store is an append-only JSONL file you can read with `tail`.
 - **Optional AI cleanup** that sends **text only**, never audio, using your own free
   Gemini key. Off by default.
 - Works over Windows App remote desktop, where it always uses the clipboard route.
@@ -105,6 +109,10 @@ nothing lands in the repo, a `.env` file, or any log. No terminal needed.
   before you paste a key.
 - Session audio recording is off by default. When on, it stays on your disk for
   seven days and is then swept automatically.
+- Transcript history is on by default and kept for 60 days in `history.jsonl`, next
+  to everything else on your own disk. Change it with
+  `defaults write io.seyed.zemzeme historyKeepDays 30`; `0` means never sweep. The
+  same daily sweep also trims old lines out of `app.log`.
 - Everything is local, in `~/Library/Application Support/Zemzeme`. There is no
   Zemzeme server at all.
 

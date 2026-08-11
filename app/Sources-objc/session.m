@@ -345,6 +345,11 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
         NSString *edited = [_panel editorText];
         if (edited.length) all = edited;
     }
+    // خانه‌ی خودِ متن، و **پیش از** هر تحویلی. کلیپ‌بورد ممکن است دست مدیر کلیپ‌بورد
+    // نیفتد و درج ممکن است جای عوضی بنشیند؛ این تنها خطی است که برای ماندنِ متن
+    // لازم نیست هیچ‌کدامشان درست کار کرده باشند. سرِ هر مکث دوباره نوشته می‌شود و
+    // چون sid یکی است، همان یک ردیف تازه می‌شود نه ردیفِ تازه‌ای اضافه.
+    ZHistoryAppend(all, _sessionDir.lastPathComponent, ZHistoryViaAuto, _target.localizedName);
     [ZInjector copyFinal:all];
 
     // درج کِی: در حالت کرسر همیشه (پنلی نیست که متن را نشان بدهد)، و در حالت جمع
@@ -489,6 +494,9 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
         [_panel flash:@"هنوز متنی نیست"];
         return;
     }
+    // دکمه‌ی کپی هم یک تحویل است: متنی که کاربر همین حالا برداشت. و در حالت جمع
+    // ممکن است ویرایش‌شده باشد، یعنی چیزی که deliver نوشته بود دیگر همان نیست.
+    ZHistoryAppend(t, _sessionDir.lastPathComponent, ZHistoryViaCopy, _target.localizedName);
     [ZInjector copyFinal:t];
     ZPlay(ZSoundCopy);
     [_panel flash:@"کپی شد"];
@@ -500,6 +508,7 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
         [_panel flash:@"هنوز متنی نیست"];
         return;
     }
+    ZHistoryAppend(t, _sessionDir.lastPathComponent, ZHistoryViaInsert, _target.localizedName);
     [ZInjector copyFinal:t];
     [self injectAtCaret:t keep:t];
     _inserted = t.length;

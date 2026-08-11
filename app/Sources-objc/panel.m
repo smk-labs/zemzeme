@@ -36,7 +36,10 @@ NSColor *ZStatusColor(ZPanelModel *m) {
 // در حالت «جمع در پنل» یک ادیتور واقعی باز می‌شود: متن قطعی همان‌جا می‌نشیند،
 // قابل ویرایش با کیبورد خود کاربر، و تهش با یک دکمه در اپ مقصد درج می‌شود.
 
-static const CGFloat kPW = 500;
+// ۵۲۸ و نه ۵۰۰: دکمه‌ی تاریخچه که آمد، ردیف دکمه‌ها تا نزدیکِ نشان و ساعت می‌رسید.
+// یک گامِ دکمه پهن‌تر شد تا آن فاصله همان که بود بماند؛ بقیه‌ی چیدمان از همین عدد
+// حساب می‌شود، پس جای هیچ‌چیز دیگری دستی درست نشد.
+static const CGFloat kPW = 528;
 // دو ردیف، نه یکی. تا نسخه‌ی قبل خط وضعیت و یازده دکمه یک ردیف را شریک بودند و
 // نتیجه‌اش این شد که جمله‌ی «حرفت که تمام شد…» وسطش بریده می‌شد، یعنی دقیقا همان
 // جمله‌ای که تمام نسخه دو به آن بند است. حالا متن کل پهنا را دارد.
@@ -192,7 +195,7 @@ static NSBezierPath *ZSparkPath(NSPoint c, CGFloat r) {
     NSTextField *_chipLabel;
     NSTextField *_previewTag;     // سرنویسِ کوچکِ بالای ادیتور، فقط وقتی دُم خاکستری هست
     ZBarButton *_btnClose, *_btnPause, *_btnCopy, *_btnTrash, *_btnInsert;
-    ZBarButton *_btnLang, *_btnMode, *_btnFile, *_btnHelp;
+    ZBarButton *_btnLang, *_btnMode, *_btnFile, *_btnHistory, *_btnHelp;
     ZBarButton *_btnSens, *_btnAI, *_btnSecond, *_btnPreview;
     NSView *_sep1, *_sep2;   // جداکننده‌ی دسته‌ها
     ZBusyView *_busy;                 // جای نشان، وقتی کاری در جریان است
@@ -346,6 +349,12 @@ static NSBezierPath *ZSparkPath(NSPoint c, CGFloat r) {
         // در نسخه دو یک تک‌تپ Command راست یعنی پایان سشن، نه مکث؛ کاربر باید همین را
         // از جایی بداند وگرنه فکر می‌کند اپ گیر کرده. کارت راهنما تنها جایی است که
         // این را می‌گوید، پس باید از خودِ پنل هم در دسترس باشد، نه فقط از منوبار.
+        // تاریخچه: کنار «فایل» و «راهنما» می‌نشیند چون مثل آن دو به سشن ربطی ندارد
+        // و بی‌سشن هم باز می‌شود. اصلا بیشترِ وقت‌ها همان‌جا لازم می‌شود: کسی که
+        // متنش را گم کرده، دیگر سشنی ندارد.
+        _btnHistory = [self makeButton:@"clock.arrow.circlepath" key:@"T"
+                                   tip:@"تاریخچه: بیست متن آخر، با درج و کپی (Command راست + T)"
+                                action:@selector(historyTap)];
         _btnHelp = [self makeButton:@"questionmark.circle" key:@"H"
                                 tip:@"راهنمای میان‌برها (Command راست + H)"
                              action:@selector(helpTap)];
@@ -362,9 +371,9 @@ static NSBezierPath *ZSparkPath(NSPoint c, CGFloat r) {
         // **متن** (هوش مصنوعی). آخر بودنِ A تصادفی نیست: در منو کلید Gemini درست زیر
         // همین ردیف می‌نشیند، و اگر A وسط می‌ماند آن کلید صفِ تاگل‌ها را می‌شکست.
         _bar = @[_btnClose, _btnPause, _btnCopy, _btnInsert, _btnTrash,
-                 _btnLang, _btnMode, _btnFile, _btnHelp,
+                 _btnLang, _btnMode, _btnFile, _btnHistory, _btnHelp,
                  _btnSens, _btnSecond, _btnPreview, _btnAI];
-        _groupEnds = @[@4, @8];      // اندیس آخرین دکمه‌ی هر دسته
+        _groupEnds = @[@4, @9];      // اندیس آخرین دکمه‌ی هر دسته
         _sep1 = [NSView new]; _sep1.wantsLayer = YES; [_effect addSubview:_sep1];
         _sep2 = [NSView new]; _sep2.wantsLayer = YES; [_effect addSubview:_sep2];
 
@@ -943,6 +952,7 @@ static NSString *ZClock(NSTimeInterval sec) {
 - (void)modeTap { if (self.onModeToggle) self.onModeToggle(); }
 - (void)insertTap { if (self.onInsertAll) self.onInsertAll(); }
 - (void)fileTap { if (self.onFilePanel) self.onFilePanel(); }
+- (void)historyTap { if (self.onHistory) self.onHistory(); }
 - (void)sensTap { if (self.onSensToggle) self.onSensToggle(); }
 - (void)helpTap { if (self.onHelp) self.onHelp(); }
 - (void)aiTap { if (self.onAIToggle) self.onAIToggle(); }
