@@ -280,6 +280,11 @@ static BOOL zFrontIsRemoteClient(void) {
 
 // کپی پایانی پشت صف درج: هر پیست/تایپ معلق اول تمام می‌شود، بعد کلیپ‌بورد پر می‌شود
 - (void)copyFinalAfterPending:(NSString *)text {
+    // عکسِ لحظه‌ای، همین‌جا. این متن یک ثانیه بعد نوشته می‌شود و تا آن‌وقت صاحبش
+    // ممکن است عوضش کرده باشد؛ رشته‌ی زنده‌ی یک NSTextView دقیقا همین کار را کرد
+    // (panel.m، `editorText`). ریشه آنجا بسته شد، ولی هر تحویلِ معوقی باید خودش هم
+    // مصون باشد: قرارِ این تابع «متنِ حالا»ست، نه «متنِ آن‌وقت».
+    text = [text copy];
     dispatch_async(_q, ^{
         dispatch_sync(dispatch_get_main_queue(), ^{
             [ZInjector copyFinal:text];

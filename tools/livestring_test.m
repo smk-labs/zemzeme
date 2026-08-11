@@ -1,0 +1,73 @@
+// تستِ طلاییِ «رشته‌ی زنده». یک قاعده را می‌سنجد و همان قاعده دو بار متنِ کاربر را برد:
+//
+//   هیچ‌کس حق ندارد `NSTextView.string` را نگه دارد و بعدا بخواند.
+//
+// `NSTextView.string` عکسِ لحظه‌ای نیست؛ همان رشته‌ی زنده‌ی پشتِ NSTextStorage است. هر
+// خواننده‌ی معوقی محتوای *لحظه‌ی خواندن* را می‌گیرد، نه محتوای لحظه‌ی گرفتن.
+//
+// این دقیقا آنچه افتاد: در حالت جمع، متنِ تحویل از ادیتور خوانده می‌شد و کپیِ پایانیِ
+// کلیپ‌بورد پشتِ صفِ درج می‌نشست، یعنی حدود یک ثانیه بعد. تا آن لحظه Esc پنل را بسته و
+// `clearEditor` ادیتور را خالی کرده بود، پس کلیپ‌بورد به‌جای متن، خالی پر می‌شد. در
+// لاگ `کلیپ‌بورد پایانی، 0 نویسه` زیرِ یک درجِ ۱۴۹ نویسه‌ای نشسته بود و کسی ندیدش.
+//
+// چرا فقط در ریموت دسکتاپ به چشم آمد: آنجا و فقط آنجا مسیرِ پیست بلافاصله کپیِ اولِ
+// سالم را با نسخه‌ی transient می‌پوشاند، پس مدیر کلیپ‌بورد اصلا فرصت دیدنِ متن را
+// نداشت. بقیه‌ی اپ‌ها همان کپیِ اول را در تاریخچه نگه می‌داشتند و خالی شدنِ بعدی
+// بی‌صدا رد می‌شد. یعنی باگ همه‌جا بود و تنها یک جا دیده می‌شد.
+//
+// سه ادعا: رشته‌ی زنده واقعا زنده است (مکانیزم اثبات شود، نه فرض)، کپی مصون است، و
+// خودِ `editorText` امروز کپی می‌دهد.
+#import <Foundation/Foundation.h>
+#import <AppKit/AppKit.h>
+
+static int failures = 0;
+
+static void ok(BOOL cond, const char *what) {
+    printf("%s %s\n", cond ? "ok  " : "FAIL", what);
+    if (!cond) failures++;
+}
+
+int main(void) { @autoreleasepool {
+    [NSApplication sharedApplication];
+    NSTextView *tv = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0, 200, 100)];
+    NSString *sample = @"متنی که کاربر گفته و نباید گم شود";
+
+    // ادعای یک: خودِ مکانیزم. رشته را می‌گیریم، ادیتور را خالی می‌کنیم، دوباره
+    // می‌خوانیمش. اگر این ادعا روزی بیفتد یعنی AppKit عوض شده و بقیه‌ی تست بی‌معنی است.
+    [tv.textStorage replaceCharactersInRange:NSMakeRange(0, tv.string.length) withString:sample];
+    NSString *live = tv.string;
+    ok(live.length == sample.length, "رشته‌ی زنده سرِ گرفتن درست است");
+    [tv.textStorage replaceCharactersInRange:NSMakeRange(0, tv.string.length) withString:@""];
+    ok(live.length == 0, "رشته‌ی زنده با خالی شدنِ ادیتور خالی می‌شود (پس باگ واقعی بود)");
+
+    // ادعای دو: کپی، همان لحظه. این تنها چیزی است که یک ثانیه بعد هنوز متن دارد.
+    [tv.textStorage replaceCharactersInRange:NSMakeRange(0, tv.string.length) withString:sample];
+    NSString *snap = [tv.string copy];
+    [tv.textStorage replaceCharactersInRange:NSMakeRange(0, tv.string.length) withString:@""];
+    ok([snap isEqualToString:sample], "کپی بعد از خالی شدنِ ادیتور هم متن را دارد");
+
+    // ادعای سه: تحویلِ معوق، همان‌طور که واقعا اتفاق می‌افتد. متن گرفته می‌شود، پنل
+    // بسته می‌شود، و یک صفِ دیگر یک ثانیه بعد آن را می‌نویسد.
+    [tv.textStorage replaceCharactersInRange:NSMakeRange(0, tv.string.length) withString:sample];
+    NSString *keep = [tv.string copy];
+    dispatch_queue_t q = dispatch_queue_create("test.deferred", DISPATCH_QUEUE_SERIAL);
+    __block NSString *delivered = nil;
+    dispatch_async(q, ^{
+        usleep(200000);
+        delivered = keep;
+    });
+    [tv.textStorage replaceCharactersInRange:NSMakeRange(0, tv.string.length) withString:@""];
+    dispatch_sync(q, ^{});
+    ok(delivered.length > 0, "تحویلِ معوق دست خالی برنمی‌گردد");
+
+    // ادعای چهار: خودِ قاعده روی سورس. تستِ رفتاری بالا `editorText` را صدا نمی‌زند
+    // (panel.m به کلِ اپ وصل است)، پس همین یک خط را همین‌جا می‌سنجیم: کسی که فردا
+    // `copy` را بردارد باید اینجا قرمز ببیند، نه در کلیپ‌بوردِ کاربر.
+    NSString *src = [NSString stringWithContentsOfFile:@"app/Sources-objc/panel.m"
+                                              encoding:NSUTF8StringEncoding error:nil];
+    ok([src containsString:@"return [_editor.string copy]"],
+       "editorText هنوز کپی می‌دهد، نه رشته‌ی زنده");
+
+    printf(failures ? "\nlivestring: %d ادعا افتاد\n" : "\nlivestring: همه‌ی ادعاها درست\n", failures);
+    return failures ? 1 : 0;
+} }
