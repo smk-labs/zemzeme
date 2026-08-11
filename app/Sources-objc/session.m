@@ -358,7 +358,8 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
             // بعدی که برسد از قبل جدا افتاده و به کلمه‌ی آخر نمی‌چسبد، و کرسر یک
             // قدم جلو می‌رود که در متنِ راست‌به‌چپ جای درستش را پیدا کند.
             // سرِ Esc نمی‌گذاریم: آنجا حرف تمام شده و فاصله‌ی اضافه فقط زباله است.
-            [self injectAtCaret:_closing ? fresh : [fresh stringByAppendingString:@" "]];
+            [self injectAtCaret:_closing ? fresh : [fresh stringByAppendingString:@" "]
+                           keep:all];
             _inserted = all.length;
         }
     }
@@ -376,7 +377,16 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
 }
 
 // یک درج، سر کرسرِ همان اپی که سر شروع جلو بود. نه تکه‌تکه، نه پاک‌کردنی.
-- (void)injectAtCaret:(NSString *)text {
+//
+// `keep` متنی است که باید **آخرِ کار** روی کلیپ‌بورد بماند، و حتما پشتِ صف درج
+// نوشته می‌شود. چرا: مسیر پیست، کلیپ‌بورد را با نشانه‌ی transient پر می‌کند تا
+// تاریخچه‌گیرها آن را رد کنند، و آن نوشتن **بعدِ** copyFinal اتفاق می‌افتد، چون درج
+// روی صف است و copyFinal همان‌جا روی نخ اصلی. نتیجه‌اش این بود که در ریموت دسکتاپ
+// (تنها اپی که همیشه پیست می‌گیرد) آخرین چیزِ روی کلیپ‌بورد همیشه transient بود:
+// مکی هیچ‌وقت متن را در تاریخچه ثبت نمی‌کرد و کاربر با هر پیستِ دستی دست خالی
+// می‌ماند. یک کپیِ ساده‌ی پایانی پشتِ همان صف، دقیقا همان بیمه‌ای است که وعده‌اش
+// داده شده بود.
+- (void)injectAtCaret:(NSString *)text keep:(NSString *)keep {
     NSRunningApplication *to = _target ?: NSWorkspace.sharedWorkspace.frontmostApplication;
     ZInjector *inj = [ZInjector new];
     ZInsertMode im = [ZSettings.shared insertModeForBundleId:to.bundleIdentifier];
@@ -385,6 +395,7 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
  pasteIfRefused:im == ZInsertPaste
            done:^(BOOL viaAX) { ZLog(@"session: درج شد (ax=%d، %lu نویسه)", viaAX,
                                      (unsigned long)text.length); }];
+    if (keep.length) [inj copyFinalAfterPending:keep];
 }
 
 // متنِ تحویل‌شده کنار صدا. این **بعدِ** پاس هوش مصنوعی نوشته می‌شود، پس همان چیزی
@@ -489,8 +500,8 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
         [_panel flash:@"هنوز متنی نیست"];
         return;
     }
-    [self injectAtCaret:t];
     [ZInjector copyFinal:t];
+    [self injectAtCaret:t keep:t];
     _inserted = t.length;
     ZPlay(ZSoundInsert);
     [_panel flash:@"درج شد"];

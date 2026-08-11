@@ -284,6 +284,9 @@ static BOOL zFrontIsRemoteClient(void) {
         dispatch_sync(dispatch_get_main_queue(), ^{
             [ZInjector copyFinal:text];
         });
+        // در لاگ می‌نشیند چون کلیپ‌بورد تنها جایی است که کاربر نمی‌تواند خودش
+        // ببیند چه شد: «پیست شد ولی توی تاریخچه نیست» بدون این خط قابل تشخیص نبود.
+        ZLog(@"inject: کلیپ‌بورد پایانی، %lu نویسه", (unsigned long)text.length);
     });
 }
 
