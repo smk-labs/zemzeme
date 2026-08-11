@@ -42,8 +42,8 @@ git fetch -q origin 2>/dev/null
 check "با origin/$BRANCH برابریم" '[ "$(git rev-list --left-right --count origin/$BRANCH...HEAD)" = "$(printf "0\t0")" ]'
 check "gh لاگین است" 'gh auth status >/dev/null 2>&1'
 
-# تست‌ها: همان پنج تستِ طلایی. اگر یکی قرمز است، ریلیز حتی شروع هم نمی‌شود.
-for t in mainq seg flick insert history; do
+# تست‌ها: همان شش تستِ طلایی. اگر یکی قرمز است، ریلیز حتی شروع هم نمی‌شود.
+for t in mainq seg flick insert history livestring; do
   check "تست $t سبز است" "bash tools/${t}_test.sh >/dev/null 2>&1"
 done
 
