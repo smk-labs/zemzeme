@@ -2,6 +2,8 @@
 
 *[نسخه‌ی کامل فارسی](README.md)*
 
+![The Zemzeme panel holding a finished dictation](docs/img/panel-review.png)
+
 A menu-bar dictation app for macOS, tuned for Persian. Double-tap the right Command
 key, talk, and **tap right Command once when you are done**: the text arrives all at
 once.
