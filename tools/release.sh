@@ -43,7 +43,7 @@ check "با origin/$BRANCH برابریم" '[ "$(git rev-list --left-right --cou
 check "gh لاگین است" 'gh auth status >/dev/null 2>&1'
 
 # تست‌ها: همه‌ی تست‌های طلایی. اگر یکی قرمز است، ریلیز حتی شروع هم نمی‌شود.
-for t in mainq seg flick insert history livestring injectq; do
+for t in mainq seg flick insert history livestring injectq deafmic; do
   check "تست $t سبز است" "bash tools/${t}_test.sh >/dev/null 2>&1"
 done
 

@@ -140,12 +140,24 @@ void ZMicDumpReport(NSData *pcm, NSUInteger clipped, NSString *path) {
     free(lv);
 }
 
+// ---------- تورِ ایمنیِ «میکروفن کر» ----------
+// سقفِ رسیدنِ اولین بایت صدا. تپ با ۴۸۰۰ فریم بسته می‌شود، یعنی روی ۴۸ کیلوهرتز هر
+// بسته ۱۰۰ میلی‌ثانیه است و اولین بسته باید تا حدود ۲۰۰ میلی‌ثانیه رسیده باشد. این
+// سقف پنج برابرِ آن است تا روی مکِ کند هم آژیرِ الکی نزند.
+static const NSTimeInterval kZDeafCeiling = 1.2;
+
 @implementation ZMic {
     AVAudioEngine *_engine;
     AVAudioConverter *_converter;
     AVAudioFormat *_outFormat;
     BOOL _started;
     id _observer;
+    // نخ صدا می‌نویسد، تورِ ایمنی از نخ دیگری می‌خواند، پس اتمیک.
+    atomic_bool _gotAudio;
+    // شماره‌ی سشن. تورِ ایمنیِ سشنِ قبلی نباید سرِ سشنِ تازه کاری بکند، و
+    // dispatch_after لغو نمی‌شود؛ پس با شماره از کار می‌افتد.
+    NSUInteger _gen;
+    BOOL _rebuilt;          // موتور را در این سشن یک بار از نو ساخته‌ایم؟ بیش از یک بار نه.
     // ---------- دیدنی کردنِ میکروفن ----------
     // این فایل تا امروز یک خط هم لاگ نمی‌کرد، و دقیقا همین‌جا بود که کار خوابید:
     // با هدست بلوتوث صدا «می‌رفت» ولی گوگل هیچ نمی‌شنید، و از بیرون هیچ راهی نبود
@@ -248,7 +260,8 @@ static NSString *ZFormatDesc(AVAudioFormat *f) {
 
 - (instancetype)init {
     if ((self = [super init])) {
-        _engine = [AVAudioEngine new];
+        // موتور اینجا ساخته نمی‌شود: هر سشن مالِ خودش را می‌سازد (`buildEngineWithError:`)،
+        // وگرنه یک موتورِ کهنه تمام عمر اپ می‌ماند و همان باگِ «میکروفن کر» برمی‌گردد.
         // خروجیِ مبدل شناور است نه صحیح، و این عمدی است: بهره **پیش از** کوانتیزه
         // شدن اعمال می‌شود. روی میکروفنی که اوجش ۰.۰۰۹ است، سیگنال فقط شش بیت از
         // شانزده بیت را پر می‌کند؛ بزرگ کردنِ بعد از تبدیل، نویزِ کوانتیزاسیون را هم
@@ -262,27 +275,48 @@ static NSString *ZFormatDesc(AVAudioFormat *f) {
 }
 
 - (BOOL)startWithError:(NSError **)err {
-    AVAudioInputNode *input = _engine.inputNode;
-    AVAudioFormat *inFormat = [input inputFormatForBus:0];
+    ZMicSetHighSensitivity(ZSettings.shared.highSensitivity);
+    atomic_store(&_gotAudio, false);
+    _rebuilt = NO;
+    _gen++;
+    _started = YES;
+    if (![self buildEngineWithError:err]) { _started = NO; return NO; }
+    _lvlAt = CFAbsoluteTimeGetCurrent();
+    [self armDeafWatchdog];
+    return YES;
+}
+
+// **موتورِ تازه در هر سشن.** تا امروز یک AVAudioEngine ساخته می‌شد و تمام عمر اپ
+// می‌ماند، ولی ناظرِ تغییرِ پیکربندی فقط وسط سشن زنده بود (در `stop` برداشته می‌شد).
+// یعنی هر عوض شدنِ دستگاه صدا در فاصله‌ی دو سشن به هیچ‌کس گفته نمی‌شد: هدست وصل یا
+// قطع، درِ لپ‌تاپ، داک، و مهم‌تر از همه خواب و بیداریِ مک. سشنِ بعدی تپ را روی گره‌ی
+// کهنه می‌بست، `startAndReturnError` موفق برمی‌گشت، خطِ `mic:` در لاگ کاملا سالم
+// می‌نشست، و **یک بایت صدا هم نمی‌آمد**. کاربر یک دقیقه در سکوت حرف می‌زد و متن
+// هیچ‌وقت نمی‌آمد.
+//
+// موتورِ تازه ریشه را می‌زند: گره‌ی ورودیِ تازه یعنی فرمتِ همین حالای سخت‌افزار. ساختنش
+// چند میلی‌ثانیه است و همان معامله‌ای است که کالیبراسیون از قبل کرده بود: هر سشن از صفر.
+- (BOOL)buildEngineWithError:(NSError **)err {
+    if (_observer) { [NSNotificationCenter.defaultCenter removeObserver:_observer]; _observer = nil; }
+    if (_engine) { [_engine.inputNode removeTapOnBus:0]; [_engine stop]; }
+    _engine = [AVAudioEngine new];
+
+    AVAudioFormat *inFormat = [_engine.inputNode inputFormatForBus:0];
     if (inFormat.sampleRate <= 0 || inFormat.channelCount == 0) {
         if (err) *err = [NSError errorWithDomain:@"zemzeme" code:1
                                         userInfo:@{NSLocalizedDescriptionKey: @"میکروفنی در دسترس نیست"}];
         return NO;
     }
-    // **هر سشن از صفر کالیبره می‌شود.** این شیء بین سشن‌ها زنده می‌ماند، و تا امروز
-    // بهره و قفل و کف نویز هم با آن می‌ماندند. یعنی یک سشنِ بدکالیبره تمام سشن‌های
-    // بعدی را تا بسته شدن اپ مسموم می‌کرد، و همین بود آن «گاهی عالی کار می‌کند و
-    // یک‌دفعه وسطش می‌میرد»: قرعه‌ی اولین سشن بعد از هر بار باز شدن اپ.
+    // **هر سشن از صفر کالیبره می‌شود.** بهره و قفل و کف نویز تا امروز بین سشن‌ها
+    // می‌ماندند، یعنی یک سشنِ بدکالیبره تمام سشن‌های بعدی را تا بسته شدن اپ مسموم
+    // می‌کرد، و همین بود آن «گاهی عالی کار می‌کند و یک‌دفعه وسطش می‌میرد».
     [self resetCalibration];
-    ZMicSetHighSensitivity(ZSettings.shared.highSensitivity);
     [self installTapWithFormat:inFormat];
     [_engine prepare];
     if (![_engine startAndReturnError:err]) return NO;
-    _started = YES;
-    _lvlAt = CFAbsoluteTimeGetCurrent();
     ZLog(@"mic: %@ in=%@ out=%@", ZDefaultInputName(), ZFormatDesc(inFormat), ZFormatDesc(_outFormat));
 
-    // تعویض دستگاه صدا (هدست وصل/قطع): تپ را از نو بچین
+    // تعویض دستگاه صدا وسطِ سشن (هدست وصل/قطع): تپ را از نو بچین
     __weak typeof(self) ws = self;
     _observer = [NSNotificationCenter.defaultCenter
         addObserverForName:AVAudioEngineConfigurationChangeNotification object:_engine queue:nil
@@ -307,6 +341,37 @@ static NSString *ZFormatDesc(AVAudioFormat *f) {
         }
     }];
     return YES;
+}
+
+// تورِ ایمنی، برای بقیه‌ی راه‌های کر شدن که موتورِ تازه هم نمی‌گیردشان: اجازه‌ی
+// میکروفن پس گرفته شده، دستگاه دستِ اپ دیگری است، یا سخت‌افزار جواب نمی‌دهد. سقف
+// دارد و حلقه ندارد: یک بار موتور را از نو می‌سازد و اگر باز هم صدایی نیامد، به
+// کاربر می‌گوید. سکوتِ بی‌خبر بدترین حالت است، چون کاربر تا آخر حرف می‌زند.
+//
+// روی نخ اصلی می‌نشیند نه صف پس‌زمینه: `_started` و `_gen` و `_rebuilt` همه از نخ
+// اصلی نوشته می‌شوند و این‌طور مسابقه‌ای نمی‌ماند. `dispatch_after` لغو نمی‌شود، پس
+// شماره‌ی سشن از کارش می‌اندازد.
+- (void)armDeafWatchdog {
+    __weak typeof(self) ws = self;
+    NSUInteger gen = _gen;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kZDeafCeiling * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        __strong typeof(ws) s = ws;
+        if (!s || !s->_started || s->_gen != gen) return;   // سشن تمام شده یا عوض شده
+        if (atomic_load(&s->_gotAudio)) return;             // صدا می‌آید، کاری نیست
+        if (!s->_rebuilt) {
+            s->_rebuilt = YES;
+            ZLog(@"mic: ⚠︎ تا %.1f ثانیه یک بایت صدا نرسید؛ موتور را از نو می‌سازم",
+                 kZDeafCeiling);
+            NSError *e = nil;
+            if (![s buildEngineWithError:&e])
+                ZLog(@"mic: ساختنِ دوباره هم نشد: %@", e.localizedDescription ?: @"?");
+            [s armDeafWatchdog];    // یک دور دیگر، و همین یکی
+            return;
+        }
+        ZLog(@"mic: ⚠︎ میکروفن صدا نمی‌دهد. اجازه‌ی میکروفن مک یا دستگاهِ ورودی را ببین");
+        if (s.onDeaf) s.onDeaf();
+    });
 }
 
 - (void)resetCalibration {
@@ -338,6 +403,9 @@ static NSString *ZFormatDesc(AVAudioFormat *f) {
 - (void)handleBuffer:(AVAudioPCMBuffer *)buffer {
     AVAudioConverter *conv = _converter;
     if (!conv) return;
+    // تورِ ایمنی فقط همین یک بیت را می‌خواهد: صدا **می‌رسد**؟ روی نخ صدا، پس فقط
+    // وقتی هنوز خاموش است نوشته می‌شود و در بقیه‌ی بسته‌ها یک خواندنِ ارزان می‌ماند.
+    if (!atomic_load(&_gotAudio)) atomic_store(&_gotAudio, true);
     double ratio = 16000.0 / buffer.format.sampleRate;
     AVAudioFrameCount cap = (AVAudioFrameCount)(buffer.frameLength * ratio) + 64;
     AVAudioPCMBuffer *out = [[AVAudioPCMBuffer alloc] initWithPCMFormat:_outFormat frameCapacity:cap];
@@ -526,6 +594,7 @@ static NSString *ZFormatDesc(AVAudioFormat *f) {
 - (void)stop {
     if (!_started) return;
     _started = NO;
+    _gen++;     // تورِ ایمنیِ در پرواز از کار می‌افتد
     if (_observer) [NSNotificationCenter.defaultCenter removeObserver:_observer];
     _observer = nil;
     [_engine.inputNode removeTapOnBus:0];

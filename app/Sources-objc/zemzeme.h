@@ -408,6 +408,9 @@ int ZCheckKeyMain(void);
 @interface ZMic : NSObject
 @property (nonatomic, copy) void (^onChunk)(NSData *pcm);        // نخ صدا
 @property (nonatomic, copy) void (^onLevel)(float rms);          // نخ صدا
+// میکروفن باز شد ولی هیچ صدایی نمی‌آید، و ساختنِ دوباره‌ی موتور هم درستش نکرد. نخ
+// اصلی. سکوتِ بی‌خبر بدترین حالت است: کاربر تا آخر حرف می‌زند و متنی نمی‌آید.
+@property (nonatomic, copy) void (^onDeaf)(void);                // نخ اصلی
 - (BOOL)startWithError:(NSError **)err;
 - (void)stop;
 @end

@@ -85,6 +85,15 @@ static NSString *ZChainText(NSArray<ZPipe *> *retired, ZPipe *live) {
         typeof(self) me = weak;
         if (me && !me->_stopping) [me->_delegate engineLevel:rms];
     };
+    // میکروفن باز شد ولی کر است. مسیرِ GaveUp را می‌رود نه یک پیام تازه، چون همان
+    // رفتار درست را از قبل دارد: پنل حالتِ خطا می‌گیرد و کاربر همان لحظه می‌بیند.
+    // بی این، سکوت تا آخرِ سشن ادامه داشت و متن هیچ‌وقت نمی‌آمد.
+    _mic.onDeaf = ^{
+        typeof(self) me = weak;
+        if (!me || me->_stopping) return;
+        [me->_delegate engineState:ZEngineGaveUp
+                          message:@"میکروفن صدا نمی‌دهد. اجازه‌ی میکروفن یا دستگاه ورودی را ببین"];
+    };
     if (![_mic startWithError:err]) return NO;
     _startedAt = NSDate.date;
     [_delegate engineState:ZEngineListening message:nil];
