@@ -88,10 +88,29 @@ Every button on the panel's toolbar has its shortcut letter printed under it, an
 
 ## Getting the optional API key
 
-The AI cleanup pass needs a free key from
-[Google AI Studio](https://aistudio.google.com/apikey). Open the Zemzeme menu, click
-**"کلید Gemini (اختیاری)…"**, and paste it. It goes straight to your Mac's Keychain:
-nothing lands in the repo, a `.env` file, or any log. No terminal needed.
+Zemzeme works with no key at all: dictation and file transcription run from the moment
+you install. A key buys one thing, the AI cleanup pass (right Command + A), and it is
+off by default.
+
+The key is free and needs no credit card. Five steps:
+
+1. Go to [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
+2. Sign in with your Google account.
+3. Click **Create API key**.
+4. Copy the key. It starts with `AIza`.
+5. On your Mac, open the Zemzeme menu, click **"کلید Gemini (اختیاری)…"**, paste, save.
+
+No terminal needed. The key goes straight to your Mac's Keychain (service
+`zemzeme-gemini`): nothing lands in the repo, a `.env` file, or any log.
+
+**The key is tested when you save it**, with a deliberately tiny request to the same
+model the pass itself uses. A key Google does not recognise is not saved at all, and
+the sheet says why: a saved-but-wrong key means a toggle that looks on and does
+nothing. You can ask again any time with `zemzeme --checkkey`.
+
+If the AI Studio page will not open for you, or will not let you create a key, that is
+a Google regional restriction, not a Zemzeme fault. Dictation and file transcription
+work fully without it.
 
 ## Privacy
 
