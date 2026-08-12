@@ -21,7 +21,9 @@ recognition.
 - **Dictation into any app**, even full-screen, through a floating panel that never
   steals focus. Nothing is shown while you speak, on purpose; the text lands in one
   piece when you finish.
-- **Two destinations**: collect in the panel (editable before you insert), or
+- **Two destinations**: collect in the panel (you see it before it goes anywhere; the
+  panel is non-activating, so text can be selected and copied but the keyboard does not
+  reach it), or
   cursor-side, where a dot replaces the panel and the text is inserted once at the
   end. Right Command + E switches.
 - **Live language switching**: right Command + L flips Persian and English **mid
