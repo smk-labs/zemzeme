@@ -1,0 +1,63 @@
+/* پوستهٔ زمزمه برای کارت‌ها و گزارش‌ها. رنگ‌ها از خود اپ می‌آیند، نه از سلیقه:
+   سبز #33C759 همان ZMarkBrandColor در mark.m است (رنگ «دارد می‌شنود»)، تیرهٔ
+   پس‌زمینه همان کاشی آیکون، و قرمز همان قرمزی که batchui با آن ردیف خراب را
+   می‌نویسد.
+   در روشنایی، سبزِ اپ روی زمینهٔ سفید فقط ۲.۲ به ۱ کنتراست دارد، پس متن تاکیدی
+   نسخهٔ تیره‌ترش را می‌گیرد (۴.۹ به ۱). در تاریکی خودِ سبز اپ می‌نشیند (۸ به ۱). */
+
+:root {
+  --text-primary:   #131714;
+  --text-secondary: #5a635c;
+  --text-accent:    #157f3b;
+
+  --page-bg:   #eef2ef;
+  --surface-1: #fbfcfb;
+  --surface-2: #f2f5f2;
+
+  --border:        #dde4df;
+  --border-strong: #bcc7bf;
+
+  --bg-accent:  #edf6ef;
+  --bg-danger:  #fbe4e4;
+  --bg-success: #dcf3e3;
+  --bg-warning: #fbefd9;
+
+  --font-mono: 'SF Mono', ui-monospace, Menlo, monospace;
+}
+
+[data-theme="dark"] {
+  --text-primary:   #e9eeea;
+  --text-secondary: #9aa69e;
+  --text-accent:    #33c759;
+
+  --page-bg:   #0e100f;
+  --surface-1: #161918;
+  --surface-2: #1e2321;
+
+  --border:        #262c29;
+  --border-strong: #38403c;
+
+  --bg-accent:  #18291f;
+  --bg-danger:  #3a1717;
+  --bg-success: #123a22;
+  --bg-warning: #3a2a10;
+}
+
+/* ca و cd فقط رنگ نمودار نیستند: کیت با ca چیپِ «تمام» و نشانِ بولتِ درست را
+   می‌نویسد و با cd چیپِ «هشدار» و بولتِ غلط را، آن هم به‌صورت متن روی همان دو
+   زمینهٔ bg-accent و bg-danger. پس این دو باید سبز و قرمز بمانند و روی زمینهٔ
+   خودشان از ۴.۵ به ۱ رد شوند. cb و cc فقط پر‌کننده‌اند: آبی و نارنجیِ همان
+   نوار وضعیت پنل. */
+.rc {
+  --ca: #157f3b;
+  --cb: #2f7dd1;
+  --cc: #d98324;
+  --cd: #c22020;
+}
+
+[data-theme="dark"] .rc {
+  --ca: #33c759;
+  --cb: #4c9bea;
+  --cc: #f0a03c;
+  --cd: #ef6b6b;
+}
