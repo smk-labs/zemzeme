@@ -225,6 +225,7 @@ static NSBezierPath *ZSparkPath(NSPoint c, CGFloat r) {
     NSInteger _flashGen;
     NSScrollView *_editorScroll;
     NSTextView *_editor;
+    NSString *_wroteText;         // آخرین متنی که **ما** در ادیتور نوشتیم؛ مرجعِ editorTouched
     // دُمِ پیش‌نمایش: کجا شروع می‌شود، و **عینا** چه چیزی نوشتیم. دومی مدرکِ «کاربر
     // دست نزده» است و بی آن، هر نوشتنِ تازه می‌توانست تایپِ خودِ کاربر را پاک کند.
     NSUInteger _previewLoc;
@@ -602,12 +603,30 @@ static NSBezierPath *ZSparkPath(NSPoint c, CGFloat r) {
     _editor.font = ZFont(15, NO);
     _editor.textColor = NSColor.labelColor;
     [_editor scrollRangeToVisible:NSMakeRange(_editor.string.length, 0)];
+    _wroteText = [text ?: @"" copy];
 }
 
 - (void)clearEditor {
     [self ensureEditor];
     [self forgetPreview];
     [_editor.textStorage replaceCharactersInRange:NSMakeRange(0, _editor.string.length) withString:@""];
+    _wroteText = @"";
+}
+
+// کاربر خودش در ادیتور تایپ کرده؟ همان قاعده‌ی دُمِ پیش‌نمایش، یک پله بالاتر: هرچه
+// نوشته‌ایم را عینا به یاد داریم، و اگر متنِ زنده دیگر همان نیست یعنی متن مالِ اوست.
+//
+// چرا لازم شد: مسیر تحویل در حالت جمع، **اول** متنِ خام را روی ادیتور می‌نوشت و
+// **بعد** همان را پس می‌خواند، پس تایپِ کاربر پاک می‌شد و ادعای «متنِ ادیتور مرجع
+// است» هیچ‌وقت درست نبود. تا وقتی ادیتور فوکوس نمی‌گرفت کسی نمی‌دیدش.
+- (BOOL)editorTouched {
+    if (!_editor) return NO;
+    NSString *live = _editor.string;
+    // دُمِ خاکستری مالِ ماست نه کاربر، پس از ته کنار گذاشته می‌شود وگرنه هر
+    // پیش‌نمایشی «کاربر تایپ کرده» خوانده می‌شد.
+    if (_previewText.length && [live hasSuffix:_previewText])
+        live = [live substringToIndex:live.length - _previewText.length];
+    return ![live isEqualToString:_wroteText ?: @""];
 }
 
 // ---------- دُمِ پیش‌نمایش ----------

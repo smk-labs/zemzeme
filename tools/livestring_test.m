@@ -68,6 +68,51 @@ int main(void) { @autoreleasepool {
     ok([src containsString:@"return [_editor.string copy]"],
        "editorText هنوز کپی می‌دهد، نه رشته‌ی زنده");
 
+    // ---------- تایپِ کاربر نباید گم شود ----------
+    // مسیر تحویل در حالت جمع **اول** متنِ خام را روی ادیتور می‌نوشت و **بعد** همان را
+    // پس می‌خواند، پس هر چه کاربر تایپ کرده بود بی‌صدا پاک می‌شد. کامنتِ بالای همان
+    // شرط از روز اول می‌گفت «متنِ ادیتور مرجع است»، و از روز اول هم غلط بود؛ فقط چون
+    // ادیتور فوکوس نمی‌گرفت هیچ‌کس نمی‌توانست ببیندش.
+    //
+    // قاعده با NSTextView واقعی مدل می‌شود، همان‌طور که ادعاهای بالا: هرچه نوشته‌ایم را
+    // به یاد داریم، و متنِ زنده که دیگر همان نبود، یعنی متن مالِ کاربر است.
+    {
+        NSTextView *tv = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0, 300, 100)];
+        NSString *wrote = @"متنِ دیکته‌شده";
+        [tv.textStorage replaceCharactersInRange:NSMakeRange(0, tv.string.length) withString:wrote];
+        ok(![tv.string isEqualToString:wrote] == NO, "نوشتنِ ما همان است که نوشتیم");
+
+        // کاربر تایپ می‌کند
+        [tv.textStorage replaceCharactersInRange:NSMakeRange(tv.string.length, 0)
+                                     withString:@" و یک اضافه‌ی دستی"];
+        ok(![tv.string isEqualToString:wrote], "تایپِ کاربر از متنِ نوشته‌ی ما جدا تشخیص داده می‌شود");
+
+        // و بندِ اصلی: اگر **اول** بنویسیم و بعد بخوانیم، همان تایپ نابود می‌شود
+        NSString *userText = [tv.string copy];
+        [tv.textStorage replaceCharactersInRange:NSMakeRange(0, tv.string.length) withString:wrote];
+        ok(![[tv.string copy] isEqualToString:userText],
+           "نوشتن پیش از خواندن، تایپِ کاربر را پاک می‌کند؛ همین بود باگ");
+
+        // دُمِ خاکستریِ خودمان نباید «تایپِ کاربر» خوانده شود
+        NSString *tail = @" دُمِ پیش‌نمایش";
+        [tv.textStorage replaceCharactersInRange:NSMakeRange(0, tv.string.length) withString:wrote];
+        [tv.textStorage replaceCharactersInRange:NSMakeRange(tv.string.length, 0) withString:tail];
+        NSString *live = tv.string;
+        if ([live hasSuffix:tail]) live = [live substringToIndex:live.length - tail.length];
+        ok([live isEqualToString:wrote], "دُمِ پیش‌نمایش کنار گذاشته می‌شود، پس آژیرِ الکی نمی‌زند");
+    }
+
+    // و ترتیب، روی خودِ سورس: در شاخه‌ی حالت جمع باید **اول** editorTouched پرسیده شود
+    // و بعد شاید setEditorText. کسی که فردا ترتیب را برگرداند باید اینجا قرمز ببیند.
+    NSString *ses = [NSString stringWithContentsOfFile:@"app/Sources-objc/session.m"
+                                              encoding:NSUTF8StringEncoding error:nil];
+    ok(ses.length > 0, "session.m خوانده شد");
+    NSRange touched = [ses rangeOfString:@"if ([_panel editorTouched])"];
+    NSRange writes  = [ses rangeOfString:@"[_panel setEditorText:all]"];
+    ok(touched.location != NSNotFound && writes.location != NSNotFound
+       && touched.location < writes.location,
+       "تحویل اول می‌پرسد کاربر تایپ کرده یا نه، بعد می‌نویسد");
+
     printf(failures ? "\nlivestring: %d ادعا افتاد\n" : "\nlivestring: همه‌ی ادعاها درست\n", failures);
     return failures ? 1 : 0;
 } }
