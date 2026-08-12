@@ -57,7 +57,7 @@ calls it "damaged". Building locally avoids that entirely, and the certificate
 becomes this Mac's own, so the Accessibility and microphone permissions survive
 every later build instead of being asked again.
 
-If you would rather have a file, `Zemzeme-2.2.1.dmg` is on the
+If you would rather have a file, `Zemzeme-2.3.0.dmg` is on the
 [Releases](https://github.com/smk-labs/zemzeme/releases) page. Drag the app to
 Applications, then clear the quarantine flag once:
 
