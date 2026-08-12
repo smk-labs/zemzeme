@@ -65,6 +65,44 @@ int main(void) {
         spin(0.4);
         ok(NSApp.keyWindow == nil, "فلیکِ دوم هم کلید را پس می‌دهد");
 
+        // ---------- فوکوسِ ادیتورِ پنل ----------
+        // ادیتورِ حالت «جمع در پنل» فوکوس نمی‌گرفت و ویرایش کار نمی‌کرد، در حالی که
+        // NSTextView از اول editable بود. علت یک پیش‌فرضِ AppKit بود، و همین‌جا روی
+        // خودِ سیستم‌عامل سنجیده می‌شود نه با حدس: پنجره‌ی borderless پیش‌فرض
+        // canBecomeKeyWindow=NO می‌دهد، پس becomesKeyOnlyIfNeeded هیچ‌وقت شانسی نداشت.
+        // اگر روزی اپل این پیش‌فرض را عوض کند، این ادعا قرمز می‌شود و می‌فهمیم که
+        // زیرکلاسِ ZPanelWindow دیگر لازم نیست.
+        NSPanel *plain = [[NSPanel alloc]
+            initWithContentRect:NSMakeRect(0, 0, 100, 40)
+                      styleMask:NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel
+                        backing:NSBackingStoreBuffered defer:NO];
+        ok(!plain.canBecomeKeyWindow,
+           "پنلِ borderless خودش کلید نمی‌شود؛ همین بود که ویرایش را کشته بود");
+
+        NSString *pan = [NSString stringWithContentsOfFile:@"app/Sources-objc/panel.m"
+                                                 encoding:NSUTF8StringEncoding error:nil];
+        ok(pan.length > 0, "panel.m خوانده شد");
+        ok([pan containsString:@"@implementation ZPanelWindow"] &&
+           [pan containsString:@"- (BOOL)canBecomeKeyWindow { return YES; }"],
+           "ZPanelWindow پیش‌فرض را برمی‌گرداند تا ادیتور فوکوس بگیرد");
+        ok([pan containsString:@"[[ZPanelWindow alloc] initWithContentRect:"],
+           "خودِ پنل از همان زیرکلاس ساخته می‌شود، نه NSPanel خام");
+        // و becomesKeyOnlyIfNeeded باید بماند: بی آن، پنل با آمدنش کلید می‌شود و
+        // فوکوسِ کاربر را وسط کار از اپ مقصد می‌کند.
+        ok([pan containsString:@"becomesKeyOnlyIfNeeded = YES"],
+           "پنل فقط با کلیک روی ادیتور کلید می‌شود، نه با آمدنش");
+
+        // **بندِ حیاتی.** پیست با CGEventPost به هر که فوکوس دارد می‌رود نه به یک pid،
+        // پس پنلِ کلید یعنی متن در خودِ پنل پیست می‌شود و اپ مقصد دست خالی می‌ماند.
+        // کسی که فردا این خط را بردارد باید اینجا قرمز ببیند، نه در متنِ کاربر.
+        NSString *ses = [NSString stringWithContentsOfFile:@"app/Sources-objc/session.m"
+                                                 encoding:NSUTF8StringEncoding error:nil];
+        NSRange inj = [ses rangeOfString:@"- (void)injectAtCaret:"];
+        NSRange yld = [ses rangeOfString:@"[_panel yieldKey];"];
+        ok(inj.location != NSNotFound && yld.location != NSNotFound && yld.location > inj.location
+           && yld.location - inj.location < 500,
+           "هر درجی اول کلید را پس می‌دهد، وگرنه پیست در خودِ پنل می‌نشیند");
+
         printf("\n%s\n", failures == 0 ? "flick: all passed" : "flick: FAILED");
         return failures == 0 ? 0 : 1;
     }

@@ -806,8 +806,54 @@ int ZSelfTest(NSString *file, NSString *lang) {
                             symbol:@"lock.shield"];
     perm.toolTip = @"تنظیمات سیستم، بخش Accessibility: بی این اجازه، متن سر کرسر نوشته نمی‌شود";
 
+    // فقط وقتی برخورد هست. آیتمی که همیشه باشد و معمولا کاری نداشته باشد، نویز است.
+    if (ZMacDictationOnDoubleCommand()) {
+        NSMenuItem *clash = [self icon:[self item:menu title:@"⚠︎ دیکته‌ی خودِ مک هم روی دو بار Command است"
+                                           action:@selector(menuOpenDictationSettings) key:@""]
+                                symbol:@"exclamationmark.triangle"];
+        clash.toolTip = @"تنظیمات سیستم › Keyboard › Dictation: میان‌برش را Off کن، وگرنه یک دابل‌تپ "
+                         "هر دو دیکته را باز می‌کند و صدای یک میکروفن بین دو شنونده تقسیم می‌شود";
+    }
+
     [menu addItem:NSMenuItem.separatorItem];
     [self icon:[self item:menu title:@"خروج" action:@selector(menuQuit) key:@"q"] symbol:@"power"];
+}
+
+// ---------- برخوردِ دیکته‌ی خودِ مک ----------
+// مک هم میان‌بر دیکته دارد و می‌شود روی «دو بار Command» گذاشتش. آن‌وقت یک دابل‌تپ دو
+// تا دیکته را باز می‌کند، مالِ ما و مالِ مک، و صدای یک میکروفن بین دو شنونده تقسیم
+// می‌شود: هر دو ناقص می‌شنوند و کاربر فکر می‌کند زمزمه خراب است.
+//
+// چرا فقط خبر می‌دهیم و خودمان درستش نمی‌کنیم، دو دلیل سخت:
+//
+// ۱. تنظیمِ سیستم است و مالِ کاربر. عوض کردنش از داخل اپ یعنی اپ بی‌اجازه به تنظیمات
+//    سیستم دست برده، و این کاری نیست که یک اپ دیکته حق داشته باشد بکند.
+// ۲. از تپ هم نمی‌شود بلعیدش. تپِ ما رویدادِ flagsChanged را می‌بیند، ولی «دو بار
+//    Command» را مکِ خودش از همان رویدادها می‌سازد؛ برای پنهان کردنش باید رویدادِ خامِ
+//    Command را مصرف کنیم، و آن‌وقت هر Cmd+C و Cmd+V و Cmd+Tab هم با آن می‌رود. بدتر
+//    از آن، مصرفِ نصفه‌ی یک مدیفایر حالتِ گیرکرده می‌سازد: مک فکر می‌کند Command هنوز
+//    پایین است.
+//
+// پس پیدایش می‌کنیم و می‌گوییم کجا خاموش می‌شود. هات‌کیِ ۱۶۴ در AppleSymbolicHotKeys
+// همان دیکته است، `type=modifier` یعنی میان‌برش یک مدیفایرِ دوباره‌زده است، و
+// ۱۰۴۸۵۷۶ همان NSEventModifierFlagCommand است (مکِ این دستگاه دقیقا همین را داشت).
+// اگر کاربر میان‌بر را روی Control گذاشته باشد برخوردی نیست و هیچ چیزی نشان نمی‌دهیم.
+BOOL ZMacDictationOnDoubleCommand(void) {
+    NSDictionary *dom = [NSUserDefaults.standardUserDefaults
+                         persistentDomainForName:@"com.apple.symbolichotkeys"];
+    NSDictionary *keys = dom[@"AppleSymbolicHotKeys"];
+    if (![keys isKindOfClass:NSDictionary.class]) return NO;
+    NSDictionary *hk = keys[@"164"];
+    if (![hk isKindOfClass:NSDictionary.class] || ![hk[@"enabled"] boolValue]) return NO;
+    NSDictionary *v = hk[@"value"];
+    if (![v isKindOfClass:NSDictionary.class] || ![v[@"type"] isEqual:@"modifier"]) return NO;
+    for (id p in v[@"parameters"]) {
+        if (![p respondsToSelector:@selector(longLongValue)]) continue;
+        long long n = [p longLongValue];
+        // مک هم خودِ ماسک را می‌نویسد هم مکملش (1048576 و -1048577)
+        if (n == 1048576 || n == -1048577) return YES;
+    }
+    return NO;
 }
 
 // کلیدهای کنار آیتم‌های منو فقط نمایشی‌اند؛ کار واقعی را تپ سراسری می‌کند و آن هم
@@ -1151,6 +1197,13 @@ int ZSelfTest(NSString *file, NSString *lang) {
     }
 }
 - (void)menuOpenSessions { [NSWorkspace.sharedWorkspace openURL:ZSessionsDir()]; }
+
+// پنجره را باز می‌کند، تیک را خودش نمی‌زند: تنظیمِ سیستم مالِ کاربر است.
+- (void)menuOpenDictationSettings {
+    NSURL *u = [NSURL URLWithString:
+        @"x-apple.systempreferences:com.apple.Keyboard-Settings.extension"];
+    [NSWorkspace.sharedWorkspace openURL:u];
+}
 - (void)menuOpenAccessibility {
     NSURL *u = [NSURL URLWithString:
         @"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"];

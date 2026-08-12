@@ -721,6 +721,11 @@ int ZCaretProbeMain(NSArray<NSString *> *args);
 // نوار پنل همه‌ی یازده دکمه را دارد و همان‌جا می‌ماند: دستِ کاربر روی پنل است، پس
 // هر کاری که وسط دیکته به ذهنش می‌رسد باید همان‌جا یک کلیک باشد. مرتب کردن، کارِ
 // منوی منوبار است نه کم کردن این‌ها.
+// پنجره‌ی پنل. فقط برای اینکه `canBecomeKeyWindow` را YES کند: پنجره‌ی borderless
+// پیش‌فرض NO می‌دهد و همان یک پیش‌فرض بود که ادیتورِ پنل را غیرقابل‌ویرایش کرده بود.
+@interface ZPanelWindow : NSPanel
+@end
+
 @interface ZPanel : NSObject
 @property (nonatomic, copy) void (^onClose)(void);
 @property (nonatomic, copy) void (^onPauseToggle)(void);   // دکمه‌ی مکث؛ تک‌تپ کلید یعنی پایان، نه مکث
@@ -742,7 +747,12 @@ int ZCaretProbeMain(NSArray<NSString *> *args);
 - (void)hide;
 - (void)render:(ZPanelModel *)m;
 - (void)pulseLevel:(float)level;
-// ادیتور حالت جمع: متن سر پایان یک بار اینجا می‌نشیند و قابل ویرایش است.
+// **پیش از هر درجی صدا زده می‌شود، و بندِ حیاتیِ فوکوس‌دار شدنِ پنل است.** رویدادِ
+// پیست با `CGEventPost(kCGSessionEventTap, …)` می‌رود، یعنی به هر که فوکوس دارد، نه
+// به یک pid. پس اگر ادیتورِ خودمان پنجره‌ی کلید باشد، `Cmd+V` متن را در همین پنل
+// می‌ریزد نه در اپ مقصد. اینجا کلید پس داده می‌شود تا مقصد دوباره فوکوس بگیرد.
+- (void)yieldKey;
+// ادیتور حالت جمع: متن سر پایان یک بار اینجا می‌نشیند.
 - (NSString *)editorText;
 - (void)setEditorText:(NSString *)text;   // متنِ **تمام‌شده**: سفید، و دُم پیش‌نمایش را می‌بلعد
 - (void)clearEditor;
@@ -856,6 +866,11 @@ int ZBatchMain(NSArray<NSString *> *args);
 int ZMicDumpMain(NSString *path, double seconds);
 void ZMicDumpReport(NSData *pcm, NSUInteger clipped, NSString *path);
 NSString *ZDefaultInputName(void);
+
+// مکِ خودش هم میان‌بر دیکته دارد و می‌شود روی «دو بار Command» گذاشتش، یعنی یک دابل‌تپ
+// دو دیکته را باز می‌کند و صدای یک میکروفن بین دو شنونده تقسیم می‌شود. فقط خبر می‌دهیم:
+// تنظیمِ سیستم مالِ کاربر است و از تپ هم نمی‌شود بلعیدش بی آنکه Cmd+C را هم ببرد.
+BOOL ZMacDictationOnDoubleCommand(void);
 void ZMicSetHighSensitivity(BOOL on);   // کشِ اتمیک، تا نخ صدا NSUserDefaults نخواند
 
 // ---------- فونت و سلف‌تست ----------

@@ -57,6 +57,25 @@ static const CGFloat kGripTop = 5;    // فاصله‌اش از لبهٔ بال�
 // پس‌زمینهٔ پنل (تعریفش در zemzeme.h است، چون کارت میان‌برها هم همین را می‌خواهد):
 // کشیدن از همه‌جا، جز چیزی که واقعا کلیک لازم دارد (دکمه و ادیتور). تصمیمش در
 // hitTest پایین است، نه در این‌که هر ویو خودش mouseDown را بگیرد یا نه.
+// ---------- پنجره‌ی پنل ----------
+// **چرا این کلاس لازم شد:** ادیتورِ حالت «جمع در پنل» فوکوس نمی‌گرفت و کاربر
+// نمی‌توانست متن را ویرایش کند، در حالی که خودِ NSTextView از اول editable بود.
+// دلیلش یک پیش‌فرضِ AppKit است: `canBecomeKeyWindow` برای پنجره‌ی borderless پیش‌فرض
+// NO برمی‌گرداند. پس `becomesKeyOnlyIfNeeded` هیچ‌وقت شانسِ کارکردن نداشت، پنل
+// هیچ‌وقت پنجره‌ی کلید نمی‌شد، و فوکوس به ادیتور نمی‌رسید.
+//
+// `becomesKeyOnlyIfNeeded = YES` سرِ جایش می‌ماند و همان چیزی است که این را بی‌خطر
+// می‌کند: پنل با **آمدنش** کلید نمی‌شود، فقط وقتی کاربر روی ویویی کلیک کند که واقعا
+// کیبورد لازم دارد، یعنی همین ادیتور. دکمه‌های نوار کیبورد لازم ندارند، پس زدنشان
+// فوکوس را از اپ مقصد نمی‌کند.
+//
+// و nonactivating هم سرِ جایش: پنل کلید می‌شود بی آنکه **اپ** فعال شود، پس
+// `frontmostApplication` همان اپ مقصد می‌ماند و ادعایی که flick_test می‌سنجد
+// («اپ فعال نمی‌شود») دست‌نخورده است.
+@implementation ZPanelWindow
+- (BOOL)canBecomeKeyWindow { return YES; }
+@end
+
 @implementation ZDragEffectView
 - (BOOL)mouseDownCanMoveWindow { return YES; }
 - (void)mouseDown:(NSEvent *)event { [self.window performWindowDragWithEvent:event]; }
@@ -221,7 +240,7 @@ static NSBezierPath *ZSparkPath(NSPoint c, CGFloat r) {
 
 - (instancetype)init {
     if ((self = [super init])) {
-        _panel = [[NSPanel alloc] initWithContentRect:NSMakeRect(0, 0, kPW, kBarH)
+        _panel = [[ZPanelWindow alloc] initWithContentRect:NSMakeRect(0, 0, kPW, kBarH)
                                             styleMask:NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel
                                               backing:NSBackingStoreBuffered defer:NO];
         _panel.level = NSStatusWindowLevel;
@@ -511,6 +530,20 @@ static NSBezierPath *ZSparkPath(NSPoint c, CGFloat r) {
     [_effect addSubview:_editorScroll];
 }
 
+// کلید را پس بده، وگرنه پیست در همین پنل می‌نشیند. توضیح کامل در هدر.
+//
+// چرا orderOut و بعد orderFrontRegardless و نه یک متد تک‌خطی: AppKit راهِ مستقیمی
+// برای «کلید نباش» نمی‌دهد؛ `resignKeyWindow` یک اطلاع است نه یک دستور. بیرون بردن
+// پنجره کلید را پس می‌دهد و مک آن را به اپِ جلو (همان مقصد) برمی‌گرداند، و برگشتنِ
+// بی‌درنگ هم پنل را کلید نمی‌کند چون becomesKeyOnlyIfNeeded فقط با کلیک روی ادیتور
+// کلید می‌دهد. سریع است و در همان فریم تمام می‌شود.
+- (void)yieldKey {
+    if (!_panel.isKeyWindow) return;
+    [_panel makeFirstResponder:nil];
+    [_panel orderOut:nil];
+    [_panel orderFrontRegardless];
+}
+
 - (void)setEditorVisible:(BOOL)on {
     if (on) [self ensureEditor];
     if (_editorVisible == on) return;
@@ -777,7 +810,7 @@ static NSString *ZClock(NSTimeInterval sec) {
     [self setButton:_btnMode symbol:next == ZModeCursor ? @"text.cursor" : @"square.and.pencil"];
     _btnMode.toolTip = next == ZModeCursor
         ? @"رفتن به حالت کنار کرسر: پنل می‌رود و فقط یک نقطه می‌ماند (Command راست + E)"
-        : @"رفتن به جمع در پنل: متن اینجا جمع می‌شود و پیش از درج می‌بینی‌اش (Command راست + E)";
+        : @"رفتن به جمع در پنل: متن اینجا جمع می‌شود و با کلیک روی آن ویرایش هم می‌شود (Command راست + E)";
 
     // سشن که تمام شد (در بازبینی، یا وسط کارِ پایانی) دکمه‌های شنیدن معنا ندارند؛
     // دکمه‌های متن می‌مانند. نشان دادنِ دکمه‌ای که کار نمی‌کند، دروغ است.

@@ -444,6 +444,11 @@ static CGEventRef zHotkeyCallback(CGEventTapProxy proxy, CGEventType type, CGEve
     CFRunLoopAddSource(CFRunLoopGetMain(), _source, kCFRunLoopCommonModes);
     CGEventTapEnable(_tap, true);
     ZLog(@"hotkey tap: enabled");
+    // در لاگ هم بنشیند، نه فقط در منو: وقتی کاربر می‌گوید «دیکته دو تا باز می‌شود» یا
+    // «نصفِ حرفم را نشنید»، اولین جایی که نگاه می‌کنیم همین فایل است.
+    if (ZMacDictationOnDoubleCommand())
+        ZLog(@"hotkey tap: ⚠︎ دیکته‌ی خودِ مک هم روی دو بار Command است؛ "
+              "تنظیمات سیستم › Keyboard › Dictation، میان‌بر را Off کن");
 }
 
 - (void)disable {

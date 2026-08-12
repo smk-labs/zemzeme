@@ -392,6 +392,11 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
 // می‌ماند. یک کپیِ ساده‌ی پایانی پشتِ همان صف، دقیقا همان بیمه‌ای است که وعده‌اش
 // داده شده بود.
 - (void)injectAtCaret:(NSString *)text keep:(NSString *)keep {
+    // **اول کلید را پس بده.** از وقتی ادیتورِ پنل فوکوس می‌گیرد، پنل می‌تواند پنجره‌ی
+    // کلید باشد، و پیست با CGEventPost به هر که فوکوس دارد می‌رود نه به یک pid. بی این
+    // خط، کاربری که متن را در پنل ویرایش کرده و بعد درج زده، متن را در همان پنل پیست
+    // می‌گیرد و اپ مقصد دست خالی می‌ماند.
+    [_panel yieldKey];
     NSRunningApplication *to = _target ?: NSWorkspace.sharedWorkspace.frontmostApplication;
     ZInjector *inj = [ZInjector new];
     ZInsertMode im = [ZSettings.shared insertModeForBundleId:to.bundleIdentifier];
