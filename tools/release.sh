@@ -83,8 +83,13 @@ ok "v$want تازه است و رو به جلو"
 if [ "$cur" != "$want" ]; then
   /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $want" "$PLIST"
   /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(( $(plist_get CFBundleVersion) + 1 ))" "$PLIST"
-  # ریدمی نام فایل dmg را می‌گوید؛ جا ماندنش یعنی سند به فایلی اشاره کند که نیست
-  sed -i '' -E "s/\`Zemzeme-[0-9]+\.[0-9]+\.[0-9]+\.dmg\`/\`Zemzeme-$want.dmg\`/" README.md
+  # ریدمی نام فایل dmg را می‌گوید؛ جا ماندنش یعنی سند به فایلی اشاره کند که نیست.
+  # **هر دو ریدمی**، و این «هر دو» را با هزینه یاد گرفتیم: تا امروز فقط README.md
+  # اینجا بود، پس README.en.md روی ۲٫۰٫۰ ماند تا سه ریلیز بعد کسی دستی پیدایش کرد.
+  # گاردی که یکی از دو نسخه را بپوشاند، همان باگ را در نسخه‌ی دیگر تضمین می‌کند.
+  for r in README.md README.en.md; do
+    sed -i '' -E "s/\`Zemzeme-[0-9]+\.[0-9]+\.[0-9]+\.dmg\`/\`Zemzeme-$want.dmg\`/" "$r"
+  done
   ok "نسخه شد $want (و CFBundleVersion یکی جلو رفت)"
 else
   ok "نسخه از قبل $want است"
