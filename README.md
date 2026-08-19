@@ -58,7 +58,7 @@ curl -fsSL https://raw.githubusercontent.com/smk-labs/zemzeme/main/install.sh | 
 می‌شود، پس **اجازه‌های اکسسبیلیتی و میکروفن از بیلدهای بعدی هم جان سالم می‌برند** و
 دوباره پرسیده نمی‌شوند.
 
-**اگر فایل می‌خواهی:** `Zemzeme-2.3.0.dmg` در
+**اگر فایل می‌خواهی:** `Zemzeme-2.4.0.dmg` در
 [Releases](https://github.com/smk-labs/zemzeme/releases) هست. اپ را به Applications
 بکش، بعد یک بار برچسب قرنطینه را بردار، وگرنه باز نمی‌شود:
 
