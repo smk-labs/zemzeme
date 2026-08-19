@@ -164,7 +164,8 @@ void ZPlay(ZSound s) {
                   @(ZSoundCopy):   @"Purr",
                   @(ZSoundMode):   @"Submarine",
                   @(ZSoundLang):   @"Frog",
-                  @(ZSoundPolish): @"Hero"};    // پاس نشست
+                  @(ZSoundPolish): @"Hero",     // پاس نشست
+                  @(ZSoundHole):   @"Basso"};   // تکه‌ای جا ماند؛ همان ناخوشایندِ دور ریختن
         cache = [NSMutableDictionary dictionary];
     });
     NSString *n = names[@(s)];

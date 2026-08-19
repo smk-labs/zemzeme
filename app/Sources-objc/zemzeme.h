@@ -32,6 +32,7 @@ typedef NS_ENUM(NSInteger, ZSound) {
     ZSoundMode,       // عوض کردن حالت
     ZSoundLang,       // عوض کردن زبان
     ZSoundPolish,     // پاس هوش مصنوعی نشست
+    ZSoundHole,       // یک تکه بی‌متن برگشت؛ عمدا همان صدای ناخوشایندِ دور ریختن
 };
 void ZPlay(ZSound s);
 NSString *ZFaDigits(NSString *s);
@@ -164,14 +165,55 @@ BOOL ZSegHasVoice(NSData *pcm);
 NSString *ZTranscribeSegment(NSData *pcm, NSString *lang, BOOL rawUpload,
                              unsigned long long *bytesUp);
 
+// ---------- جای خالی ----------
+// تکه‌ای که حرف داشت و بی‌متن برگشت.
+//
+// یک قاعده همه‌ی این بخش را ساده می‌کند و باید صریح نوشته شود: `ZSegHasVoice` پیش از
+// هر تماس شبکه‌ای تکه‌های ساکت را رد می‌کند، پس **هر تکه‌ای که به شبکه می‌رسد حرف
+// دارد**. یعنی متنِ خالی همیشه شکست است، نه جوابِ درست. با این قاعده نه سنجشِ
+// اینترنت لازم است، نه heuristic، نه backoff: خالی یعنی خراب، و بس.
+//
+// تا امروز همین‌جا حرف گم می‌شد: تکه‌ی بی‌متن از `_parts` می‌افتاد و بقیه به هم
+// می‌چسبیدند، پس یک جمله‌ی گم‌شده هیچ ردی نمی‌گذاشت. هفته‌ی گذشته ۱۲ دقیقه از ۲۲۴
+// دقیقه دیکته (۱۳۹ تکه) همین‌طور پاک شد و ۳۴ سشن با سوراخِ دوخته‌شده درج شدند.
+extern NSString *const ZHoleMark;    // نشانه‌ای که جای متنِ نرسیده می‌نشیند
+
+// صدای یک تکه‌ی جامانده، تا بشود دوباره فرستادش. لایه‌ی ذخیره‌ی تازه‌ای در کار نیست:
+// audio.flac کلِ سشن را از قبل روی دیسک دارد و این فقط تا پایانِ همین سشن در حافظه
+// می‌ماند.
+@interface ZHole : NSObject
+- (instancetype)initWithPCM:(NSData *)pcm lang:(NSString *)lang;
+@property (nonatomic, readonly) NSData *pcm;
+@property (nonatomic, readonly) NSString *lang;
+@end
+
+// جاهای خالی را دوباره بفرست. بلوکه است: فقط از نخ پس‌زمینه.
+//
+// هر کدام که رسید از آرایه برداشته می‌شود و متنش سر جای نشانه‌ی **خودش** می‌نشیند
+// (nامین نشانه برای nامین جای خالیِ باقی‌مانده)، نه سر جای اولین نشانه: اگر اولی
+// دوباره نرسد و دومی برسد، متنِ دومی حق ندارد جای اولی بنشیند. برمی‌گرداند چند تا
+// هنوز مانده‌اند.
+//
+// `texts` همه‌ی متن‌هایی است که همان نشانه‌ها را با همان ترتیب دارند (متنِ تحویل و
+// رونوشتِ خام)، چون یک پر شدن باید در هر دوشان بنشیند.
+NSInteger ZRetryHoles(NSMutableArray<ZHole *> *holes, NSArray<NSMutableString *> *texts);
+
 // صدا بده، متن بگیر. منبع صدا (میکروفن یا فایل) بیرون از این می‌ماند، پس مسیر
 // زنده و رونویسی فایل واقعا یک پیاده‌سازی دارند نه دو تا.
 @interface ZPipe : NSObject
 - (instancetype)initWithLang:(NSString *)lang;
-@property (nonatomic, readonly) NSString *text;          // همه‌ی تکه‌ها با یک فاصله
+@property (nonatomic, readonly) NSString *text;          // تکه‌ها با یک فاصله، و نشانه‌ی جای خالی
 @property (nonatomic, readonly) NSInteger degradedCuts;  // چند بار مکثی پیدا نشد
 @property (nonatomic, readonly) unsigned long long bytesUp;
 @property (nonatomic, copy) void (^onPart)(NSString *text);   // روی صف خط لوله
+// تکه‌هایی که حرف داشتند و بی‌متن برگشتند. جایشان در `text` با ZHoleMark علامت خورده.
+@property (nonatomic, readonly) NSInteger holes;
+// یک تکه بی‌متن برگشت و علامت خورد؛ صدایش همراه است تا بشود دوباره فرستادش.
+@property (nonatomic, copy) void (^onHole)(ZHole *hole);      // روی صف خط لوله
+// دو تکه‌ی پشت سر هم بی‌متن برگشتند، یعنی اینترنت رفته نه اینکه تکه بد بوده. سرِ
+// هر شکستِ بعدی هم می‌آید تا وقتی یکی برسد؛ «یک بار بس است» کارِ مصرف‌کننده است، چون
+// فقط او می‌داند به کاربر گفته یا نه.
+@property (nonatomic, copy) void (^onLost)(void);             // روی صف خط لوله
 - (void)feed:(NSData *)pcm;   // s16le مونو ۱۶ کیلوهرتز
 - (void)finish;               // ته‌مانده را ببر و تا خالی شدن صف بمان. بلوکه
 - (void)cancel;
@@ -219,6 +261,12 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 // اختیاری، و عمدا: تنها مصرف‌کننده‌اش رابط کاربری است. مسیر اندازه‌گیری و مسیر دسته‌ای
 // نه لازمش دارند نه باید با آمدنش رفتارشان عوض شود.
 - (void)enginePreview:(NSString *)text;
+// یک تکه بی‌متن برگشت و جایش در متن علامت خورد. روی نخ اصلی و **همان لحظه**، نه سر
+// پایان: کاربر هنوز دارد حرف می‌زند و باید همان‌جا بداند یک جمله جا مانده.
+//
+// صدای تکه همراهش می‌آید و نگه داشتنش کارِ مصرف‌کننده است، چون تنها اوست که می‌داند
+// متن کجا رفته و سر Esc باید کجا وصله شود.
+- (void)engineHole:(ZHole *)hole;
 @end
 
 @class ZRecorder;

@@ -10,6 +10,10 @@
 // اندازه‌گیری روی ضبط ۰۱: هم‌پوشانی ۲٫۵ ثانیه‌ای به‌اضافه‌ی ZStitchOverlapMax پنج
 // کلمه را بی‌صدا خورد، تکرارپذیر، در حالی که همان صدا در یک پنجره‌ی جدا سالم
 // رونویسی می‌شد. برش سر سکوت هیچ‌وقت مشکل نبود؛ هم‌پوشانی و دوخت بودند.
+//
+// و یک استثنا که خودش قاعده است: تکه‌ای که بی‌متن برگشت **جای خودش را نگه می‌دارد**
+// (ZHoleMark). چسباندنِ ساده اگر تکه‌ی گم‌شده را رد کند، سوراخ را می‌دوزد و حرفِ
+// گم‌شده هیچ ردی نمی‌گذارد؛ همان چیزی که پایین‌تر سر «جای خالی» شرحش هست.
 #import "zemzeme.h"
 
 // آیا این تکه اصلا حرف دارد؟ تکه‌ی سکوت حق دارد بی‌متن بماند و نباید یک رفت‌وبرگشت
@@ -68,7 +72,16 @@ NSString *ZTranscribeSegment(NSData *pcm, NSString *lang, BOOL rawUpload,
         if (ev.hasResults && ev.interim.length > bestInterim.length) bestInterim = ev.interim;
         [lock unlock];
     };
-    s.onClose = ^(NSString *reason) { dispatch_semaphore_signal(sem); };
+    // دلیلِ بسته شدن به لاگ می‌رود و دور ریخته نمی‌شود. تا امروز همین بلاک reason را
+    // می‌انداخت، پس یک خطای TLS یا یک ۴۰۳ هیچ ردی نمی‌گذاشت و تنها چیزی که می‌دیدیم
+    // «متن نیامد» بود، یعنی همان علامتی که هزار علت دیگر هم دارد. پایانِ سالم لاگ
+    // نمی‌شود (هر تکه یک خط، یعنی نویز)؛ فقط آنچه خراب بوده.
+    s.onClose = ^(NSString *reason) {
+        if (reason.length && ![reason isEqualToString:@"ok"]) {
+            ZLog(@"seg[%@]: اتصال بسته شد: %@", lang, reason);
+        }
+        dispatch_semaphore_signal(sem);
+    };
 
     [s connect];
     [s feed:pcm];        // اندازه‌گیری‌شده: یک‌جا دادن همان متن را می‌دهد
@@ -102,6 +115,56 @@ NSString *ZTranscribeSegment(NSData *pcm, NSString *lang, BOOL rawUpload,
     return [text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
 }
 
+// ---------- جای خالی ----------
+// شرحِ کامل سر zemzeme.h. کوتاهش: تکه‌ی بی‌صدا پیش از شبکه رد می‌شود، پس متنِ خالی
+// **همیشه** شکست است. جای شکست در متن با یک نشانه می‌ماند تا ترتیب نشکند، و صدایش
+// نگه داشته می‌شود تا سر Esc یک بار دیگر برود.
+NSString *const ZHoleMark = @"⟨جامانده⟩";
+
+@implementation ZHole
+- (instancetype)initWithPCM:(NSData *)pcm lang:(NSString *)lang {
+    if ((self = [super init])) {
+        _pcm = pcm;
+        _lang = [lang copy];
+    }
+    return self;
+}
+@end
+
+// nامین نشانه را با متن عوض کن (شمارش از صفر). نشانه‌ای که نبود، هیچ کاری نمی‌کند.
+static void ZFillHoleAt(NSMutableString *s, NSUInteger nth, NSString *fill) {
+    NSRange scan = NSMakeRange(0, s.length);
+    for (NSUInteger k = 0; ; k++) {
+        NSRange r = [s rangeOfString:ZHoleMark options:0 range:scan];
+        if (r.location == NSNotFound) return;
+        if (k == nth) {
+            [s replaceCharactersInRange:r withString:fill];
+            return;
+        }
+        scan = NSMakeRange(NSMaxRange(r), s.length - NSMaxRange(r));
+    }
+}
+
+NSInteger ZRetryHoles(NSMutableArray<ZHole *> *holes, NSArray<NSMutableString *> *texts) {
+    NSUInteger i = 0;
+    while (i < holes.count) {
+        ZHole *h = holes[i];
+        NSString *t = ZTranscribeSegment(h.pcm, h.lang, NO, NULL);
+        if (!t.length) {
+            // هنوز نه. نشانه‌اش سر جایش می‌ماند و صدایش هم، پس Esc بعدی فقط یک
+            // تلاشِ دیگر است. اینجا نه صبر می‌شود نه probe: **آدم** تصمیم می‌گیرد
+            // اینترنت کِی برگشته، نه یک حلقه‌ی حدس‌زن.
+            i++;
+            continue;
+        }
+        // iامین نشانه، نه اولین: اگر جای خالیِ قبلی هنوز پر نشده باشد، متنِ این یکی
+        // حق ندارد جای آن بنشیند و ترتیب را جابه‌جا کند.
+        for (NSMutableString *s in texts) ZFillHoleAt(s, i, t);
+        [holes removeObjectAtIndex:i];
+    }
+    return (NSInteger)holes.count;
+}
+
 // ---------- خط لوله ----------
 
 @implementation ZPipe {
@@ -117,6 +180,10 @@ NSString *ZTranscribeSegment(NSData *pcm, NSString *lang, BOOL rawUpload,
     // بود و تکه‌ی در راه دو ثانیه بعد بی‌صدا برمی‌گشت.
     NSInteger _epoch;
     NSInteger _degraded;
+    NSInteger _holes;
+    // چند تکه‌ی **پشت سر هم** بی‌متن برگشته‌اند. یکی می‌تواند بدشانسی باشد؛ دوتای پشت
+    // سر هم یعنی راهِ شبکه بسته است، چون تکه‌ی بی‌صدا اصلا به شبکه نمی‌رسد.
+    NSInteger _streak;
     BOOL _done;
     unsigned long long _bytesUp;
 }
@@ -147,6 +214,13 @@ NSString *ZTranscribeSegment(NSData *pcm, NSString *lang, BOOL rawUpload,
 - (NSInteger)degradedCuts {
     [_lock lock];
     NSInteger n = _degraded;
+    [_lock unlock];
+    return n;
+}
+
+- (NSInteger)holes {
+    [_lock lock];
+    NSInteger n = _holes;
     [_lock unlock];
     return n;
 }
@@ -195,6 +269,10 @@ NSString *ZTranscribeSegment(NSData *pcm, NSString *lang, BOOL rawUpload,
     NSUInteger had = _parts.count;
     [_parts removeAllObjects];
     [_buf setLength:0];
+    // نشانه‌های جای خالی هم رفتند، پس شمارش هم از صفر: متنی که این‌ها به آن اشاره
+    // می‌کردند دیگر وجود ندارد.
+    _holes = 0;
+    _streak = 0;
     _epoch++;
     [_lock unlock];
     ZLog(@"pipe[%@]: دور ریخته شد، %lu تکه‌ی متن و بافر خالی شد", _lang, (unsigned long)had);
@@ -267,7 +345,23 @@ NSString *ZTranscribeSegment(NSData *pcm, NSString *lang, BOOL rawUpload,
         // است نه دفترِ متن. ولی متن، فقط اگر نوبتش هنوز همان باشد.
         self->_bytesUp += up;
         BOOL stale = epoch != self->_epoch;
-        if (t.length && !stale) [self->_parts addObject:t];
+        BOOL hole = NO, lost = NO;
+        if (!stale) {
+            if (t.length) {
+                [self->_parts addObject:t];
+                self->_streak = 0;
+            } else {
+                // **نشانه، نه حذف.** تا امروز این تکه از `_parts` می‌افتاد و بقیه به
+                // هم می‌چسبیدند، پس یک جمله‌ی گم‌شده هیچ ردی نمی‌گذاشت: نه در متن، نه
+                // برای کاربر، نه در لاگ. حالا جایش سر جای خودش می‌ماند تا هم ترتیب
+                // نشکند و هم بشود بعدا دقیقا همان‌جا پرش کرد.
+                [self->_parts addObject:ZHoleMark];
+                self->_holes++;
+                self->_streak++;
+                hole = YES;
+                lost = self->_streak >= 2;
+            }
+        }
         [self->_lock unlock];
         if (stale) {
             // وسط رفت‌وبرگشت شبکه، کاربر دور ریخت. این متن مالِ صدایی است که دیگر
@@ -275,8 +369,20 @@ NSString *ZTranscribeSegment(NSData *pcm, NSString *lang, BOOL rawUpload,
             ZLog(@"pipe[%@] %ld: متن رسید ولی دور ریخته شده بود، انداخته شد", self->_lang, (long)idx);
             return;
         }
+        if (hole) {
+            ZLog(@"pipe[%@] %ld: حرف داشت و بی‌متن برگشت، جایش علامت خورد (%ld جای خالی)",
+                 self->_lang, (long)idx, (long)self.holes);
+            // صدا با خودش می‌رود بیرون: تنها کسی که می‌داند متن کجا نشسته و سر Esc
+            // باید کجا وصله شود، مصرف‌کننده است، نه خط لوله.
+            if (self.onHole) self.onHole([[ZHole alloc] initWithPCM:pcm lang:self->_lang]);
+            if (lost) {
+                ZLog(@"pipe[%@]: دو تکه‌ی پشت سر هم بی‌متن برگشت", self->_lang);
+                if (self.onLost) self.onLost();
+            }
+            return;
+        }
         ZLog(@"pipe[%@] %ld ← %lu نویسه", self->_lang, (long)idx, (unsigned long)t.length);
-        if (t.length && self.onPart) self.onPart(t);
+        if (self.onPart) self.onPart(t);
     });
 }
 

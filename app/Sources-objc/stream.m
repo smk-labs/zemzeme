@@ -67,8 +67,13 @@ static NSString *const kBase = @"https://www.google.com/speech-api/full-duplex/v
     cfg.requestCachePolicy = NSURLRequestReloadIgnoringLocalCacheData;
     _session = [NSURLSession sessionWithConfiguration:cfg delegate:self delegateQueue:nil];
 
+    // **ساختن هر دو، بعد راه انداختنِ هر دو.** ترتیبِ قبلی (بساز، راه بینداز، بعد
+    // برو سراغ بعدی) روی شبکه‌ی کاملا قطع اپ را می‌کشت: تسک پایین همان لحظه خطا
+    // می‌خورد، `reportClose` سشن را invalidate می‌کرد، و `connect` که هنوز داشت تسک
+    // بالا را می‌ساخت به «Task created in a session that has been invalidated»
+    // می‌خورد و پروسه با استثنا می‌مرد. یعنی دقیقا در بدترین لحظه، به‌جای علامت خوردنِ
+    // جای خالی، کلِ اپ می‌رفت. با ساختنِ هر دو پیش از اولین resume، آن پنجره بسته است.
     _downTask = [_session dataTaskWithRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:down]]];
-    [_downTask resume];
 
     NSString *contentType = @"audio/l16; rate=16000";
     if (ZSettings.shared.upstreamFLAC && !_rawUpload) {
@@ -90,6 +95,8 @@ static NSString *const kBase = @"https://www.google.com/speech-api/full-duplex/v
     ureq.HTTPMethod = @"POST";
     [ureq setValue:contentType forHTTPHeaderField:@"Content-Type"];
     _upTask = [_session uploadTaskWithStreamedRequest:ureq];
+    // پایین اول، مثل قبل: کانال نتیجه باید پیش از شروع آپلود گوش ایستاده باشد.
+    [_downTask resume];
     [_upTask resume];
 }
 

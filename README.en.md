@@ -37,6 +37,12 @@ recognition.
   handed over, so neither the clipboard nor the insertion has to have worked for the
   text to survive. Right Command + T opens the last 20, each with a one-click insert
   and copy. The store is an append-only JSONL file you can read with `tail`.
+- **Nothing you said is dropped when the network is.** A piece that comes back with
+  no text is a failure, never an answer, so its place in the text is marked
+  `⟨جامانده⟩` and you are told the moment it happens. Two failures in a row stop the
+  sending (not the recording). The next Esc re-sends only the missing pieces, each
+  landing back in its own slot; nothing incomplete is ever typed at your cursor
+  unless you ask for it with the insert button.
 - **Optional AI cleanup** that sends **text only**, never audio, using your own free
   Gemini key. Off by default.
 - Works over Windows App remote desktop, where it always uses the clipboard route.
