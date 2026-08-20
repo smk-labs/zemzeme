@@ -86,6 +86,37 @@ fi
 rm -rf "$DEST"
 ditto "$APP" "$DEST"          # ditto نه cp: امضا و ویژگی‌های فایل سالم منتقل می‌شوند
 "$LSREGISTER" -f "$DEST" >/dev/null 2>&1 || true
+# اجازه‌ی کی‌چین برای همین بیلد. مسئله این است: کی‌چینِ فایلی هر آیتم را به cdhash
+# پروسه‌ی سازنده می‌بندد (فهرست Partition)، و امضای ما گواهی خودی است و Team ID
+# ندارد، پس مک چیزی جز cdhash ندارد که بنویسد. cdhash با هر بیلد عوض می‌شود، یعنی
+# هر بیلدِ تازه از نظر کی‌چین یک اپِ **دیگر** است و «همیشه اجازه بده»‌ی بیلد قبلی به
+# آن نمی‌رسد. نتیجه‌اش را کاربر این‌طور می‌دید: پنجره‌ی رمز مک، وسطِ کار، بعد از هر
+# به‌روزرسانی، هر بار با اینکه کلید سر جایش بود.
+#
+# پس اجازه همین‌جا تازه می‌شود، نه وسط دیکته. رمز یک بار در ترمینال پرسیده می‌شود،
+# آن هم فقط وقتی واقعا لازم باشد: اگر کلیدی ذخیره نشده یا بیلد تازه از قبل اجازه
+# دارد، هیچ پرسشی در کار نیست. راه همیشگی‌اش گواهی Developer ID است (آن‌وقت
+# Partition به جای cdhash می‌شود teamid: و از هر بیلدی جان سالم می‌برد).
+KSVC="zemzeme-gemini"
+if security find-generic-password -s "$KSVC" >/dev/null 2>&1 \
+   && ! "$DEST/Contents/MacOS/zemzeme" --keyacl >/dev/null 2>&1; then
+  CDHASH=$(codesign -d --verbose=4 "$DEST" 2>&1 | awk -F= '/^CDHash=/{print $2}')
+  if [ -n "$CDHASH" ]; then
+    echo "کلید Gemini برای بیلد تازه اجازه‌ی کی‌چین می‌خواهد. رمزِ ورودِ همین مک را"
+    echo "بنویس (تایپ دیده نمی‌شود). اگر رد کنی فقط «تمیز کردن متن» یک بار رمز می‌پرسد."
+    # فقط stdout به سطل: خروجی‌اش دامپِ خودِ آیتم است. stderr باید بماند، چون
+    # پرسشِ رمز از همان‌جا می‌آید و اگر خفه شود کاربر پشت یک ترمینالِ ساکت منتظر می‌ماند.
+    security set-generic-password-partition-list \
+      -s "$KSVC" -a "$(id -un)" -S "apple:,apple-tool:,cdhash:$CDHASH" >/dev/null || true
+    if "$DEST/Contents/MacOS/zemzeme" --keyacl >/dev/null 2>&1; then
+      echo "اجازه تازه شد: زمزمه دیگر برای این کلید رمز نمی‌پرسد"
+    else
+      echo "warn: اجازه تازه نشد. زمزمه سرِ «تمیز کردن متن» یک بار رمز می‌پرسد،"
+      echo "      یا از منو «کلید Gemini…» کلید را دوباره بگذار تا صاحبش خودِ این بیلد شود"
+    fi
+  fi
+fi
+
 [ "${ZEMZEME_NO_LAUNCH:-0}" = "1" ] || open "$DEST"
 
 echo "installed: $DEST (was_running=$WAS_RUNNING)"

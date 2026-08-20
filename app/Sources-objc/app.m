@@ -1329,6 +1329,7 @@ int main(int argc, const char *argv[]) {
         // کلیدسنج از بیرون: «کلید کار می‌کند» باید بی‌آدم و بی‌پنجره هم قابل پرسیدن
         // باشد، وگرنه تنها راهِ فهمیدنش باز می‌شود یک سشن واقعی و خواندن لاگ.
         if ([args containsObject:@"--checkkey"]) return ZCheckKeyMain();
+        if ([args containsObject:@"--keyacl"]) return ZKeyACLMain();
         // آیکون بسته برای build.sh؛ مثل حالت دسته‌ای قبل از NSApplication برمی‌گردد
         NSUInteger ic = [args indexOfObject:@"--appicon"];
         if (ic != NSNotFound && ic + 1 < args.count) return ZMarkIconMain(args[ic + 1]);
