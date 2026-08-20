@@ -38,20 +38,19 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
     NSString *_statusText;
     NSString *_warning;
     NSString *_workingMsg;
-    NSString *_text;                 // همه‌ی متنِ این سشن، شاملِ دورهای قبلی
-    NSString *_rawText;              // همان، ولی خام: پیش از پاس، برای raw.txt
+    // متن دیگر یک رشته‌ی انباشته نیست: از روی جاهای صف رندر می‌شود (`liveText`).
+    // انباشتن، ترتیب را به یک قرارداد تبدیل می‌کرد و تکه‌ی دیررس جا نداشت بنشیند.
+    ZQueue *_queue;
     // **دو شمارنده، نه یکی.** «نشان داده شد» و «سر کرسر درج شد» دو چیزند و یکی
     // گرفتنشان باگی ساخت که کاربر مستقیم دید: در حالت جمع، تک‌تپ متن را در پنل
     // نشان می‌داد و همان را «تحویل‌شده» علامت می‌زد، پس Esc بعدی چیزی برای درج
     // پیدا نمی‌کرد و متن فقط در کلیپ‌بورد می‌ماند.
     NSUInteger _inserted;            // چقدر از متن واقعا سر کرسر رفته
     NSString *_polished;             // آخرین متنی که مدل نوشته؛ پایه‌ی جوشِ دور بعد
-    // تکه‌هایی که بی‌متن برگشتند و جایشان در `_text` علامت خورده. صدایشان اینجاست تا
-    // سر Esc دوباره برود. **اینجا** و نه داخل موتور، چون موتور سر هر دورِ تازه از نو
-    // ساخته می‌شود و آن‌وقت صدای جامانده‌ی دور قبل با آن دور ریخته می‌شد.
-    NSMutableArray<ZHole *> *_holes;
-    BOOL _holesTried;                // در همین تحویل یک بار دوباره فرستاده شد
-    BOOL _retrying;                  // همین حالا روی شبکه است
+    NSInteger _polishedThrough;      // مدل تا این جا را دیده؛ بعدش خام است
+    // تحویل شده ولی هنوز تکه‌ای در راه است. سشن باز می‌ماند و خودش پر می‌شود؛ Escِ
+    // بعدی یعنی «همین بس است» و می‌بندد، و صف در پس‌زمینه کارش را تمام می‌کند.
+    BOOL _settling;
     NSInteger _dropEpoch;            // چند بار دور ریخته شده؛ جوابِ پاسِ کهنه را می‌اندازد
     NSTimeInterval _secondsBefore;   // ثانیه‌ی دورهای قبلی؛ ساعت روی هم جمع می‌شود
     NSInteger _round;                // چندمین دورِ شنیدن در همین سشن
@@ -71,8 +70,11 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
         _panel = panel;
         _dot = [ZCaretDot new];
         _mode = ZSettings.shared.mode;
-        _text = @"";
-        _holes = [NSMutableArray array];
+        // صف مالِ سشن است نه موتور: موتور سر هر دورِ تازه‌ی شنیدن از نو ساخته
+        // می‌شود و تکه‌ی جامانده‌ی دور قبل باید از آن جان سالم ببرد.
+        _queue = [ZQueue new];
+        __weak typeof(self) ws = self;
+        _queue.onChange = ^{ [ws queueChanged]; };
     }
     return self;
 }
@@ -89,6 +91,7 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
     // «ضبط صدای سشن» حالا معنیِ دیگری دارد و پایین‌تر سر پایان اعمال می‌شود.
     _recorder = [[ZRecorder alloc] initWithURL:[_sessionDir URLByAppendingPathComponent:@"audio.flac"]];
     _engine.recorder = _recorder;
+    _engine.queue = _queue;
     _engine.delegate = self;
 
     [self wirePanel];
@@ -211,133 +214,145 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
     [_panel setPreviewText:text];
 }
 
-// یک تکه بی‌متن برگشت و جایش در متن علامت خورد.
+// حالِ یک جا عوض شد: متنی رسید، یا سرور گفت حرفی نبود، یا یک تلاش نرسید.
 //
-// **همین حالا گفته می‌شود، نه سر پایان.** کاربر هنوز دارد حرف می‌زند و تنها لحظه‌ای
-// که می‌تواند تصمیم بگیرد (بایستد، جمله را دوباره بگوید، صبر کند) همین است. تا امروز
-// نه‌تنها گفته نمی‌شد، اصلا اتفاقی هم ثبت نمی‌شد: تکه بی‌صدا از متن می‌افتاد.
-//
-// دو کانال، چون یکی‌شان همیشه در دسترس نیست: خط وضعیتِ پنل (در حالت کنار کرسر پنلی
-// نیست) و یک صدا (اگر تاگل صدا خاموش باشد نیست). با هم، در هر حالت چیزی می‌رسد.
-- (void)engineHole:(ZHole *)hole {
-    [_holes addObject:hole];
-    _holesTried = NO;
-    ZPlay(ZSoundHole);
-    _warning = [NSString stringWithFormat:
-                @"%ld تکه نرسید و جایش در متن علامت خورد؛ سر Esc دوباره فرستاده می‌شود",
-                (long)_holes.count];
-    [_panel flash:@"یک تکه نرسید؛ جایش در متن علامت خورد"];
-    ZLog(@"session: جای خالی شماره %ld", (long)_holes.count);
-    [self render];
+// **هیچ آژیری اینجا نیست**، و همین نکته‌ی اصلی است. تا دیروز هر تکه‌ی نرسیده یک صدای
+// ناخوشایند و یک هشدار می‌داد و دو تای پشت سر هم پنل را قرمز می‌کرد؛ یعنی یک قطعیِ
+// ده ثانیه‌ای، که خودش خود‌به‌خود درست می‌شد، به یک وضعیتِ اضطراری تبدیل می‌شد که
+// کاربر باید حلش می‌کرد. حالا فقط یک شمار آرام روی پنل می‌نشیند و صف خودش می‌رود.
+- (void)queueChanged {
+    // سشن بسته شده و متن دیررس رسیده: بی‌سروصدا سر جایش می‌نشیند. کلیپ‌بورد دست
+    // نمی‌خورد (کاربر ده دقیقه پیش رفته و حالا چیز دیگری کپی کرده)، ولی text.txt و
+    // ردیف تاریخچه تازه می‌شوند. تاریخچه سر خواندن با sid جمع می‌کند، پس همان ردیفِ
+    // خودِ این سشن کامل می‌شود، نه یک ردیف تازه.
+    if (_finished) {
+        NSString *all = [self.liveText stringByTrimmingCharactersInSet:
+                         NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        if (!all.length) return;
+        [self writeRawTranscript:_queue.text];
+        [self writeTranscript:all];
+        ZHistoryAppend(all, _sessionDir.lastPathComponent, ZHistoryViaAuto, _target.localizedName);
+        ZLog(@"session: تکه‌ی دیررس نشست، ردیف تاریخچه تازه شد (%ld در راه)", (long)_queue.waiting);
+        return;
+    }
+    [self writeRawTranscript:_queue.text];
+    // هنوز داریم می‌شنویم، یا منتظر بسته شدن صدا، یا وسط پاس: فقط شمار تازه شود.
+    // تحویل جای خودش را دارد و دو بار تحویل دادن یعنی دو بار درج.
+    if (_listening || _stopping || _busy != ZBusyNone) {
+        [self render];
+        return;
+    }
+    if (_queue.drained) [self polishThenDeliver];
+    else [self render];
 }
 
-// متن آماده است. از اینجا به بعد دیگر صدایی در کار نیست، فقط متن.
+// متنِ همین لحظه: آنچه مدل تمیز کرده، به‌اضافه‌ی هر چه بعد از آن رسیده. هیچ رشته‌ای
+// انباشته نمی‌شود، پس تکه‌ی دیررس خودش سر جای ساختاری‌اش می‌نشیند و هیچ جراحی لازم
+// ندارد. و پاسِ ردشده هم دیگر «چسباندنِ دستی» لازم ندارد: دُمِ خام از قبل اینجاست.
+- (NSString *)liveText { return [self textWithTail:[_queue textFrom:_polishedThrough extra:NO]]; }
+
+// و متنی که حق دارد سر کرسر برود: فقط تا اولین جای نرسیده. اگر تکه‌ی هفتم در راه
+// باشد و هشتم را حالا درج کنیم، هفتم که برسد جایی برای نشستن ندارد و ترتیبِ حرفِ
+// آدم به هم می‌خورد. صف که خالی باشد، این دقیقا همان متنِ کامل است.
+- (NSString *)caretText {
+    if (_queue.drained) return self.liveText;
+    return [self textWithTail:[_queue settledTextFrom:_polishedThrough]];
+}
+
+- (NSString *)textWithTail:(NSString *)tail {
+    if (!_polished.length) return tail ?: @"";
+    if (!tail.length) return _polished;
+    return [NSString stringWithFormat:@"%@ %@", _polished, tail];
+}
+
+// صدا تمام شد و هر تکه دستِ‌کم یک بار امتحان شده. `text` و `second` را موتور از
+// روی همین صف ساخته و اینجا لازم نیستند: سشن خودش صاحبِ صف است و آنچه می‌خواهد
+// (دُمِ خام، متنِ تمام، متنِ تا اولین جای نرسیده) را از همان‌جا می‌گیرد.
 - (void)engineDidFinish:(NSString *)text second:(NSString *)second took:(NSTimeInterval)took {
     _listening = NO;
-    // انتظارِ صدا←متن تمام شد. اگر پاس هوش مصنوعی در کار باشد، چند خط پایین‌تر
-    // انتظارِ دومی با شکل و رنگِ خودش شروع می‌شود.
+    // انتظارِ صدا←متن تمام شد. اگر پاس هوش مصنوعی در کار باشد، انتظارِ دومی با شکل و
+    // رنگِ خودش شروع می‌شود.
     _busy = ZBusyNone;
     _workingMsg = nil;
     _stopping = NO;    // دورِ بعد باید بتواند دوباره بایستد
-    // **اضافه، نه جایگزین.** یک سشن می‌تواند چند دور شنیدن داشته باشد: تک‌تپ
-    // می‌ایستد و تحویل می‌دهد، تک‌تپ بعدی دوباره راه می‌اندازد. اگر اینجا جایگزین
-    // می‌کردیم، دورِ دوم حرف‌های دورِ اول را پاک می‌کرد.
-    NSString *fresh = [(text ?: @"") stringByTrimmingCharactersInSet:
-                       NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    // دورِ دومی که پاس هوش مصنوعی روشن است، تکه‌ی خام را **جدا** نگه می‌داریم و
-    // چسباندنش را به خودِ مدل می‌سپاریم. شرحش پایین‌تر، سرِ فراخوانِ ادامه.
-    // شرطِ پاس، و **نه `hasKey`**. این یک خط چند وقت پاس هوش مصنوعی را بی‌صدا خاموش
-    // نگه داشته بود: `hasKey` روی نخ اصلی عمدا محافظه‌کار است و فقط جوابِ کش‌شده‌ی
-    // پرسشِ **بی‌پنجره**ی کی‌چین را می‌دهد. روی این دستگاه آن پرسش همیشه ۲۵۲۹۳
-    // (errSecAuthFailed) می‌گیرد، پس سر هر لانچِ تازه `hasKey` نه می‌گفت و پاس اصلا
-    // اجرا نمی‌شد؛ فقط در همان سشنی کار می‌کرد که کاربر تازه کلید را ذخیره کرده بود و
-    // کلید در حافظه بود. یعنی «کار می‌کند» به یک تصادف گره خورده بود.
-    //
-    // معیار درست «کلید را همین حالا در دست دارم» نیست، «می‌دانیم که کلیدی نیست» است:
-    // مسیر خودِ پاس با اجازه‌ی پنجره می‌خواند و فال‌بکِ ابزار `security` را هم دارد، و
-    // اگر آخرش کلید نبود خودش خطای روشن برمی‌گرداند و متن خام سر جایش می‌ماند. پس
-    // امتحان کردن هیچ هزینه‌ای ندارد و نکردنش کلِ فیچر را می‌خورد.
-    // و شرطِ سومی که تازه است: تا جای خالی هست، پاس اجرا نمی‌شود. مدل کلِ متن را از نو
-    // می‌نویسد و نشانه‌های جای خالی را «تمیز» می‌کند، یعنی دقیقا همان دوختنِ سوراخی که
-    // این تغییر برای جلوگیری از آن نوشته شده. اول جاها پر شوند، بعد تمیزکاری.
-    BOOL wantPass = ZSettings.shared.finalPassEnabled && !ZFinalPass.keyKnownMissing
-                 && _holes.count == 0;
-    BOOL weld = _polished.length > 0 && fresh.length > 0 && wantPass;
-    if (fresh.length && !weld) {
-        _text = _text.length ? [NSString stringWithFormat:@"%@ %@", _text, fresh] : fresh;
-    }
-    ZLog(@"session: دور %ld، متن آماده در %.1f ثانیه، %lu نویسه‌ی تازه",
-         (long)_round, took, (unsigned long)fresh.length);
-    // خام، همین‌جا و پیش از پاس. جوش خورده باشد یا نه، آنچه تشخیص گفتار داده روی
-    // دیسک می‌ماند: هر دورِ تازه به دنبالِ قبلی، پس ترتیبِ گفته‌شده حفظ می‌شود.
-    _rawText = _rawText.length ? [NSString stringWithFormat:@"%@ %@", _rawText, fresh] : fresh;
-    [self writeRawTranscript:_rawText];
+    // خام، همین‌جا و پیش از پاس: هرچه تشخیص گفتار داده روی دیسک می‌ماند.
+    [self writeRawTranscript:_queue.text];
+    ZLog(@"session: دور %ld، متن آماده در %.1f ثانیه، %ld در راه",
+         (long)_round, took, (long)_queue.waiting);
     if (_engine.cappedOut) {
         // سقف پنج دقیقه: صریح بگو چه شد و کجا باید برود. سکوت در این لحظه یعنی
         // کاربر فکر کند اپ خراب شده، در حالی که متنش همین‌جاست.
         _warning = @"پنج دقیقه شد و دیکته تمام شد؛ برای صدای بلندتر از رونویسی فایل استفاده کن (Command راست + F)";
     }
-    // پاس هوش مصنوعی، فقط روی متن و فقط اگر خودت خواسته باشی. هیچ‌وقت بلوکه‌کننده
-    // نیست: نتیجه‌اش که نیامد، همین متن خام تحویل می‌شود.
-    if (wantPass) {
-        _busy = ZBusyPolish;
-        _workingMsg = @"در حال تمیز کردن متن…";
-        [self render];
-        __weak typeof(self) ws = self;
-        NSString *before = _polished;
-        NSInteger epoch = _dropEpoch;
-        void (^landed)(NSString *, NSString *) = ^(NSString *out, NSString *err) {
-            __strong typeof(ws) s = ws;
-            if (!s) return;
-            s->_busy = ZBusyNone;
-            s->_workingMsg = nil;
-            // وسط پاس، کاربر دور ریخت. این جواب مالِ متنی است که دیگر وجود ندارد و
-            // نوشتنش یعنی برگشتنِ همان حرف‌هایی که کاربر گفت پاکشان کن. deliver
-            // همان‌طور صدا زده می‌شود، چون متن خالی است و خودش می‌داند چه بگوید.
-            if (s->_dropEpoch != epoch) {
-                ZLog(@"session: پاس رسید ولی متنش دور ریخته شده بود، انداخته شد");
-                [s deliver];
-                return;
-            }
-            if (out.length) {
-                s->_text = out;
-                s->_polished = out;
-            } else {
-                // مدل جواب نداد. تکه‌ی خامی که برای جوش خوردن کنار گذاشته بودیم
-                // نباید گم شود: همین‌جا دستی می‌چسبد. متن را می‌بازیم یعنی هیچ‌وقت.
-                if (weld && fresh.length) {
-                    s->_text = before.length ? [NSString stringWithFormat:@"%@ %@", before, fresh] : fresh;
-                }
-                if (err.length) {
-                    s->_warning = [NSString stringWithFormat:@"تمیز نشد (%@)؛ همان متن خام ماند", err];
-                    ZLog(@"session: پاس رد شد: %@", err);
-                }
-            }
-            [s deliver];
-        };
-        if (weld) {
-            // **ادامه، با کانتکست.** تکه‌ی تازه جدا از متنِ قبلی فرستاده می‌شود و
-            // مدل کل متن را از نو می‌نویسد، پس درز جوش می‌خورد و ضمیر و نقطه‌گذاری
-            // با بقیه یک‌دست درمی‌آید. تکه‌ای که تنها تمیز شود کانتکست ندارد و
-            // درزش از یک فرسنگی پیداست.
-            //
-            // و دو ورودیِ جدا، نه یک متنِ سرهم: مدل باید بداند متنِ اول را خودش
-            // نوشته (پس دست نزند) و دومی خامِ تشخیص گفتار است (پس تمیزش کند).
-            [ZFinalPass.shared runOnText:fresh appendingTo:before
-                                    lang:ZSettings.shared.lang done:landed];
-        } else {
-            [ZFinalPass.shared runOnText:_text second:second
-                                    lang:ZSettings.shared.lang done:landed];
+    [self polishThenDeliver];
+}
+
+// پاس هوش مصنوعی، فقط روی متن و فقط اگر خودت خواسته باشی. هیچ‌وقت بلوکه‌کننده نیست:
+// نتیجه‌اش که نیامد، همین متن خام تحویل می‌شود.
+//
+// و **یک بار، سرِ خالی شدنِ صف**، نه هر دور. مدل کلِ متن را از نو می‌نویسد؛ اگر
+// وسطش جای نرسیده‌ای باشد، آن درز را «تمیز» می‌کند و تکه‌ی بعدی که برسد دیگر جایی
+// ندارد. پس تا آخرین تکه نرسیده، متن خام می‌ماند و همان تحویل می‌شود.
+- (void)polishThenDeliver {
+    NSInteger through = _queue.nextSeq;
+    NSString *fresh = [_queue textFrom:_polishedThrough extra:NO];
+    // شرطِ پاس، و **نه `hasKey`**. این یک خط چند وقت پاس هوش مصنوعی را بی‌صدا خاموش
+    // نگه داشته بود: `hasKey` روی نخ اصلی عمدا محافظه‌کار است و فقط جوابِ کش‌شده‌ی
+    // پرسشِ **بی‌پنجره**ی کی‌چین را می‌دهد. روی این دستگاه آن پرسش همیشه ۲۵۲۹۳
+    // (errSecAuthFailed) می‌گیرد، پس سر هر لانچِ تازه `hasKey` نه می‌گفت و پاس اصلا
+    // اجرا نمی‌شد. معیار درست «کلید را همین حالا در دست دارم» نیست، «می‌دانیم که
+    // کلیدی نیست» است: مسیر خودِ پاس با اجازه‌ی پنجره می‌خواند و اگر آخرش کلید نبود
+    // خودش خطای روشن برمی‌گرداند و متن خام سر جایش می‌ماند.
+    BOOL want = ZSettings.shared.finalPassEnabled && _queue.drained && fresh.length > 0;
+    if (!want || ZFinalPass.keyKnownMissing) {
+        if (want) {
+            // یک منبع حقیقت برای این جمله. «نیست» و «پذیرفته نشد» دو کارِ مختلف از
+            // کاربر می‌خواهند، و تا امروز هر دو «نیست» می‌گفتند.
+            _warning = ZFinalPass.missingKeyHint;
         }
+        [self deliver];
         return;
     }
-    if (ZSettings.shared.finalPassEnabled && !_holes.count) {
-        // یک منبع حقیقت برای این جمله. «نیست» و «پذیرفته نشد» دو کارِ مختلف از کاربر
-        // می‌خواهند، و تا امروز هر دو «نیست» می‌گفتند: کسی که کلیدش رد شده بود
-        // می‌رفت دنبال کلیدِ نداشته، در حالی که مشکل همان کلیدِ داشته بود.
-        _warning = ZFinalPass.missingKeyHint;
+    _busy = ZBusyPolish;
+    _workingMsg = @"در حال تمیز کردن متن…";
+    [self render];
+    __weak typeof(self) ws = self;
+    NSString *before = _polished;
+    NSInteger epoch = _dropEpoch;
+    void (^landed)(NSString *, NSString *) = ^(NSString *out, NSString *err) {
+        __strong typeof(ws) s = ws;
+        if (!s) return;
+        s->_busy = ZBusyNone;
+        s->_workingMsg = nil;
+        // وسط پاس، کاربر دور ریخت. این جواب مالِ متنی است که دیگر وجود ندارد و
+        // نوشتنش یعنی برگشتنِ همان حرف‌هایی که کاربر گفت پاکشان کن.
+        if (s->_dropEpoch != epoch) {
+            ZLog(@"session: پاس رسید ولی متنش دور ریخته شده بود، انداخته شد");
+            [s deliver];
+            return;
+        }
+        if (out.length) {
+            s->_polished = out;
+            s->_polishedThrough = through;
+        } else if (err.length) {
+            // مدل جواب نداد. چیزی گم نمی‌شود و چسباندنِ دستی هم لازم نیست: متن از
+            // روی جاها رندر می‌شود، پس دُمِ خام از قبل سر جایش است.
+            s->_warning = [NSString stringWithFormat:@"تمیز نشد (%@)؛ همان متن خام ماند", err];
+            ZLog(@"session: پاس رد شد: %@", err);
+        }
+        [s deliver];
+    };
+    if (before.length) {
+        // **ادامه، با کانتکست.** تکه‌ی تازه جدا از متنِ قبلی فرستاده می‌شود و مدل کل
+        // متن را از نو می‌نویسد، پس درز جوش می‌خورد و ضمیر و نقطه‌گذاری با بقیه
+        // یک‌دست درمی‌آید. و دو ورودیِ جدا، نه یک متنِ سرهم: مدل باید بداند متنِ اول
+        // را خودش نوشته (پس دست نزند) و دومی خامِ تشخیص گفتار است.
+        [ZFinalPass.shared runOnText:fresh appendingTo:before
+                                lang:ZSettings.shared.lang done:landed];
+    } else {
+        [ZFinalPass.shared runOnText:_queue.text second:[_queue textFrom:0 extra:YES]
+                                lang:ZSettings.shared.lang done:landed];
     }
-    [self deliver];
 }
 
 // ---------- تحویل ----------
@@ -350,15 +365,11 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
 // و درج همیشه فقط **متنِ تازه** را می‌برد (`_inserted`)، وگرنه دورِ دوم کلِ متن
 // را دوباره سر کرسر می‌ریخت.
 - (void)deliver {
-    // **اول دوباره بفرست، بعد بچسبان.** تنها لحظه‌ی درستِ تلاشِ دوباره همین است: آدم
-    // دستش را از کلید برداشته و منتظر متن است، پس چند ثانیه معطلی اینجا هزینه‌ای
-    // ندارد و اگر اینترنت برگشته باشد همین‌جا معلوم می‌شود. نه polling، نه probe،
-    // نه صبرِ خودکار؛ خودِ Esc همان علامتی است که آدم می‌دهد.
+    // **هیچ‌وقت گروگان نگیر.** تا دیروز اگر تکه‌ای نرسیده بود، تحویل همین‌جا می‌ایستاد
+    // و تا Escِ دستیِ کاربر (که خودش یک تلاشِ دوباره بود) هیچ متنی بیرون نمی‌رفت:
+    // ۲۰۲۶-۰۸-۱۹ یک تکه‌ی ۱٫۴ ثانیه‌ای ۱۷۴۱ نویسه را همین‌طور نگه داشت. آنچه رسیده
+    // حقِ کاربر است و همین حالا می‌رود؛ بقیه خودشان می‌رسند و همین‌جا می‌نشینند.
     BOOL wouldInsert = (_mode == ZModeCursor) || _closing;
-    if (wouldInsert && _holes.count && !_holesTried) {
-        [self retryHoles];
-        return;
-    }
     _busy = ZBusyNone;
     _workingMsg = nil;
     // اینجا و فقط اینجا خاکستری تمام می‌شود. تا این خط، متن هنوز «در حال آمدن» است:
@@ -366,9 +377,17 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
     // دُم خاکستری دقیقا همان‌قدر می‌ماند که کار واقعا تمام نشده. رنگ یک معنی دارد و
     // همین است.
     [_panel setPreviewText:nil];
-    NSString *all = [_text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSString *all = [self.liveText stringByTrimmingCharactersInSet:
+                     NSCharacterSet.whitespaceAndNewlineCharacterSet];
     [self writeTranscript:all];
 
+    if (!all.length && _queue.waiting) {
+        // هنوز هیچ تکه‌ای نرسیده ولی همه در راه‌اند. این «چیزی نشنیدم» نیست و نباید
+        // این‌طور گفته شود: حرف زده شده، صدایش روی دیسک است، و فقط هنوز متن نشده.
+        _paused = YES;
+        [self showWaiting];
+        return;
+    }
     if (!all.length) {
         // هیچ حرفی شنیده نشد. این دلیل بستنِ پنل نیست: کاربر شاید تازه دارد فکر
         // می‌کند. قبلا همین‌جا سشن بسته می‌شد و کسی که یک لحظه ساکت مانده بود،
@@ -409,7 +428,7 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
     // و جای خالی که مانده باشد، امضا نمی‌خورد: این تحویلِ تمام‌شده نیست، متنی است
     // که چند خط پایین‌تر نگه داشته می‌شود تا تکه‌هایش برسند. امضا زدن روی متنِ
     // نشانه‌دار یعنی گفتنِ «تمام شد» به چیزی که تمام نشده.
-    BOOL sign = !_holes.count;
+    BOOL sign = _queue.drained;
     [ZInjector copyFinal:sign ? ZSigned(all) : all];
 
     // درج کِی: در حالت کرسر همیشه (پنلی نیست که متن را نشان بدهد)، و در حالت جمع
@@ -417,9 +436,13 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
     //
     // و هیچ‌وقت وقتی جای خالی مانده: متنِ سوراخ‌دار سر کرسرِ کسی نمی‌رود. تحویلِ نصفه
     // بدترین حالت است، چون کاربر نمی‌فهمد چه چیزی کم است.
-    BOOL insert = wouldInsert && !_holes.count;
-    if (insert) {
-        NSString *fresh = _inserted < all.length ? [all substringFromIndex:_inserted] : @"";
+    // و آنچه سر کرسر می‌رود فقط تا اولین جای نرسیده است (`caretText`): درج کردنِ
+    // متنِ بعد از یک جای خالی یعنی وقتی آن جا پر شد، حرف‌ها جابه‌جا سر کرسر نشسته
+    // باشند. تحویل نمی‌ایستد، فقط از جایی که ترتیبش قطعی است جلوتر نمی‌رود.
+    if (wouldInsert) {
+        NSString *src = [self.caretText stringByTrimmingCharactersInSet:
+                         NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        NSString *fresh = _inserted < src.length ? [src substringFromIndex:_inserted] : @"";
         fresh = [fresh stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
         if (fresh.length) {
             // یک فاصله‌ی آخر، ولی فقط وقتی سشن ادامه دارد. دو کار می‌کند: تکه‌ی
@@ -429,35 +452,22 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
             // امضا مالِ **درجِ آخر** است، نه هر تکه. در حالت کرسر متن سر هر مکث
             // تکه‌تکه سر کرسر می‌رود؛ اگر امضا به هر تکه می‌چسبید، متنِ کاربر لای
             // چند امضا تکه‌تکه می‌شد. `_closing` همان مرزِ «این آخرین تکه است».
-            [self injectAtCaret:_closing ? ZSigned(fresh) : [fresh stringByAppendingString:@" "]
+            BOOL last = _closing && _queue.drained;
+            [self injectAtCaret:last ? ZSigned(fresh) : [fresh stringByAppendingString:@" "]
                            keep:ZSigned(all)];
-            _inserted = all.length;
+            _inserted = src.length;
         }
     }
 
-    // جای خالی مانده: سشن بسته نمی‌شود و متن در پنل می‌ماند، پس Esc بعدی خودش یک
-    // تلاشِ تازه است و بس. راهِ گریز هم هست و دکمه‌ی تازه‌ای لازم ندارد: دکمه‌ی درج (I)
-    // همین متن را عینا، با نشانه‌ها، سر کرسر می‌برد.
-    if (_holes.count) {
-        if (_mode == ZModeCursor) {
-            // کنار کرسر پنلی نیست که متن در آن بماند، پس همین‌جا می‌آید. تنظیم عوض
-            // نمی‌شود: این استثنای همین سشن است، نه انتخاب تازه‌ی کاربر.
-            _mode = ZModeCollect;
-            [_dot hide];
-            [_panel show];
-            [_panel setEditorText:all];
-        }
-        _holesTried = NO;    // Esc بعدی دوباره می‌فرستد، نه اینکه یک‌راست تحویل بدهد
+    // تکه‌ای در راه است: متن رفت، ولی سشن باز می‌ماند و خودش کامل می‌شود. نه پنجره‌ی
+    // خطا، نه صدای ناخوشایند، نه کاری که کاربر باید بکند. Escِ بعدی یعنی «همین بس
+    // است» و می‌بندد؛ صف در پس‌زمینه کارش را تمام می‌کند و ردیف تاریخچه را تازه.
+    if (_queue.waiting) {
         _paused = YES;
-        _warning = nil;
-        _statusText = [NSString stringWithFormat:
-                       @"%ld تکه هنوز نرسیده. اینترنت که وصل شد Esc را بزن تا دوباره بفرستم؛ "
-                        "برای بردنِ همین متن با نشانه‌ها دکمه‌ی درج (I)", (long)_holes.count];
-        ZPlay(ZSoundHole);
-        ZLog(@"session: تحویل نگه داشته شد، %ld جای خالی", (long)_holes.count);
-        [self render];
+        [self showWaiting];
         return;
     }
+    _settling = NO;
 
     ZPlay(_closing ? ZSoundFinish : ZSoundInsert);
     if (_closing) {
@@ -471,55 +481,18 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
     [self render];
 }
 
-// جاهای خالی را یک بار دیگر بفرست، بعد تحویل بده. بلوکه است (شبکه)، پس روی نخ
-// پس‌زمینه؛ نخ اصلی باید آزاد بماند تا پنل نشان بدهد که کاری در جریان است.
-//
-// آرایه **جابه‌جا** می‌شود نه پاک: اگر کاربر وسط همین کار دور بریزد یا دستی درج کند،
-// `_holes` یک آرایه‌ی تازه می‌گیرد و این کار روی همان آرایه‌ی قدیمی تمام می‌شود و
-// جوابش بی‌اثر می‌افتد. بی این، دو نخ روی یک آرایه می‌نوشتند.
-- (void)retryHoles {
-    _holesTried = YES;
-    _retrying = YES;
-    _busy = ZBusySpeech;
-    _workingMsg = _holes.count == 1
-        ? @"تکه‌ی جامانده را دوباره می‌فرستم…"
-        : [NSString stringWithFormat:@"%ld تکه‌ی جامانده را دوباره می‌فرستم…", (long)_holes.count];
-    _statusText = _workingMsg;
+// شمارِ آرام. تنها چیزی که کاربر باید بداند این است که کار خودش دارد پیش می‌رود و
+// کاری از او خواسته نشده. عدد هم برای همین است: بی عدد، «هنوز کامل نشده» می‌تواند
+// یعنی یک کلمه یا یعنی نصف دیکته.
+- (void)showWaiting {
+    _settling = YES;
+    _errorState = NO;
     _warning = nil;
+    NSInteger n = _queue.waiting;
+    _statusText = n == 1
+        ? @"یک تکه هنوز در راه است؛ خودش می‌رسد و همین‌جا کامل می‌شود"
+        : [NSString stringWithFormat:@"%ld تکه هنوز در راه است؛ خودشان می‌رسند و همین‌جا کامل می‌شود", (long)n];
     [self render];
-
-    NSMutableArray<ZHole *> *holes = _holes;
-    // هر دو متنی که نشانه دارند، با هم: متنِ تحویل و رونوشتِ خام. اگر فقط یکی پر شود،
-    // raw.txt برای همیشه سوراخِ پرشده را سوراخ نشان می‌دهد.
-    NSMutableString *text = [(_text ?: @"") mutableCopy];
-    NSMutableString *raw = [(_rawText ?: @"") mutableCopy];
-    __weak typeof(self) ws = self;
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        NSInteger left = ZRetryHoles(holes, @[text, raw]);
-        dispatch_async(dispatch_get_main_queue(), ^{
-            typeof(self) s = ws;
-            if (!s) return;
-            // پیش از هر شرطی: چیزی روی شبکه نمانده. اگر این زیرِ شرطِ پایین می‌رفت،
-            // یک «دور ریختن» وسط کار پرچم را برای همیشه بالا نگه می‌داشت و Esc تا
-            // آخر عمرِ سشن بی‌اثر می‌شد.
-            s->_retrying = NO;
-            if (s->_holes != holes) {
-                ZLog(@"session: جواب تلاشِ دوباره رسید ولی متنش دور ریخته شده بود");
-                return;
-            }
-            s->_text = [text copy];
-            s->_rawText = raw.length ? [raw copy] : nil;
-            [s writeRawTranscript:s->_rawText];
-            ZLog(@"session: تلاشِ دوباره روی جای خالی، %ld هنوز مانده", (long)left);
-            // همه‌شان رسیدند، ولی متن تمیز نشده: پاس روی متنِ سوراخ‌دار اجرا نشد و
-            // حالا دیگر دوری نمانده که در آن اجرا شود. سکوت اینجا یعنی کاربر ببیند
-            // تاگل روشن است و متن خام، و نداند چرا.
-            if (!left && ZSettings.shared.finalPassEnabled) {
-                s->_warning = @"متن خام ماند: تا جای خالی بود، تمیز کردن متن اجرا نشد";
-            }
-            [s deliver];
-        });
-    });
 }
 
 // یک درج، سر کرسرِ همان اپی که سر شروع جلو بود. نه تکه‌تکه، نه پاک‌کردنی.
@@ -576,6 +549,12 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
 - (void)applyAudioPolicy {
     [_recorder finish];
     if (ZSettings.shared.recordSessions) return;
+    // و تا تکه‌ای در راه است، صدا نمی‌رود. تکه‌ی در انتظار هیچ نسخه‌ی جداگانه‌ای از
+    // صدای خودش ندارد؛ audio.flac تنها جایی است که آن چند ثانیه در آن هست.
+    if (_queue.waiting) {
+        ZLog(@"session: صدا نگه داشته شد، %ld تکه هنوز در راه است", (long)_queue.waiting);
+        return;
+    }
     NSURL *audio = _recorder.url;
     if (audio) [NSFileManager.defaultManager removeItemAtURL:audio error:nil];
 }
@@ -620,6 +599,7 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
     _engine = [[ZEngine alloc] initWithLang:ZSettings.shared.lang];
     _engine.delegate = self;
     _engine.recorder = _recorder;
+    _engine.queue = _queue;
     NSError *err = nil;
     if (![_engine startWithError:&err]) {
         _errorState = YES;
@@ -635,7 +615,7 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
 }
 
 - (void)copyNow {
-    NSString *t = (_mode == ZModeCollect && [_panel editorText].length) ? [_panel editorText] : _text;
+    NSString *t = (_mode == ZModeCollect && [_panel editorText].length) ? [_panel editorText] : self.liveText;
     if (!t.length) {
         [_panel flash:@"هنوز متنی نیست"];
         return;
@@ -649,7 +629,7 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
 }
 
 - (void)insertHere {
-    NSString *t = (_mode == ZModeCollect && [_panel editorText].length) ? [_panel editorText] : _text;
+    NSString *t = (_mode == ZModeCollect && [_panel editorText].length) ? [_panel editorText] : self.liveText;
     if (!t.length) {
         [_panel flash:@"هنوز متنی نیست"];
         return;
@@ -663,15 +643,6 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
     [self injectAtCaret:out keep:out];
     _inserted = t.length;    // طولِ متنِ خودِ کاربر، بی امضا: امضا هیچ‌وقت شمرده نمی‌شود
     ZPlay(ZSoundInsert);
-    // راهِ گریزِ متنِ سوراخ‌دار، و همین یکی: کاربر گفت همین‌طور که هست ببرش. از این به
-    // بعد جاهای خالی پذیرفته‌اند و Esc دیگر جلوی بسته شدن سشن را نمی‌گیرد، وگرنه هر
-    // Esc یک تلاشِ بی‌پایان می‌شد. آرایه‌ی تازه، نه پاک کردن: تلاشِ در پروازِ احتمالی
-    // باید روی آرایه‌ی قدیمی تمام شود و بی‌اثر بیفتد.
-    if (_holes.count) {
-        ZLog(@"session: %lu جای خالی با درجِ دستی پذیرفته شد", (unsigned long)_holes.count);
-        _holes = [NSMutableArray array];
-        _holesTried = NO;
-    }
     [_panel flash:@"درج شد"];
 }
 
@@ -684,16 +655,16 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
 // از همان‌جا برمی‌گشتند، پس پنل می‌گفت «همه‌چیز دور ریخته شد» و Esc بعدی همان
 // حرف‌ها را سر کرسر می‌ریخت. پیامی که کاربر می‌خواند و کاری که اپ می‌کرد، دو چیز.
 - (void)dropPending {
+    // یک خط، و هر سه جایی که متن می‌تواند قایم شود را می‌برد: جاهای رونویسی‌شده،
+    // صدای نبریده، و تکه‌ای که همین حالا روی شبکه است (نوبتِ صف یکی جلو می‌رود، پس
+    // جوابش که آمد بی‌اثر می‌افتد). تا دیروز این سه تا سه جای مختلف بودند و یکی‌شان
+    // همیشه جا می‌ماند: پنل می‌گفت همه‌چیز پاک شد و Esc بعدی همان حرف‌ها را برمی‌گرداند.
     [_engine discardText];
-    _text = @"";
-    _rawText = nil;    // خام هم دور ریخته می‌شود، وگرنه raw.txt حرفِ پاک‌شده را نگه می‌داشت
     _polished = nil;
+    _polishedThrough = 0;
     _inserted = 0;
     _secondsBefore = 0;
-    // صدای جاماندهِ حرفی که دیگر وجود ندارد. آرایه‌ی تازه، نه پاک کردن: اگر همین حالا
-    // تلاشِ دوباره‌ای روی شبکه باشد، روی آرایه‌ی قدیمی تمام می‌شود و جوابش می‌افتد.
-    _holes = [NSMutableArray array];
-    _holesTried = NO;
+    _settling = NO;
     // و درِ سومِ برگشت: پاسِ هوش مصنوعیِ در جریان. نتیجه‌اش چند ثانیه بعد می‌رسد و
     // متنِ **قبلِ** دور ریختن را می‌نویسد. یک نوبت کافی است که آن جواب بی‌اثر بماند.
     _dropEpoch++;
@@ -759,9 +730,14 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
 // تک‌تپ فقط نشانش می‌دهد.
 - (void)finish {
     if (_finished) return;
-    // وسط تلاشِ دوباره، Esc یعنی «همان را ادامه بده». جوابش که رسید خودش تحویل
-    // می‌دهد؛ بی این، متنِ پیش از تلاش یک بار الکی از مسیر تحویل رد می‌شد.
-    if (_retrying) return;
+    // متن از قبل رفته و فقط تکه‌ای در راه مانده. Escِ دوم یعنی «همین بس است»: پنل
+    // می‌رود و صف در پس‌زمینه کارش را تمام می‌کند؛ آنچه دیر برسد در text.txt و در
+    // ردیف تاریخچه‌ی همین سشن می‌نشیند.
+    if (_settling) {
+        ZLog(@"session: بسته شد و %ld تکه در پس‌زمینه ماند", (long)_queue.waiting);
+        [self endNow];
+        return;
+    }
     _closing = YES;
     if (_paused) {
         // شنیدن از قبل ایستاده و متن آماده است: همین حالا تحویل بده و ببند،
@@ -800,6 +776,8 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
     [self finish];
 }
 
+// صف اینجا **کشته نمی‌شود**: تکه‌ی در راه بعد از رفتنِ پنل هم می‌رسد و جای خودش
+// می‌نشیند. تنها چیزی که می‌رود، رابط است.
 - (void)endNow {
     if (_finished) return;
     _finished = YES;

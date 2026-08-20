@@ -31,26 +31,20 @@
     NSTimeInterval _seconds; // ثانیه‌ی صدای بلعیده‌شده، از بایت‌ها نه از ساعت دیوار
     BOOL _stopping;
     BOOL _fileMode;
-    BOOL _netLost;           // دو تکه‌ی پشت سر هم بی‌متن برگشت؛ شنیدن ایستاده
     dispatch_source_t _cap;
-}
-
-// متنِ یک زنجیره‌ی خط لوله: بازنشسته‌ها به ترتیب، بعد زنده. همان قاعده‌ی سرهم کردنِ
-// تکه‌ها، یک پله بالاتر: با یک فاصله به هم می‌چسبند و بس.
-static NSString *ZChainText(NSArray<ZPipe *> *retired, ZPipe *live) {
-    NSMutableArray<NSString *> *parts = [NSMutableArray array];
-    for (ZPipe *p in retired) {
-        NSString *t = p.text;
-        if (t.length) [parts addObject:t];
-    }
-    NSString *t = live.text;
-    if (t.length) [parts addObject:t];
-    return [parts componentsJoinedByString:@" "];
 }
 
 - (instancetype)initWithLang:(NSString *)lang {
     if ((self = [super init])) _lang = [lang copy];
     return self;
+}
+
+// سشن معمولا صف را می‌دهد، چون از موتور عمر بیشتری دارد. مسیر اندازه‌گیری نمی‌دهد
+// و آنجا یک صفِ خودی درست است: یک دور، یک متن، و کسی که بعدا سراغ جای نرسیده بیاید
+// وجود ندارد.
+- (ZQueue *)queue {
+    if (!_queue) _queue = [ZQueue new];
+    return _queue;
 }
 
 - (NSTimeInterval)seconds { return _seconds; }
@@ -73,6 +67,8 @@ static NSString *ZChainText(NSArray<ZPipe *> *retired, ZPipe *live) {
     [_en discard];
     for (ZPipe *p in _retired) [p discard];
     for (ZPipe *p in _retiredSecond) [p discard];
+    // و جاهای رونویسی‌شده، یک بار، برای همه: صف مالِ کلِ سشن است.
+    [self.queue discard];
 }
 
 // ---------- شروع ----------
@@ -138,6 +134,7 @@ static NSString *ZChainText(NSArray<ZPipe *> *retired, ZPipe *live) {
         _retiredSecond = [NSMutableArray array];
     }
     _fa = [[ZPipe alloc] initWithLang:_lang];
+    _fa.queue = self.queue;
     // پاس دوم انگلیسی روی همان صدا: رایگان، موازی، و روی متنِ پر از اصطلاح خیلی خوب.
     // اندازه‌گیری روی ضبط ۰۲: پاس فارسی از «دیتابیس پستگرس» به بعد را کامل انداخته
     // بود و پاس انگلیسی همان‌جا شنیده بود. ولی روی ۰۷ (اصطلاح‌های رایج) تقریبا هیچ،
@@ -148,49 +145,12 @@ static NSString *ZChainText(NSArray<ZPipe *> *retired, ZPipe *live) {
     // بازنشسته‌ی پاس دوم را زنده نگه می‌داشت و صدای تازه را هم به آن می‌داد.
     _en = (ZSettings.shared.secondPass && [_lang hasPrefix:@"fa"])
         ? [[ZPipe alloc] initWithLang:@"en-US"] : nil;
-
-    // جای خالی فقط از خط لوله‌ی اصلی گزارش می‌شود، نه از پاس دوم: متنِ پاس دوم هیچ‌وقت
-    // تحویل کاربر نمی‌شود (فقط کانتکستِ پاس هوش مصنوعی است)، پس سوراخش نه دیده می‌شود
-    // نه ارزش یک آژیر را دارد.
-    //
-    // و اینجا، نه سر ساختِ موتور: این تابع سر عوض کردن زبان دوباره صدا زده می‌شود و
-    // خط لوله‌ی تازه باید سیمِ خودش را داشته باشد.
-    __weak typeof(self) weak = self;
-    _fa.onHole = ^(ZHole *h) {
-        typeof(self) me = weak;
-        if (!me || me->_stopping) return;
-        dispatch_async(dispatch_get_main_queue(), ^{
-            id<ZEngineDelegate> d = me->_delegate;
-            if ([d respondsToSelector:@selector(engineHole:)]) [d engineHole:h];
-        });
-    };
-    _fa.onLost = ^{ [weak netLost]; };
-}
-
-// دو تکه‌ی پشت سر هم بی‌متن برگشتند. تکه‌ی بی‌صدا اصلا به شبکه نمی‌رسد، پس این یعنی
-// راهِ شبکه بسته است، نه اینکه صدا بد بوده.
-//
-// فرستادن **می‌ایستد**، و همین درست‌ترین کارِ ممکن است: ادامه دادن یعنی هر جمله‌ی
-// بعدی هم یک سوراخ تازه شود، در حالی که کاربر هنوز فکر می‌کند دارد دیکته می‌کند.
-//
-// ولی ضبط نمی‌ایستد، و این تفاوت حیاتی است: قرارِ این اپ از روز اول همین بوده که
-// «اگر شبکه بمیرد، صدا سر جایش است». اگر اینجا مثل مکثِ معمولی صدا را دور می‌ریختیم،
-// حرفِ همان ده ثانیه‌ای که کاربر تا دیدنِ پیام ادامه داده بود، **بی هیچ نشانه‌ای**
-// گم می‌شد؛ یعنی دقیقا همان باگی که این تغییر برای بستنش نوشته شده، یک پله عقب‌تر.
-//
-// و آنچه اینجا **نیست**: نه reachability، نه probe، نه backoff، نه انتظار. پشت پروکسی
-// و مسیر tun این دستگاه، سیستم‌عامل «آنلاین» می‌گوید در حالی که گوگل در دسترس نیست،
-// پس هر سنجشِ خودکاری دروغ درمی‌آید. **آدم** تصمیم می‌گیرد اینترنت کِی برگشته: یک
-// بار Esc، و جاهای خالی دوباره می‌روند.
-- (void)netLost {
-    if (_stopping || _netLost) return;
-    _netLost = YES;
-    ZLog(@"engine: دو تکه پشت سر هم بی‌متن برگشت، فرستادن ایستاد و ضبط ادامه دارد");
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [self->_delegate engineState:ZEngineGaveUp
-                             message:@"اینترنت نمی‌رسد؛ فرستادن ایستاد و صدا روی دیسک ضبط می‌شود. "
-                                      "وصل که شد Esc را بزن تا دوباره بفرستم"];
-    });
+    _en.queue = self.queue;
+    // «موازی» بالا دیگر تحت‌اللفظی نیست و نباید باشد: هر دو خط لوله در یک صف‌اند و
+    // یکی یکی می‌روند. نقطه‌ی رایگان جایی نیست که دو سشن همزمان رویش باز کنیم، و
+    // تکه‌ی هفت ثانیه‌ای در حدود دو ثانیه رونویسی می‌شود، پس حتی با دو برابر شدنِ
+    // کار، صف از گوینده عقب نمی‌ماند.
+    _en.extra = YES;
 }
 
 // ---------- زبان، وسط سشن ----------
@@ -242,9 +202,11 @@ static NSString *ZChainText(NSArray<ZPipe *> *retired, ZPipe *live) {
     // ضبط اول، خط لوله بعد. فایل روی دیسک مرجع همه‌چیز است: اگر شبکه بمیرد یا اپ
     // کرش کند، صدا سر جایش است. تشخیص را می‌شود دوباره گرفت، حرفِ گفته‌شده را نه.
     [_recorder feed:pcm];
-    // اینترنت رفته و تا خودِ آدم نگوید برگشته، چیزی روی سیم نمی‌رود: هر تکه‌ی تازه
-    // فقط یک سوراخِ تازه می‌شد. **بعد از** ضبط، چون فایل روی دیسک از این هم مهم‌تر است.
-    if (_netLost) return;
+    // و بریدن **هیچ‌وقت نمی‌ایستد**، حتی وقتی هیچ تکه‌ای نمی‌رسد. تا دیروز دو شکستِ
+    // پشت سر هم فرستادن را متوقف می‌کرد و پنل قرمز می‌شد؛ یعنی قطعیِ ده ثانیه‌ای،
+    // بقیه‌ی دیکته را هم می‌خورد و کاربر باید خودش می‌فهمید و Esc می‌زد. حالا تکه‌ها
+    // بریده و صف می‌شوند و صف خودش می‌رود سراغشان. **بعد از** ضبط، چون فایل روی
+    // دیسک از همه‌ی این‌ها مهم‌تر است.
     [_fa feed:pcm];
     [_en feed:pcm];
     // و آخر از همه، چون مهم‌ترین نیست: پیش‌نمایش. **بعد از** ضبط و خط لوله، تا اگر
@@ -312,9 +274,6 @@ static NSString *ZChainText(NSArray<ZPipe *> *retired, ZPipe *live) {
 - (void)resume {
     if (!_paused) return;
     _paused = NO;
-    // «ادامه بده» یعنی دوباره بفرست. اگر کاربر وسط یک قطعی دستی مکث کرده باشد، بی این
-    // خط، ادامه دادن فقط ظاهری بود: صدا می‌آمد و هیچ‌وقت روی سیم نمی‌رفت.
-    _netLost = NO;
     [_delegate engineState:ZEngineListening message:nil];
 }
 
@@ -339,19 +298,25 @@ static NSString *ZChainText(NSArray<ZPipe *> *retired, ZPipe *live) {
     // خالی کردن صف بلوکه است، پس روی نخ پس‌زمینه. نخ اصلی باید آزاد بماند تا پنل
     // بتواند «یک لحظه…» را نشان بدهد؛ یخ زدنِ رابط سر پایان بدترین لحظه‌ی ممکن است.
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        // بازنشسته‌ها هم منتظر می‌مانند. تقریبا همیشه از قبل تمام شده‌اند (سر عوض
+        // بازنشسته‌ها هم بریده می‌شوند. تقریبا همیشه از قبل تمام شده‌اند (سر عوض
         // کردن زبان finish خورده‌اند) و این حلقه آنی رد می‌شود؛ ولی اگر کاربر یک
-        // ثانیه بعدِ عوض کردن زبان سشن را ببندد، متنِ آن تکه هنوز در راه است و
-        // نباید جا بماند.
+        // ثانیه بعدِ عوض کردن زبان سشن را ببندد، ته‌مانده‌ی آن بافر هنوز نبریده است.
         for (ZPipe *p in self->_retired) [p finish];
         for (ZPipe *p in self->_retiredSecond) [p finish];
         [self->_fa finish];
         [self->_en finish];
-        NSString *fa = ZChainText(self->_retired, self->_fa);
-        NSString *en = ZChainText(self->_retiredSecond, self->_en);
+        // و انتظار **فقط تا دورِ اول**: هر تکه یک بار امتحان شود، نه اینکه تا رسیدنِ
+        // همه بمانیم. تفاوتش همان چیزی است که این تغییر برای آن نوشته شد: با انتظارِ
+        // کامل، یک قطعیِ اینترنت یعنی Esc هیچ متنی تحویل نمی‌دهد و کلِ دیکته گروگان
+        // یک تکه می‌ماند. آنچه رسیده حقِ کاربر است و همین حالا می‌رود؛ بقیه خودشان
+        // می‌رسند و پنل خودش پر می‌شود.
+        [self.queue waitForFirstPass];
+        NSString *fa = [self.queue textFrom:0 extra:NO];
+        NSString *en = [self.queue textFrom:0 extra:YES];
         NSTimeInterval took = [NSDate.date timeIntervalSinceDate:t0];
-        ZLog(@"engine: پایان، %.0f ثانیه صدا، %.1f ثانیه تا متن، %lu نویسه، %ld برش تحمیلی",
-             self->_seconds, took, (unsigned long)fa.length, (long)self.degradedCuts);
+        ZLog(@"engine: پایان، %.0f ثانیه صدا، %.1f ثانیه تا متن، %lu نویسه، %ld برش تحمیلی، %ld در راه",
+             self->_seconds, took, (unsigned long)fa.length, (long)self.degradedCuts,
+             (long)self.queue.waiting);
         dispatch_async(dispatch_get_main_queue(), ^{
             [self->_delegate engineDidFinish:fa second:en.length ? en : nil took:took];
         });

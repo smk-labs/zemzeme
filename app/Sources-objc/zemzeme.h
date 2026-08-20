@@ -32,7 +32,6 @@ typedef NS_ENUM(NSInteger, ZSound) {
     ZSoundMode,       // عوض کردن حالت
     ZSoundLang,       // عوض کردن زبان
     ZSoundPolish,     // پاس هوش مصنوعی نشست
-    ZSoundHole,       // یک تکه بی‌متن برگشت؛ عمدا همان صدای ناخوشایندِ دور ریختن
 };
 void ZPlay(ZSound s);
 NSString *ZFaDigits(NSString *s);
@@ -230,6 +229,10 @@ typedef NS_ENUM(NSInteger, ZSlotState) {
 @property (nonatomic, strong) NSData *pcm;  // فاز یک: صدا در حافظه
 @property (nonatomic) NSInteger tries;
 @property (nonatomic) BOOL secondOpinionUsed;
+// جای پاس دومِ انگلیسی. متنش هیچ‌وقت تحویل کاربر نمی‌شود (فقط کانتکستِ پاس هوش
+// مصنوعی است)، پس نه در شمارِ «در راه» می‌آید و نه سرِ قطعی دوباره فرستاده می‌شود:
+// دو برابر کردنِ تلاش برای متنی که دیده نمی‌شود، فقط خرج کردنِ همان خطِ نازک است.
+@property (nonatomic) BOOL extra;
 @end
 
 // پله‌های عقب‌نشینیِ **مشترک**: ۱، ۲، ۴، ۸، ۱۵، ۳۰ ثانیه، سقف ۳۰.
@@ -245,9 +248,14 @@ NSTimeInterval ZBackoffDelay(NSInteger step);
 // دسترس نیست، پس هر سنجشِ خودکاری دروغ درمی‌آید. **خودِ تلاشِ دوباره** تنها سنجشِ
 // موجود است، و همان کافی است.
 @interface ZQueue : NSObject
-- (NSInteger)add:(NSData *)pcm lang:(NSString *)lang;   // جای تازه، برمی‌گرداند seq
+- (NSInteger)add:(NSData *)pcm lang:(NSString *)lang extra:(BOOL)extra;  // برمی‌گرداند seq
 - (NSString *)text;                     // همه‌ی جاهای رسیده، به ترتیب، با یک فاصله
-- (NSString *)textFrom:(NSInteger)seq;  // فقط از این جا به بعد (دورِ تازه)
+- (NSString *)textFrom:(NSInteger)seq extra:(BOOL)extra;
+// متن تا **اولین جای نرسیده**، و نه یک کلمه بیشتر. تنها متنی که حق دارد سر کرسر
+// برود همین است: اگر تکه‌ی هفتم هنوز در راه باشد و هشتم را الان درج کنیم، وقتی
+// هفتم برسد دیگر جایی برای نشستن ندارد و ترتیبِ حرفِ آدم به هم می‌خورد. پنل و
+// کلیپ‌بورد کلِ `text` را می‌گیرند (دیدن بیشتر ضرری ندارد)، کرسر فقط این را.
+- (NSString *)settledTextFrom:(NSInteger)seq;
 @property (nonatomic, readonly) NSInteger nextSeq;
 @property (nonatomic, readonly) NSInteger waiting;      // چند تکه هنوز در راه است
 @property (nonatomic, readonly) BOOL drained;
@@ -261,62 +269,21 @@ NSTimeInterval ZBackoffDelay(NSInteger step);
 - (void)stop;
 @end
 
-// ---------- جای خالی ----------
-// تکه‌ای که حرف داشت و بی‌متن برگشت.
+// صدا بده، تکه تحویل بگیر. منبع صدا (میکروفن یا فایل) بیرون از این می‌ماند، پس
+// مسیر زنده و رونویسی فایل واقعا یک پیاده‌سازی دارند نه دو تا.
 //
-// یک قاعده همه‌ی این بخش را ساده می‌کند و باید صریح نوشته شود: `ZSegHasVoice` پیش از
-// هر تماس شبکه‌ای تکه‌های ساکت را رد می‌کند، پس **هر تکه‌ای که به شبکه می‌رسد حرف
-// دارد**. یعنی متنِ خالی همیشه شکست است، نه جوابِ درست. با این قاعده نه سنجشِ
-// اینترنت لازم است، نه heuristic، نه backoff: خالی یعنی خراب، و بس.
-//
-// تا امروز همین‌جا حرف گم می‌شد: تکه‌ی بی‌متن از `_parts` می‌افتاد و بقیه به هم
-// می‌چسبیدند، پس یک جمله‌ی گم‌شده هیچ ردی نمی‌گذاشت. هفته‌ی گذشته ۱۲ دقیقه از ۲۲۴
-// دقیقه دیکته (۱۳۹ تکه) همین‌طور پاک شد و ۳۴ سشن با سوراخِ دوخته‌شده درج شدند.
-extern NSString *const ZHoleMark;    // نشانه‌ای که جای متنِ نرسیده می‌نشیند
-
-// صدای یک تکه‌ی جامانده، تا بشود دوباره فرستادش. لایه‌ی ذخیره‌ی تازه‌ای در کار نیست:
-// audio.flac کلِ سشن را از قبل روی دیسک دارد و این فقط تا پایانِ همین سشن در حافظه
-// می‌ماند.
-@interface ZHole : NSObject
-- (instancetype)initWithPCM:(NSData *)pcm lang:(NSString *)lang;
-@property (nonatomic, readonly) NSData *pcm;
-@property (nonatomic, readonly) NSString *lang;
-@end
-
-// جاهای خالی را دوباره بفرست. بلوکه است: فقط از نخ پس‌زمینه.
-//
-// هر کدام که رسید از آرایه برداشته می‌شود و متنش سر جای نشانه‌ی **خودش** می‌نشیند
-// (nامین نشانه برای nامین جای خالیِ باقی‌مانده)، نه سر جای اولین نشانه: اگر اولی
-// دوباره نرسد و دومی برسد، متنِ دومی حق ندارد جای اولی بنشیند. برمی‌گرداند چند تا
-// هنوز مانده‌اند.
-//
-// `texts` همه‌ی متن‌هایی است که همان نشانه‌ها را با همان ترتیب دارند (متنِ تحویل و
-// رونوشتِ خام)، چون یک پر شدن باید در هر دوشان بنشیند.
-NSInteger ZRetryHoles(NSMutableArray<ZHole *> *holes, NSArray<NSMutableString *> *texts);
-
-// صدا بده، متن بگیر. منبع صدا (میکروفن یا فایل) بیرون از این می‌ماند، پس مسیر
-// زنده و رونویسی فایل واقعا یک پیاده‌سازی دارند نه دو تا.
+// و رونویسی اینجا نیست: تکه‌های بریده به `ZQueue` می‌روند. یک صف برای کلِ سشن، پس
+// یک کارگر و یک درخواست در پرواز، حتی وقتی پاس دوم روشن است یا وسط سشن زبان عوض
+// شده و دو خط لوله زنده‌اند.
 @interface ZPipe : NSObject
 - (instancetype)initWithLang:(NSString *)lang;
-@property (nonatomic, readonly) NSString *text;          // تکه‌ها با یک فاصله، و نشانه‌ی جای خالی
+@property (nonatomic, strong) ZQueue *queue;             // تکه‌ها به اینجا می‌روند
+@property (nonatomic) BOOL extra;                        // این خط لوله پاس دوم است
 @property (nonatomic, readonly) NSInteger degradedCuts;  // چند بار مکثی پیدا نشد
-@property (nonatomic, readonly) unsigned long long bytesUp;
-@property (nonatomic, copy) void (^onPart)(NSString *text);   // روی صف خط لوله
-// تکه‌هایی که حرف داشتند و بی‌متن برگشتند. جایشان در `text` با ZHoleMark علامت خورده.
-@property (nonatomic, readonly) NSInteger holes;
-// یک تکه بی‌متن برگشت و علامت خورد؛ صدایش همراه است تا بشود دوباره فرستادش.
-@property (nonatomic, copy) void (^onHole)(ZHole *hole);      // روی صف خط لوله
-// دو تکه‌ی پشت سر هم بی‌متن برگشتند، یعنی اینترنت رفته نه اینکه تکه بد بوده. سرِ
-// هر شکستِ بعدی هم می‌آید تا وقتی یکی برسد؛ «یک بار بس است» کارِ مصرف‌کننده است، چون
-// فقط او می‌داند به کاربر گفته یا نه.
-@property (nonatomic, copy) void (^onLost)(void);             // روی صف خط لوله
 - (void)feed:(NSData *)pcm;   // s16le مونو ۱۶ کیلوهرتز
-- (void)finish;               // ته‌مانده را ببر و تا خالی شدن صف بمان. بلوکه
+- (void)finish;               // ته‌مانده را ببر. بلوکه نیست: انتظارِ متن کارِ صف است
 - (void)cancel;
-// سطل آشغال: متنِ جمع‌شده، صدای نبریده، و **تکه‌های در راه**، هر سه. خط لوله زنده
-// می‌ماند و از صفر ادامه می‌دهد. تکه‌ای که همین حالا روی شبکه است متنش دور ریخته
-// می‌شود، وگرنه چند ثانیه بعد بی‌صدا برمی‌گشت.
-- (void)discard;
+- (void)discard;              // صدای نبریده. جاها مالِ صف‌اند و صف خودش دور می‌ریزد
 @end
 
 // ---------- بافر بک‌لاگ صدا ----------
@@ -357,12 +324,6 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 // اختیاری، و عمدا: تنها مصرف‌کننده‌اش رابط کاربری است. مسیر اندازه‌گیری و مسیر دسته‌ای
 // نه لازمش دارند نه باید با آمدنش رفتارشان عوض شود.
 - (void)enginePreview:(NSString *)text;
-// یک تکه بی‌متن برگشت و جایش در متن علامت خورد. روی نخ اصلی و **همان لحظه**، نه سر
-// پایان: کاربر هنوز دارد حرف می‌زند و باید همان‌جا بداند یک جمله جا مانده.
-//
-// صدای تکه همراهش می‌آید و نگه داشتنش کارِ مصرف‌کننده است، چون تنها اوست که می‌داند
-// متن کجا رفته و سر Esc باید کجا وصله شود.
-- (void)engineHole:(ZHole *)hole;
 @end
 
 @class ZRecorder;
@@ -381,6 +342,10 @@ typedef NS_ENUM(NSInteger, ZEngineState) {
 // ضبطِ سشن. موتور هر تکه‌ی صدا را همان‌جا به این هم می‌دهد، و بس: «کجا نوشته شود»
 // تصمیم خودِ ضبط‌کننده است.
 @property (nonatomic, strong) ZRecorder *recorder;
+// صفِ تکه‌ها. سشن می‌سازدش و می‌دهد، چون **از موتور عمر بیشتری دارد**: موتور سر هر
+// دورِ تازه‌ی شنیدن از نو ساخته می‌شود و تکه‌ی جامانده‌ی دور قبل باید زنده بماند.
+// داده نشود، موتور خودش یکی می‌سازد (مسیر اندازه‌گیری همین‌طور کار می‌کند).
+@property (nonatomic, strong) ZQueue *queue;
 @property (nonatomic, readonly) BOOL paused;
 @property (nonatomic, readonly) BOOL cappedOut;      // سقف پنج دقیقه خودش تمامش کرد
 @property (nonatomic, readonly) NSTimeInterval seconds;

@@ -65,10 +65,11 @@ NSTimeInterval ZBackoffDelay(NSInteger step) {
 
 // ---------- افزودن و خواندن ----------
 
-- (NSInteger)add:(NSData *)pcm lang:(NSString *)lang {
+- (NSInteger)add:(NSData *)pcm lang:(NSString *)lang extra:(BOOL)extra {
     ZSlot *s = [ZSlot new];
     s.pcm = pcm;
     s.lang = [lang copy];
+    s.extra = extra;
     s.state = ZSlotWaiting;
     [_lock lock];
     s.seq = _nextSeq++;
@@ -80,18 +81,32 @@ NSTimeInterval ZBackoffDelay(NSInteger step) {
 
 // متن، از روی جاها. جای نرسیده هیچ نمی‌گذارد (نه نشانه، نه فاصله‌ی اضافه) و جایی
 // که سرور گفت حرفی نبود هم همین‌طور: آن تکه **تمام** است و سهمش واقعا هیچ است.
-- (NSString *)textFrom:(NSInteger)seq {
+- (NSString *)textFrom:(NSInteger)seq extra:(BOOL)extra {
     NSMutableArray<NSString *> *parts = [NSMutableArray array];
     [_lock lock];
     for (ZSlot *s in _slots) {
-        if (s.seq < seq) continue;
+        if (s.seq < seq || s.extra != extra) continue;
         if (s.state == ZSlotDone && s.text.length) [parts addObject:s.text];
     }
     [_lock unlock];
     return [parts componentsJoinedByString:@" "];
 }
 
-- (NSString *)text { return [self textFrom:0]; }
+- (NSString *)text { return [self textFrom:0 extra:NO]; }
+
+// تا اولین جای نرسیده و بس. جایی که سرور گفت حرفی نبود سدِ راه نیست: آن تکه تمام
+// است و هیچ‌وقت چیزی به متن اضافه نمی‌کند، پس ماندن پشتش یعنی معطلیِ بی‌دلیل.
+- (NSString *)settledTextFrom:(NSInteger)seq {
+    NSMutableArray<NSString *> *parts = [NSMutableArray array];
+    [_lock lock];
+    for (ZSlot *s in _slots) {
+        if (s.extra || s.seq < seq) continue;
+        if (s.state == ZSlotWaiting) break;
+        if (s.state == ZSlotDone && s.text.length) [parts addObject:s.text];
+    }
+    [_lock unlock];
+    return [parts componentsJoinedByString:@" "];
+}
 
 - (NSInteger)nextSeq {
     [_lock lock];
@@ -103,7 +118,7 @@ NSTimeInterval ZBackoffDelay(NSInteger step) {
 - (NSInteger)waiting {
     [_lock lock];
     NSInteger n = 0;
-    for (ZSlot *s in _slots) if (s.state == ZSlotWaiting) n++;
+    for (ZSlot *s in _slots) if (s.state == ZSlotWaiting && !s.extra) n++;
     [_lock unlock];
     return n;
 }
@@ -260,10 +275,14 @@ NSTimeInterval ZBackoffDelay(NSInteger step) {
         if (t.length) {
             live.text = t;
             live.state = ZSlotDone;
-        } else if (ZCloseWasClean(why)) {
+        } else if (ZCloseWasClean(why) || live.extra) {
             // رفت‌وبرگشت کامل شد و سرور خودش خط را بست: یعنی گوش کرد و حرفی نشنید.
             // این تکه **تمام** است، نه خراب. نفس و صدای دست و ته‌مانده‌ی سکوت از
             // همین در بیرون می‌روند و دیگر چیزی را گرو نمی‌گیرند.
+            //
+            // و جای پاس دوم هم از همین در بیرون می‌رود، حتی وقتی واقعا نرسیده باشد:
+            // متنش تحویل کاربر نمی‌شود، پس تلاشِ دوباره‌اش فقط خرج کردنِ همان خطِ
+            // نازکی است که تکه‌های اصلی به آن احتیاج دارند.
             live.state = ZSlotSilent;
         }
         // متن رسید یا سرور جواب داد: در هر دو حالت راهِ شبکه باز است، پس ساعتِ
