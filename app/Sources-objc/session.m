@@ -234,6 +234,10 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
     // ردیف تاریخچه تازه می‌شوند. تاریخچه سر خواندن با sid جمع می‌کند، پس همان ردیفِ
     // خودِ این سشن کامل می‌شود، نه یک ردیف تازه.
     if (_finished) {
+        // صف که خالی شد، همان تاگل دوباره امتحان می‌شود: سر پایان صدا نگه داشته شده
+        // بود چون تکه‌ای در راه بود و حالا دیگر نیست. بی این، هر سشنی که با تکه‌ی در
+        // راه بسته شود صدایش را تا جارو نگه می‌داشت، یعنی همان کاری که تاگل نمی‌خواهد.
+        if (_queue.drained) [self applyAudioPolicy];
         NSString *all = [self.liveText stringByTrimmingCharactersInSet:
                          NSCharacterSet.whitespaceAndNewlineCharacterSet];
         if (!all.length) return;
@@ -788,6 +792,11 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
 - (void)endNow {
     if (_finished) return;
     _finished = YES;
+    // و اینجا تاگل «ضبط صدای سشن» اعمال می‌شود. تا امروز این تابع نوشته شده بود و
+    // هیچ‌کس صدایش نمی‌زد، پس تاگل روی منو تکان می‌خورد و هیچ کاری نمی‌کرد: صدا در هر
+    // حالت تا جاروی هفت‌روزه می‌ماند. پایانِ سشن تنها قیفی است که هر سه راه (تک‌تپ،
+    // Esc، و بستن با تکه‌ی در راه) از آن رد می‌شوند، پس جایش همین‌جاست.
+    [self applyAudioPolicy];
     [self stopClock];
     [self unwirePanel];
     [_dot hide];
