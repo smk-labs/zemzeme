@@ -483,6 +483,55 @@ int main(void) { @autoreleasepool {
         [fm removeItemAtURL:dir error:nil];
     }
 
+    // ---------- ۱۳: صف که تمام شد، تاگل «ضبط صدای سشن» روی صدا حرف می‌زند ----------
+    // سشنی که با تکه‌ی در راه بسته می‌شود، صدایش را درست نگه می‌دارد: تکه نسخه‌ی
+    // جداگانه‌ای از صدای خودش ندارد و فقط یک افست در audio.flac دارد. ولی اگر اپ پیش
+    // از خالی شدنِ صف بسته شود، لانچِ بعدی صف را تمام می‌کرد و **هیچ‌کس** دیگر سراغ آن
+    // صدا نمی‌آمد: تنها راه رفتنش جاروی هفت‌روزه بود. یعنی همان تاگلی که پیش‌فرضش
+    // خاموش است، دقیقا روی سشنِ شبکه‌بد بی‌اثر می‌ماند.
+    //
+    // هر دو حال آزموده می‌شود، وگرنه تستِ «پاک شد» با تابعی که همیشه پاک می‌کند هم سبز
+    // می‌ماند. و text.txt عمدا **بلندتر** نوشته می‌شود: قاعده‌ی «بلندتر یا هیچ» همان‌جا
+    // برمی‌گردد، پس تست به تاریخچه‌ی واقعی دست نمی‌زند.
+    for (int keep = 0; keep < 2; keep++) {
+        NSURL *dir = [[NSURL fileURLWithPath:NSTemporaryDirectory()]
+                      URLByAppendingPathComponent:@"zemzeme-resume-audio"];
+        NSFileManager *fm = NSFileManager.defaultManager;
+        [fm removeItemAtURL:dir error:nil];
+        [fm createDirectoryAtURL:dir withIntermediateDirectories:YES attributes:nil error:nil];
+        NSURL *flac = [dir URLByAppendingPathComponent:@"audio.flac"];
+        ZRecorder *rec = [[ZRecorder alloc] initWithURL:flac];
+        [rec feed:ZTestThreePieces()];
+        [rec finish];
+
+        NSURL *txt = [dir URLByAppendingPathComponent:@"text.txt"];
+        NSString *longer = [@"" stringByPaddingToLength:200 withString:@"طولانی " startingAtIndex:0];
+        [longer writeToURL:txt atomically:YES encoding:NSUTF8StringEncoding error:nil];
+
+        const unsigned long long one = 7 * 16000;
+        NSDictionary *doc = @{@"v": @1, @"audio": flac.path, @"lang": @"fa-IR", @"slots": @[
+            @{@"seq": @0, @"state": @(ZSlotWaiting), @"text": @"", @"lang": @"fa-IR",
+              @"frame": @0, @"frames": @(one), @"tries": @1, @"second": @NO}]};
+        NSURL *man = ZQueueManifestIn(dir);
+        [[NSJSONSerialization dataWithJSONObject:doc options:0 error:nil]
+         writeToURL:man atomically:YES];
+
+        ZTestScript(@[@[@"یک", @"ok"]]);
+        ZQueue *q = [ZQueue queueFromManifest:man];
+        ZSettings.shared.recordSessions = keep ? YES : NO;
+        [q resume];
+        ok(ZTestSettle(q, 10), keep ? "صف برداشته‌شده تمام شد (ضبط روشن)"
+                                    : "صف برداشته‌شده تمام شد (ضبط خاموش)");
+        ZFinishResumedSession(q, @"zemzeme-resume-audio");
+        ok([fm fileExistsAtPath:flac.path] == (keep ? YES : NO),
+           keep ? "ضبط روشن: صدا سر جایش ماند تا جاروی هفت‌روزه"
+                : "ضبط خاموش: صدا همان‌جا که صف تمام شد رفت");
+        okEq([NSString stringWithContentsOfURL:txt encoding:NSUTF8StringEncoding error:nil],
+             longer, "و متنِ بلندترِ روی دیسک دست نخورد، پس تاریخچه هم دست نخورد");
+        [fm removeItemAtURL:dir error:nil];
+    }
+    ZSettings.shared.recordSessions = NO;
+
     // ---------- قاعده‌های ریشه‌ای، روی خودِ سورس ----------
     NSString *pip = ZTestSrc(@"pipe.m"), *que = ZTestSrc(@"queue.m");
     NSString *eng = ZTestSrc(@"engine.m"), *ses = ZTestSrc(@"session.m");

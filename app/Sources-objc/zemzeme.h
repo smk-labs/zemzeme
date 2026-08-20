@@ -294,6 +294,11 @@ NSTimeInterval ZBackoffDelay(NSInteger step);
 // با sid جمع می‌کند، پس ردیف تازه‌ای اضافه نمی‌شود).
 void ZResumePendingQueues(void);
 
+// و آنچه سرِ خالی شدنِ یکی از همان صف‌ها می‌افتد: متن در text.txt، ردیف تاریخچه، و
+// تاگل «ضبط صدای سشن» روی audio.flac. جدا از تابع بالا چون آن یکی پوشه‌ی واقعیِ
+// سشن‌ها را می‌خواند و این یکی هر صفی را می‌گیرد، پس تست به آن دست نمی‌زند.
+void ZFinishResumedSession(ZQueue *q, NSString *sid);
+
 // مسیر دفترچه‌ی یک سشن. یک جا نوشته می‌شود چون هم نویسنده لازمش دارد هم لانچ.
 NSURL *ZQueueManifestIn(NSURL *sessionDir);
 

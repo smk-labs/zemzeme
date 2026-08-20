@@ -471,6 +471,44 @@ static NSMutableArray<ZQueue *> *gResumed;
 
 - (void)resume { [self kick]; }
 
+// آنچه سرِ تمام شدنِ یک صفِ برداشته‌شده باید بیفتد. بیرون از بلوک، چون بلوکِ داخلِ
+// یک حلقه‌ی دو تو در تو جای منطق نیست و چون تست باید بتواند صدایش بزند بی آنکه
+// پوشه‌ی واقعیِ سشن‌ها را بخواند. `sid` نامِ پوشه‌ی سشن است: هم برای لاگ، هم برای
+// ردیف تاریخچه، که سر خواندن با همین جمع می‌شود.
+void ZFinishResumedSession(ZQueue *q, NSString *sid) {
+    if (!q || !q.drained) return;
+    // و همان تاگل «ضبط صدای سشن»، اینجا هم. سشن سر پایانش صدا را نگه داشته بود چون
+    // تکه‌ای در راه بود، بعد اپ بسته شد، و تا امروز دیگر هیچ‌کس سراغ آن صدا نمی‌آمد:
+    // تنها راه رفتنش جاروی هفت‌روزه بود. یعنی دقیقا همان سشنی که با شبکه‌ی بد بسته
+    // شده، تاگل رویش بی‌اثر می‌ماند. حالا همین‌جا که صف تمام می‌شود، تاگل حرف آخر را
+    // می‌زند. و پیش از نوشتنِ متن، چون آن پایین دو راهِ برگشتِ زودهنگام هست.
+    //
+    // و تاگلِ **همین حالا** خوانده می‌شود، نه حالش سرِ ضبط. تاگل یک قاعده‌ی ایستاست نه
+    // انتخابِ تکیِ هر سشن، و اپ از قبل هر صدایی را سر هفت روز جارو می‌کند. نگه داشتنِ
+    // حالِ آن روز در دفترچه، یک کلید تازه و یک مسیرِ مهاجرت می‌خواست، آن هم فقط برای
+    // کسی که درست بین دو لانچ تاگل را عوض کرده باشد.
+    if (!ZSettings.shared.recordSessions && q.audio) {
+        [NSFileManager.defaultManager removeItemAtURL:q.audio error:nil];
+        ZLog(@"queue: سشن %@ تمام شد و صدایش رفت (ضبط صدای سشن خاموش است)", sid);
+    }
+    NSString *all = [q.text stringByTrimmingCharactersInSet:
+                     NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (!all.length) return;
+    // بلندتر یا هیچ. متنِ روی دیسک می‌تواند نسخه‌ی تمیزشده‌ی همان حرف‌ها باشد و آن را
+    // با نسخه‌ی خام عوض کردن، یک قدم عقب است. ولی متنی که تکه‌های جامانده‌اش رسیده‌اند
+    // تقریبا همیشه بلندتر است، و همان قاعده به زبان ساده: تکه‌ی دیررس فقط اضافه
+    // می‌کند، هیچ‌وقت کم نمی‌کند.
+    NSURL *txt = [q.manifest.URLByDeletingLastPathComponent
+                  URLByAppendingPathComponent:@"text.txt"];
+    NSString *had = [NSString stringWithContentsOfURL:txt
+                                             encoding:NSUTF8StringEncoding error:nil];
+    if (all.length <= had.length) return;
+    [all writeToURL:txt atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    ZHistoryAppend(all, sid, ZHistoryViaAuto, nil);
+    ZLog(@"queue: سشن %@ دیر تمام شد، %lu نویسه در تاریخچه نشست",
+         sid, (unsigned long)all.length);
+}
+
 void ZResumePendingQueues(void) {
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
         NSFileManager *fm = NSFileManager.defaultManager;
@@ -484,41 +522,7 @@ void ZResumePendingQueues(void) {
             NSString *sid = dir.lastPathComponent;
             ZLog(@"queue: سشن %@ برداشته شد، %ld تکه در راه", sid, (long)q.waiting);
             __weak ZQueue *wq = q;
-            q.onChange = ^{
-                ZQueue *me = wq;
-                if (!me || !me.drained) return;
-                // و همان تاگل «ضبط صدای سشن»، اینجا هم. سشن سر پایانش صدا را نگه
-                // داشته بود چون تکه‌ای در راه بود، بعد اپ بسته شد، و تا امروز دیگر
-                // هیچ‌کس سراغ آن صدا نمی‌آمد: تنها راه رفتنش جاروی هفت‌روزه بود. یعنی
-                // دقیقا همان سشنی که با شبکه‌ی بد بسته شده، تاگل رویش بی‌اثر می‌ماند.
-                // حالا همین‌جا که صف تمام می‌شود، تاگل حرف آخر را می‌زند.
-                //
-                // و تاگلِ **همین حالا** خوانده می‌شود، نه حالش سرِ ضبط. تاگل یک قاعده‌ی
-                // ایستاست نه انتخابِ تکیِ هر سشن، و اپ از قبل هر صدایی را سر هفت روز
-                // جارو می‌کند. نگه داشتنِ حالِ آن روز در دفترچه، یک کلید تازه و یک
-                // مسیرِ مهاجرت می‌خواست، آن هم فقط برای کسی که درست بین دو لانچ تاگل
-                // را عوض کرده باشد.
-                if (!ZSettings.shared.recordSessions && me.audio) {
-                    [NSFileManager.defaultManager removeItemAtURL:me.audio error:nil];
-                    ZLog(@"queue: سشن %@ تمام شد و صدایش رفت (ضبط صدای سشن خاموش است)", sid);
-                }
-                NSString *all = [me.text stringByTrimmingCharactersInSet:
-                                 NSCharacterSet.whitespaceAndNewlineCharacterSet];
-                if (!all.length) return;
-                // بلندتر یا هیچ. متنِ روی دیسک می‌تواند نسخه‌ی تمیزشده‌ی همان حرف‌ها
-                // باشد و آن را با نسخه‌ی خام عوض کردن، یک قدم عقب است. ولی متنی که
-                // تکه‌های جامانده‌اش رسیده‌اند تقریبا همیشه بلندتر است، و همان قاعده
-                // به زبان ساده: تکه‌ی دیررس فقط اضافه می‌کند، هیچ‌وقت کم نمی‌کند.
-                NSURL *txt = [me.manifest.URLByDeletingLastPathComponent
-                              URLByAppendingPathComponent:@"text.txt"];
-                NSString *had = [NSString stringWithContentsOfURL:txt
-                                                         encoding:NSUTF8StringEncoding error:nil];
-                if (all.length <= had.length) return;
-                [all writeToURL:txt atomically:YES encoding:NSUTF8StringEncoding error:nil];
-                ZHistoryAppend(all, sid, ZHistoryViaAuto, nil);
-                ZLog(@"queue: سشن %@ دیر تمام شد، %lu نویسه در تاریخچه نشست",
-                     sid, (unsigned long)all.length);
-            };
+            q.onChange = ^{ ZFinishResumedSession(wq, sid); };
             if (!gResumed) gResumed = [NSMutableArray array];
             [gResumed addObject:q];
             [q resume];
