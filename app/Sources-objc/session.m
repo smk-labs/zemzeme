@@ -250,8 +250,10 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
         [self render];
         return;
     }
-    if (_queue.drained) [self polishThenDeliver];
-    else [self render];
+    // و هر رسیدنی یک تحویلِ تازه است، نه فقط آخری: پنل باید همان لحظه پر شود و شمار
+    // هم تازه. `polishThenDeliver` خودش می‌داند که تا صف خالی نشده پاس اجرا نمی‌شود،
+    // پس همین یک مسیر برای هر دو حالت کافی است.
+    [self polishThenDeliver];
 }
 
 // متنِ همین لحظه: آنچه مدل تمیز کرده، به‌اضافه‌ی هر چه بعد از آن رسیده. هیچ رشته‌ای
