@@ -136,6 +136,7 @@ NSString *ZTranscribeSegment(NSData *pcm, NSString *lang, BOOL rawUpload,
 @implementation ZPipe {
     NSString *_lang;
     NSMutableData *_buf;
+    unsigned long long _bufBase;   // افستِ مطلقِ اولین بایتِ بافر، در سشن
     NSLock *_lock;
     NSInteger _next;            // شماره‌ی تکه‌ی بعدی، فقط برای لاگ
     NSInteger _degraded;
@@ -163,9 +164,12 @@ NSString *ZTranscribeSegment(NSData *pcm, NSString *lang, BOOL rawUpload,
     return n;
 }
 
-- (void)feed:(NSData *)pcm {
+- (void)feed:(NSData *)pcm at:(unsigned long long)absByte {
     if (_done || !pcm.length) return;
     [_lock lock];
+    // بافر که خالی است، لنگر از نو گرفته می‌شود. همین یک شرط هر سه حالت را می‌پوشاند:
+    // شروعِ سشن، خط لوله‌ای که وسط سشن ساخته شده (عوض کردن زبان)، و بعد از دور ریختن.
+    if (!_buf.length) _bufBase = absByte;
     [_buf appendData:pcm];
     [_lock unlock];
     [self drain:NO];
@@ -207,6 +211,8 @@ NSString *ZTranscribeSegment(NSData *pcm, NSString *lang, BOOL rawUpload,
         }
         NSData *piece = [_buf subdataWithRange:NSMakeRange(0, c.cut)];
         [_buf replaceBytesInRange:NSMakeRange(0, c.cut) withBytes:NULL length:0];
+        unsigned long long base = _bufBase;
+        _bufBase += c.cut;
         NSInteger idx = _next++;
         if (c.degraded) _degraded++;
         [_lock unlock];
@@ -231,7 +237,8 @@ NSString *ZTranscribeSegment(NSData *pcm, NSString *lang, BOOL rawUpload,
             if (c.tail) return;
             continue;
         }
-        [self.queue add:piece lang:_lang extra:self.extra];
+        [self.queue add:piece lang:_lang extra:self.extra
+                  frame:base / 2 frames:c.cut / 2];   // s16le مونو: دو بایت، یک فریم
         if (c.tail) return;
     }
 }

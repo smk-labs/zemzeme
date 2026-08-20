@@ -145,8 +145,8 @@ static ZQueue *ZTestRun(NSArray<NSArray<NSString *> *> *script, BOOL secondPass)
     const NSUInteger step = 3200;
     for (NSUInteger off = 0; off < audio.length; off += step) {
         NSData *c = [audio subdataWithRange:NSMakeRange(off, MIN(step, audio.length - off))];
-        [fa feed:c];
-        [en feed:c];
+        [fa feed:c at:off];
+        [en feed:c at:off];
     }
     [fa finish];
     [en finish];
@@ -229,14 +229,33 @@ int main(void) { @autoreleasepool {
         en.extra = YES;
         NSData *audio = ZTestThreePieces();
         ZTestScript(@[@[@"", @"err -1009 offline"], @[@"", @"err -1009 offline"]]);
-        [en feed:audio];
+        [en feed:audio at:0];
         [en finish];
         [q waitForFirstPass];
         ok(q.waiting == 0, "قطعیِ پاس دوم هیچ‌کس را منتظر نمی‌گذارد");
         okEq(q.text, @"", "و در متنِ تحویل هم هیچ سهمی ندارد");
     }
 
-    // ---------- ۶: دور ریختن، حرفِ دورریخته را برنمی‌گرداند ----------
+    // ---------- ۶: هر جا می‌داند صدایش کجای فایل است ----------
+    // تکه نسخه‌ی جداگانه‌ای از صدای خودش ندارد: audio.flac همه‌ی نمونه‌ها را از قبل
+    // دارد و جا فقط یک افست و یک طول است. عددها باید **پشت سر هم** باشند و رویِ هم
+    // کلِ صدا را بپوشانند، وگرنه تکه‌ای که بعدا از فایل خوانده شود صدای همسایه‌اش را
+    // می‌گیرد و آدم متنی می‌بیند که هیچ‌وقت نگفته.
+    {
+        ZQueue *q = ZTestRun(@[@[@"یک", @"ok"], @[@"دو", @"ok"], @[@"سه", @"ok"]], NO);
+        NSArray<ZSlot *> *sl = q.snapshot;
+        ok(sl.count == 3, "سه جا ساخته شد");
+        BOOL chained = sl.count == 3;
+        unsigned long long want = 0;
+        for (ZSlot *x in sl) {
+            if (x.frame != want || x.frames == 0) chained = NO;
+            want = x.frame + x.frames;
+        }
+        ok(chained, "افست‌ها پشت سر هم‌اند و هیچ فریمی جا نمی‌افتد");
+        ok(want == ZTestThreePieces().length / 2, "و رویِ هم دقیقا همان صدای ورودی‌اند");
+    }
+
+    // ---------- ۷: دور ریختن، حرفِ دورریخته را برنمی‌گرداند ----------
     {
         ZQueue *q = ZTestRun(@[@[@"یک", @"ok"], @[@"دو", @"ok"], @[@"سه", @"ok"]], NO);
         okEq(q.text, @"یک دو سه", "متن پیش از دور ریختن");

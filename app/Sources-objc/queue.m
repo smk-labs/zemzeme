@@ -65,11 +65,14 @@ NSTimeInterval ZBackoffDelay(NSInteger step) {
 
 // ---------- افزودن و خواندن ----------
 
-- (NSInteger)add:(NSData *)pcm lang:(NSString *)lang extra:(BOOL)extra {
+- (NSInteger)add:(NSData *)pcm lang:(NSString *)lang extra:(BOOL)extra
+           frame:(unsigned long long)frame frames:(unsigned long long)frames {
     ZSlot *s = [ZSlot new];
     s.pcm = pcm;
     s.lang = [lang copy];
     s.extra = extra;
+    s.frame = frame;
+    s.frames = frames;
     s.state = ZSlotWaiting;
     [_lock lock];
     s.seq = _nextSeq++;
@@ -106,6 +109,13 @@ NSTimeInterval ZBackoffDelay(NSInteger step) {
     }
     [_lock unlock];
     return [parts componentsJoinedByString:@" "];
+}
+
+- (NSArray<ZSlot *> *)snapshot {
+    [_lock lock];
+    NSArray<ZSlot *> *copy = [_slots copy];
+    [_lock unlock];
+    return copy;
 }
 
 - (NSInteger)nextSeq {

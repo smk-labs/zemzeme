@@ -47,6 +47,13 @@
     return s;
 }
 
+- (unsigned long long)pcmBytes {
+    [_lock lock];
+    unsigned long long n = _pcmBytes;
+    [_lock unlock];
+    return n;
+}
+
 - (unsigned long long)fileBytes {
     [_lock lock];
     unsigned long long b = _outBytes;

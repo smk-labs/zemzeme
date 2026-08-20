@@ -226,7 +226,12 @@ typedef NS_ENUM(NSInteger, ZSlotState) {
 @property (nonatomic) ZSlotState state;
 @property (nonatomic, copy) NSString *text;
 @property (nonatomic, copy) NSString *lang;
-@property (nonatomic, strong) NSData *pcm;  // فاز یک: صدا در حافظه
+@property (nonatomic, strong) NSData *pcm;  // صدا در حافظه؛ نال یعنی از فایل خوانده شود
+// جای این تکه در audio.flac، بر حسب فریمِ ۱۶ کیلوهرتزِ مونو. تکه هیچ نسخه‌ی صوتیِ
+// خودش را ذخیره نمی‌کند: فایل سشن همه‌ی نمونه‌ها را از قبل دارد و این دو عدد تنها
+// چیزی است که برای پیدا کردنِ دوباره‌اش لازم است.
+@property (nonatomic) unsigned long long frame;
+@property (nonatomic) unsigned long long frames;
 @property (nonatomic) NSInteger tries;
 @property (nonatomic) BOOL secondOpinionUsed;
 // جای پاس دومِ انگلیسی. متنش هیچ‌وقت تحویل کاربر نمی‌شود (فقط کانتکستِ پاس هوش
@@ -248,7 +253,11 @@ NSTimeInterval ZBackoffDelay(NSInteger step);
 // دسترس نیست، پس هر سنجشِ خودکاری دروغ درمی‌آید. **خودِ تلاشِ دوباره** تنها سنجشِ
 // موجود است، و همان کافی است.
 @interface ZQueue : NSObject
-- (NSInteger)add:(NSData *)pcm lang:(NSString *)lang extra:(BOOL)extra;  // برمی‌گرداند seq
+- (NSInteger)add:(NSData *)pcm lang:(NSString *)lang extra:(BOOL)extra
+           frame:(unsigned long long)frame frames:(unsigned long long)frames;  // برمی‌گرداند seq
+// رونوشتِ همین لحظه از جاها، برای دفترچه و برای تست. آرایه‌ی تازه است، پس خواننده
+// می‌تواند بی‌قفل رویش راه برود.
+- (NSArray<ZSlot *> *)snapshot;
 - (NSString *)text;                     // همه‌ی جاهای رسیده، به ترتیب، با یک فاصله
 - (NSString *)textFrom:(NSInteger)seq extra:(BOOL)extra;
 // متن تا **اولین جای نرسیده**، و نه یک کلمه بیشتر. تنها متنی که حق دارد سر کرسر
@@ -280,7 +289,9 @@ NSTimeInterval ZBackoffDelay(NSInteger step);
 @property (nonatomic, strong) ZQueue *queue;             // تکه‌ها به اینجا می‌روند
 @property (nonatomic) BOOL extra;                        // این خط لوله پاس دوم است
 @property (nonatomic, readonly) NSInteger degradedCuts;  // چند بار مکثی پیدا نشد
-- (void)feed:(NSData *)pcm;   // s16le مونو ۱۶ کیلوهرتز
+// `at` افستِ مطلقِ این تکه‌ی صدا در سشن است (بایت، از صفر). خط لوله خودش نمی‌داند
+// کِی ساخته شده و صدا از کجای فایل شروع می‌شود؛ موتور می‌داند، پس همان می‌گوید.
+- (void)feed:(NSData *)pcm at:(unsigned long long)absByte;   // s16le مونو ۱۶ کیلوهرتز
 - (void)finish;               // ته‌مانده را ببر. بلوکه نیست: انتظارِ متن کارِ صف است
 - (void)cancel;
 - (void)discard;              // صدای نبریده. جاها مالِ صف‌اند و صف خودش دور می‌ریزد
@@ -464,6 +475,9 @@ int ZKeyACLMain(void);
 - (instancetype)initWithURL:(NSURL *)url;
 @property (nonatomic, readonly) NSURL *url;              // نال تا اولین بایت صدا
 @property (nonatomic, readonly) NSTimeInterval seconds;  // از بایت‌های خام، نه ساعت دیوار
+// بایتِ خامِ بلعیده‌شده تا این لحظه، یعنی همان ساعتِ مطلقِ سشن روی audio.flac. تکه‌ی
+// در انتظار نسخه‌ی جداگانه‌ای از صدای خودش ندارد؛ یک افست در همین فایل دارد.
+@property (nonatomic, readonly) unsigned long long pcmBytes;
 @property (nonatomic, readonly) unsigned long long fileBytes;
 - (void)feed:(NSData *)pcm;   // s16le مونو ۱۶ کیلوهرتز، از نخ صدا
 // ته‌مانده‌ی کمتر از یک بلاک با سکوت پر و فریم می‌شود، وگرنه تا ~۲۹۰ میلی‌ثانیه‌ی آخر
