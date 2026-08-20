@@ -89,8 +89,16 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
     // صدا همیشه و پیوسته روی دیسک، نه فقط وقتی تاگلی روشن باشد: فایل مرجع همه‌چیز
     // است. اگر شبکه بمیرد یا اپ کرش کند، حرفِ گفته‌شده سر جایش می‌ماند. تاگلِ
     // «ضبط صدای سشن» حالا معنیِ دیگری دارد و پایین‌تر سر پایان اعمال می‌شود.
-    _recorder = [[ZRecorder alloc] initWithURL:[_sessionDir URLByAppendingPathComponent:@"audio.flac"]];
+    NSURL *audio = [_sessionDir URLByAppendingPathComponent:@"audio.flac"];
+    _recorder = [[ZRecorder alloc] initWithURL:audio];
     _engine.recorder = _recorder;
+    // و از همین‌جا صف می‌داند صدا کجاست و دفترچه‌اش کجا نوشته شود. با این دو، تکه‌ی
+    // در انتظار از بسته شدنِ اپ هم جان سالم می‌برد: لانچِ بعدی برش می‌دارد و تمامش
+    // می‌کند. `_recorder.url` اینجا هنوز نال است (فایل سر اولین بایت ساخته می‌شود)،
+    // پس همان مسیرِ خواسته‌شده داده می‌شود نه جوابِ ضبط‌کننده.
+    _queue.audio = audio;
+    _queue.manifest = ZQueueManifestIn(_sessionDir);
+    _queue.lang = ZSettings.shared.lang;
     _engine.queue = _queue;
     _engine.delegate = self;
 

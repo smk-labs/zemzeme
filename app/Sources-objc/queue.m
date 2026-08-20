@@ -29,6 +29,18 @@ NSTimeInterval ZBackoffDelay(NSInteger step) {
     return steps[step < n ? step : n - 1];
 }
 
+// ---------- دفترچه ----------
+// یک فایل کوچک کنار سشن، تا تکه‌ی در انتظار از بسته شدنِ اپ هم جان سالم ببرد. صدا
+// در آن نیست و نباید باشد: audio.flac همان‌جا کنارش است و تکه فقط یک افست است.
+//
+// و دفترچه **پاک می‌شود** وقتی چیزی در انتظار نمانده. دلیلش سرعتِ لانچ نیست،
+// درستی است: فایلِ مانده یعنی لانچِ بعدی سشنی را که تمام شده دوباره برمی‌دارد.
+static NSString *const kZQueueManifest = @"queue.json";
+
+NSURL *ZQueueManifestIn(NSURL *sessionDir) {
+    return [sessionDir URLByAppendingPathComponent:kZQueueManifest];
+}
+
 @implementation ZSlot
 @end
 
@@ -45,6 +57,7 @@ NSTimeInterval ZBackoffDelay(NSInteger step) {
     BOOL _pumping;
     BOOL _stopped;
     unsigned long long _bytesUp;
+    dispatch_queue_t _io;        // نوشتنِ دفترچه، دور از نخ صدا
 }
 
 - (instancetype)init {
@@ -59,6 +72,9 @@ NSTimeInterval ZBackoffDelay(NSInteger step) {
         // هفت ثانیه‌ای در حدود دو ثانیه رونویسی می‌شود، پس صف هیچ‌وقت از گوینده عقب
         // نمی‌ماند) و ریسکِ «لال شدن» را چند برابر می‌کند.
         _q = dispatch_queue_create("io.seyed.zemzeme.queue", DISPATCH_QUEUE_SERIAL);
+        // دفترچه روی نخِ صدا نوشته نمی‌شود. سریال است، پس ترتیبِ نوشتن‌ها همان ترتیبِ
+        // تغییرهاست و نسخه‌ی قدیمی‌تر هیچ‌وقت روی تازه‌تر نمی‌نشیند.
+        _io = dispatch_queue_create("io.seyed.zemzeme.queue.io", DISPATCH_QUEUE_SERIAL);
     }
     return self;
 }
@@ -78,6 +94,7 @@ NSTimeInterval ZBackoffDelay(NSInteger step) {
     s.seq = _nextSeq++;
     [_slots addObject:s];
     [_lock unlock];
+    [self persist];
     [self kick];
     return s.seq;
 }
@@ -158,6 +175,7 @@ NSTimeInterval ZBackoffDelay(NSInteger step) {
     [_pass lock];
     [_pass broadcast];
     [_pass unlock];
+    [self persist];
     if (had) ZLog(@"queue: %lu جا دور ریخته شد", (unsigned long)had);
 }
 
@@ -321,6 +339,7 @@ NSTimeInterval ZBackoffDelay(NSInteger step) {
              (long)seq, why ?: @"?", (long)tries, MAX(0.0, nextIn));
     }
 
+    [self persist];
     [_pass lock];
     [_pass broadcast];
     [_pass unlock];
@@ -334,5 +353,37 @@ NSTimeInterval ZBackoffDelay(NSInteger step) {
 // صدای یک جا. فاز یک: در حافظه. فاز دو همین‌جا از audio.flac می‌خواند و آن‌وقت
 // این تنها جایی است که باید عوض شود.
 - (NSData *)pcmForLocked:(ZSlot *)s { return s.pcm; }
+
+- (void)persist {
+    NSURL *file = self.manifest;
+    if (!file) return;
+    // رونوشت زیر قفل و همین‌جا، نوشتن آن‌طرف: اگر رونوشت هم آن‌طرف گرفته می‌شد، دو
+    // نوشتنِ پشت سر هم می‌توانستند هر دو حالِ **آخر** را ببینند و ترتیب معنا نداشت.
+    NSArray<ZSlot *> *slots = self.snapshot;
+    NSURL *audio = self.audio;
+    NSString *lang = self.lang;
+    dispatch_async(_io, ^{
+        NSFileManager *fm = NSFileManager.defaultManager;
+        NSMutableArray *rows = [NSMutableArray array];
+        BOOL anyWaiting = NO;
+        for (ZSlot *s in slots) {
+            if (s.extra) continue;    // متنش تحویل کاربر نمی‌شود؛ نگه داشتنش بی‌معناست
+            if (s.state == ZSlotWaiting) anyWaiting = YES;
+            [rows addObject:@{@"seq": @(s.seq), @"state": @(s.state),
+                              @"text": s.text ?: @"", @"lang": s.lang ?: (lang ?: @""),
+                              @"frame": @(s.frame), @"frames": @(s.frames),
+                              @"tries": @(s.tries), @"second": @(s.secondOpinionUsed)}];
+        }
+        if (!anyWaiting || !audio) {
+            [fm removeItemAtURL:file error:nil];
+            return;
+        }
+        NSDictionary *doc = @{@"v": @1, @"audio": audio.path ?: @"",
+                              @"lang": lang ?: @"", @"slots": rows};
+        NSData *d = [NSJSONSerialization dataWithJSONObject:doc
+                                                    options:NSJSONWritingSortedKeys error:nil];
+        if (d) [d writeToURL:file options:NSDataWritingAtomic error:nil];
+    });
+}
 
 @end

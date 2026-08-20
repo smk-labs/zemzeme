@@ -253,6 +253,12 @@ NSTimeInterval ZBackoffDelay(NSInteger step);
 // دسترس نیست، پس هر سنجشِ خودکاری دروغ درمی‌آید. **خودِ تلاشِ دوباره** تنها سنجشِ
 // موجود است، و همان کافی است.
 @interface ZQueue : NSObject
+// دفترچه‌ی کوچکِ کنار سشن و فایل صدایش. هر دو که داده شوند، تکه‌ی در انتظار از بسته
+// شدنِ اپ هم جان سالم می‌برد. نال یعنی این صف فقط در حافظه زندگی می‌کند (مسیر
+// اندازه‌گیری، و تست).
+@property (nonatomic, strong) NSURL *manifest;
+@property (nonatomic, strong) NSURL *audio;
+@property (nonatomic, copy) NSString *lang;
 - (NSInteger)add:(NSData *)pcm lang:(NSString *)lang extra:(BOOL)extra
            frame:(unsigned long long)frame frames:(unsigned long long)frames;  // برمی‌گرداند seq
 // رونوشتِ همین لحظه از جاها، برای دفترچه و برای تست. آرایه‌ی تازه است، پس خواننده
@@ -277,6 +283,9 @@ NSTimeInterval ZBackoffDelay(NSInteger step);
 - (void)discard;
 - (void)stop;
 @end
+
+// مسیر دفترچه‌ی یک سشن. یک جا نوشته می‌شود چون هم نویسنده لازمش دارد هم لانچ.
+NSURL *ZQueueManifestIn(NSURL *sessionDir);
 
 // صدا بده، تکه تحویل بگیر. منبع صدا (میکروفن یا فایل) بیرون از این می‌ماند، پس
 // مسیر زنده و رونویسی فایل واقعا یک پیاده‌سازی دارند نه دو تا.

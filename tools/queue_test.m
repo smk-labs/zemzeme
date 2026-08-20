@@ -192,15 +192,26 @@ int main(void) { @autoreleasepool {
     // ---------- ۳: نرسیدن، شکست است و دوباره می‌رود ----------
     // همان متنِ خالی، ولی این بار خط اصلا بسته نشد. یعنی جوابی نگرفتیم، نه اینکه
     // جواب «هیچ» بود. و تفاوتِ این دو تنها چیزی است که این تست نگهبانش است.
+    //
+    // دو بلوک، چون دو ادعای جدا هستند و اگر یکی شوند تست به ساعت گره می‌خورد: حالِ
+    // «وسط قطعی» فقط تا رسیدنِ تلاشِ بعدی دوام دارد.
+    {
+        NSMutableArray *script = [@[@[@"یک", @"ok"],
+                                    @[@"", @"err -1009 offline"], @[@"", @"err -1009 offline"],
+                                    @[@"سه", @"ok"]] mutableCopy];
+        for (int i = 0; i < 12; i++) [script addObject:@[@"", @"err -1009 offline"]];
+        ZQueue *q = ZTestRun(script, NO);
+        ok(q.waiting == 1, "تکه‌ی نرسیده در انتظار می‌ماند");
+        okEq(q.text, @"یک سه", "بقیه‌ی متن گروگان نمی‌ماند و همان لحظه حاضر است");
+        okEq([q settledTextFrom:0], @"یک",
+             "سر کرسر فقط تا اولین جای نرسیده می‌رود، وگرنه ترتیب به هم می‌خورد");
+        [q stop];
+    }
     {
         ZQueue *q = ZTestRun(@[@[@"یک", @"ok"],
                                @[@"", @"err -1009 offline"], @[@"", @"err -1009 offline"],
                                @[@"سه", @"ok"],
                                @[@"دو", @"ok"]], NO);
-        ok(q.waiting == 1, "تکه‌ی نرسیده در انتظار می‌ماند");
-        okEq(q.text, @"یک سه", "بقیه‌ی متن گروگان نمی‌ماند و همان لحظه حاضر است");
-        okEq([q settledTextFrom:0], @"یک",
-             "سر کرسر فقط تا اولین جای نرسیده می‌رود، وگرنه ترتیب به هم می‌خورد");
         ok(ZTestSettle(q, 5), "خودش، بی هیچ کلیدی، دوباره رفت و رسید");
         okEq(q.text, @"یک دو سه", "تکه‌ی دیررس سر جای ساختاریِ خودش نشست");
         okEq([q settledTextFrom:0], @"یک دو سه", "و حالا همه‌ی متن قطعی است");
@@ -291,6 +302,88 @@ int main(void) { @autoreleasepool {
         ok(ZDecodePCMRange(rec.url, 16000 * 99, 8000, NULL) == nil,
            "افستِ بیرون از فایل خطا می‌دهد، نه صدای کسِ دیگر");
         [NSFileManager.defaultManager removeItemAtURL:flac error:nil];
+    }
+
+    // ---------- ۹: دفترچه، تا تکه از بسته شدنِ اپ جان سالم ببرد ----------
+    // صف **خوابانده** می‌شود و بعد دفترچه خوانده: وگرنه تلاشِ دوباره‌ی یک ثانیه بعد
+    // می‌تواند وسط خواندن برسد و فایل را پاک کند، و تست به ساعت گره بخورد.
+    {
+        NSURL *dir = [[NSURL fileURLWithPath:NSTemporaryDirectory()]
+                      URLByAppendingPathComponent:@"zemzeme-manifest-test"];
+        NSFileManager *fm = NSFileManager.defaultManager;
+        [fm removeItemAtURL:dir error:nil];
+        [fm createDirectoryAtURL:dir withIntermediateDirectories:YES attributes:nil error:nil];
+        NSURL *man = ZQueueManifestIn(dir);
+
+        // قطعیِ **ادامه‌دار**: هر تلاشی که برسد هم نمی‌رسد. وگرنه تست به ساعت گره
+        // می‌خورد؛ روی ماشینِ شلوغ تلاشِ یک ثانیه بعد از خواندنِ دفترچه جلو می‌زد،
+        // تکه می‌رسید و فایل درست پیش از خوانده شدن پاک می‌شد.
+        NSMutableArray *script = [@[@[@"یک", @"ok"],
+                                    @[@"", @"err -1009 offline"], @[@"", @"err -1009 offline"],
+                                    @[@"سه", @"ok"]] mutableCopy];
+        for (int i = 0; i < 12; i++) [script addObject:@[@"", @"err -1009 offline"]];
+        ZTestScript(script);
+        ZQueue *q = [ZQueue new];
+        q.manifest = man;
+        q.audio = [dir URLByAppendingPathComponent:@"audio.flac"];
+        q.lang = @"fa-IR";
+        ZPipe *fa = [[ZPipe alloc] initWithLang:@"fa-IR"];
+        fa.queue = q;
+        NSData *audio = ZTestThreePieces();
+        const NSUInteger step = 3200;
+        for (NSUInteger off = 0; off < audio.length; off += step) {
+            [fa feed:[audio subdataWithRange:NSMakeRange(off, MIN(step, audio.length - off))]
+                   at:off];
+        }
+        [fa finish];
+        [q waitForFirstPass];
+        // نوشتن آسنکرون است (نخ صدا حق ندارد منتظر دیسک بماند)، پس یک مهلت کوتاه
+        NSDate *until = [NSDate dateWithTimeIntervalSinceNow:3];
+        NSDictionary *doc = nil;
+        while ([NSDate.date compare:until] == NSOrderedAscending) {
+            NSData *raw = [NSData dataWithContentsOfURL:man];
+            doc = raw ? [NSJSONSerialization JSONObjectWithData:raw options:0 error:nil] : nil;
+            if ([doc[@"slots"] count] == 3) break;
+            usleep(20000);
+        }
+        ok([doc[@"slots"] count] == 3, "هر سه جا در دفترچه‌اند، نه فقط آنکه نرسیده");
+        ok([doc[@"slots"][1][@"state"] integerValue] == ZSlotWaiting &&
+           [doc[@"slots"][1][@"frames"] unsignedLongLongValue] > 0,
+           "جای نرسیده با افست و طولِ خودش نوشته شده، بی هیچ صدایی");
+        okEq(doc[@"slots"][0][@"text"], @"یک", "و متنی که رسیده هم، تا لانچِ بعدی از نو نفرستدش");
+        okEq(doc[@"audio"], q.audio.path, "و مسیر صدا، چون تکه صدای خودش را ندارد");
+        [q stop];    // وگرنه تلاش‌های بعدی فیلم‌نامه‌ی بلوکِ بعدی را می‌خورند
+        [fm removeItemAtURL:dir error:nil];
+    }
+
+    // ---------- ۱۰: دفترچه‌ی مانده، بدتر از دفترچه‌ی نبوده ----------
+    // چیزی در انتظار نماند یعنی این سشن تمام است. فایلی که بماند، لانچِ بعدی سشنِ
+    // تمام‌شده را دوباره برمی‌دارد.
+    {
+        NSURL *dir = [[NSURL fileURLWithPath:NSTemporaryDirectory()]
+                      URLByAppendingPathComponent:@"zemzeme-manifest-done"];
+        NSFileManager *fm = NSFileManager.defaultManager;
+        [fm removeItemAtURL:dir error:nil];
+        [fm createDirectoryAtURL:dir withIntermediateDirectories:YES attributes:nil error:nil];
+        NSURL *man = ZQueueManifestIn(dir);
+
+        ZTestScript(@[@[@"یک", @"ok"],
+                      @[@"", @"err -1009 offline"], @[@"", @"err -1009 offline"],
+                      @[@"سه", @"ok"], @[@"دو", @"ok"]]);
+        ZQueue *q = [ZQueue new];
+        q.manifest = man;
+        q.audio = [dir URLByAppendingPathComponent:@"audio.flac"];
+        ZPipe *fa = [[ZPipe alloc] initWithLang:@"fa-IR"];
+        fa.queue = q;
+        [fa feed:ZTestThreePieces() at:0];
+        [fa finish];
+        [q waitForFirstPass];
+        ok(ZTestSettle(q, 5), "تکه‌ی جامانده خودش رسید");
+        NSDate *until = [NSDate dateWithTimeIntervalSinceNow:3];
+        while ([fm fileExistsAtPath:man.path] && [NSDate.date compare:until] == NSOrderedAscending)
+            usleep(20000);
+        ok(![fm fileExistsAtPath:man.path], "چیزی در انتظار نماند، پس دفترچه هم رفت");
+        [fm removeItemAtURL:dir error:nil];
     }
 
     // ---------- قاعده‌های ریشه‌ای، روی خودِ سورس ----------
