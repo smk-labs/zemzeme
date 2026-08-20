@@ -294,6 +294,16 @@ int main(void) { @autoreleasepool {
         [rec finish];
         ok(rec.url != nil, "صدا روی دیسک نشست");
 
+        // و یک دورِ دوم روی همان فایل. تا امروز `finish` ضبط را برای همیشه می‌بست و
+        // صدای دورِ دوم هیچ‌جا نمی‌رفت؛ حالا که تکه با افستِ همین فایل شناخته می‌شود،
+        // آن سکوت یعنی تکه‌ی دورِ دوم صدای دورِ اول را پس می‌گیرد.
+        unsigned long long round2 = rec.pcmBytes / 2;
+        NSMutableData *more = [NSMutableData dataWithLength:16000 * 2 * 2];
+        int16_t *q2 = more.mutableBytes;
+        for (NSUInteger i = 0; i < 16000 * 2; i++) q2[i] = (int16_t)(9000 - (i * 11) % 18000);
+        [rec feed:more];
+        [rec finish];
+
         NSError *e = nil;
         NSData *back = ZDecodePCMRange(rec.url, 16000, 8000, &e);
         ok(back.length == 8000 * 2, "بازه به همان طولِ خواسته‌شده برگشت");
@@ -301,6 +311,10 @@ int main(void) { @autoreleasepool {
            "و بایت به بایت همان صدایی است که آن‌جای فایل گفته شده");
         ok(ZDecodePCMRange(rec.url, 16000 * 99, 8000, NULL) == nil,
            "افستِ بیرون از فایل خطا می‌دهد، نه صدای کسِ دیگر");
+        NSData *two = ZDecodePCMRange(rec.url, round2 + 8000, 8000, NULL);
+        ok(two.length == 8000 * 2 &&
+           memcmp(two.bytes, (const uint8_t *)more.bytes + 16000, two.length) == 0,
+           "دورِ دومِ همان سشن هم روی همان فایل نشست و سر جای خودش پیدا می‌شود");
         [NSFileManager.defaultManager removeItemAtURL:flac error:nil];
     }
 

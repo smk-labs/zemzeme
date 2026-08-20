@@ -16,7 +16,6 @@
     unsigned long long _pcmBytes;
     unsigned long long _outBytes;
     BOOL _opened;               // یک بایت هم که نوشته شد، فایل هست و می‌ماند
-    BOOL _done;
     BOOL _broken;               // یک بار شکست، دیگر هر تکه را دوباره امتحان نمی‌کنیم
 }
 
@@ -62,6 +61,14 @@
 }
 
 // اولین بایت که رسید، تازه فایل و انکودر ساخته می‌شوند. زیر قفل صدا زده می‌شود.
+//
+// و اگر فایل از قبل هست، **ادامه** داده می‌شود نه ساخته: یک سشن می‌تواند چند دور
+// شنیدن داشته باشد (تک‌تپ می‌ایستد، تک‌تپ بعدی ادامه می‌دهد) و هر دور سرِ پایانش
+// `finish` می‌خورد. تا امروز `finish` ضبط را برای همیشه می‌بست، یعنی از دورِ دوم به
+// بعد صدا **هیچ‌جا نمی‌رفت** در حالی که قرارِ روز اولِ اپ این است که صدا همیشه و
+// پیوسته روی دیسک باشد. و حالا که تکه‌ی در انتظار جای خودش را با افستِ همین فایل
+// می‌شناسد، آن سکوت به یک دروغ هم تبدیل می‌شد: افست جلو نمی‌رفت و تکه‌ی دورِ دوم
+// صدای دورِ اول را پس می‌گرفت.
 - (BOOL)openLocked {
     if (_fh) return YES;
     if (_broken) return NO;
@@ -70,6 +77,16 @@
         _broken = YES;
         ZLog(@"record: انکودر FLAC راه نیفتاد؛ صدای این سشن ضبط نمی‌شود");
         return NO;
+    }
+    if (_opened && [NSFileManager.defaultManager fileExistsAtPath:_want.path]) {
+        _fh = [NSFileHandle fileHandleForWritingAtPath:_want.path];
+        if (!_fh) {
+            _broken = YES;
+            ZLog(@"record: فایل صدا برای ادامه باز نشد: %@", _want.path);
+            return NO;
+        }
+        [_fh seekToEndOfFile];
+        return YES;
     }
     [NSFileManager.defaultManager createDirectoryAtURL:_want.URLByDeletingLastPathComponent
                           withIntermediateDirectories:YES attributes:nil error:nil];
@@ -106,7 +123,7 @@
 - (void)feed:(NSData *)pcm {
     if (!pcm.length) return;
     [_lock lock];
-    if (!_done && [self openLocked]) {
+    if ([self openLocked]) {
         _pcmBytes += pcm.length;
         [self writeLocked:[_enc encode:pcm]];
     }
@@ -142,7 +159,7 @@
 // می‌شود. «دور بریز» یعنی هیچ‌کدامش نماند.
 - (void)discard {
     [_lock lock];
-    if (!_done) {
+    {
         if (_fh) {
             @try { [_fh closeFile]; } @catch (NSException *e) {}
             _fh = nil;
@@ -160,9 +177,11 @@
     [_lock unlock];
 }
 
+// فلاش و بستن، نه «برای همیشه تمام». هر دورِ شنیدن سرِ پایانش از اینجا رد می‌شود و
+// دورِ بعد به همین فایل ادامه می‌دهد.
 - (void)finish {
     [_lock lock];
-    if (!_done && _fh) {
+    if (_fh) {
         // ته‌مانده‌ی کمتر از یک بلاک را انکودر هیچ‌وقت فریم نمی‌کند، پس تا ~۲۹۰
         // میلی‌ثانیه‌ی آخر (یعنی احتمالا آخرین کلمه) در فایل نمی‌آمد. با سکوت پرش
         // می‌کنیم؛ سکوتِ ته فایل بی‌آزار است، افتادنِ آخرین کلمه نه.
@@ -172,6 +191,10 @@
             NSUInteger padFrames = _enc.blockFrames - have;
             [self writeLocked:[_enc encode:[NSMutableData dataWithLength:padFrames * 2]]];
             frames += padFrames;
+            // و سکوتِ پرکننده در شمارنده هم می‌آید. وگرنه بعد از یک مکث، «بایتِ
+            // بلعیده‌شده» و «فریمِ داخل فایل» از هم فاصله می‌گرفتند و افستِ هر تکه‌ی
+            // دورِ بعد به اندازه‌ی همین چند صدم ثانیه دروغ می‌شد.
+            _pcmBytes += (unsigned long long)padFrames * 2;
         }
         // و هرچه در صف داخلی انکودر مانده
         for (int i = 0; i < 8; i++) {
@@ -185,7 +208,6 @@
         ZLog(@"record: %@ · %.0f ثانیه · %.1f مگابایت", _want.lastPathComponent,
              _pcmBytes / 32000.0, _outBytes / 1048576.0);
     }
-    _done = YES;
     [_lock unlock];
 }
 
