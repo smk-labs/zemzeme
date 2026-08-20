@@ -1329,6 +1329,7 @@ int main(int argc, const char *argv[]) {
         // سرتاسری باید تکرارپذیر باشد. مثل حالت دسته‌ای پیش از NSApplication برمی‌گردد.
         if ([args containsObject:@"--livewav"]) return ZLiveWavMain(args);
         if ([args containsObject:@"--aipass"]) return ZAIPassMain(args);
+        if ([args containsObject:@"--resume"]) return ZResumeMain(args);
         // کلیدسنج از بیرون: «کلید کار می‌کند» باید بی‌آدم و بی‌پنجره هم قابل پرسیدن
         // باشد، وگرنه تنها راهِ فهمیدنش باز می‌شود یک سشن واقعی و خواندن لاگ.
         if ([args containsObject:@"--checkkey"]) return ZCheckKeyMain();

@@ -290,10 +290,24 @@ int main(void) { @autoreleasepool {
         NSURL *dir = [NSURL fileURLWithPath:NSTemporaryDirectory()];
         NSURL *flac = [dir URLByAppendingPathComponent:@"zemzeme-range-test.flac"];
         [NSFileManager.defaultManager removeItemAtURL:flac error:nil];
+        // **در تکه‌های ۳۲۰۰ بایتی، همان دانه‌بندی میکروفن.** یک‌جا دادن این باگ را
+        // نمی‌دید: با تکه‌های کوچک‌تر از یک بلاکِ FLAC، خروجی کدک با همان صدای
+        // یک‌جا **یکی نبود** و audio.flac از فریم ۴۸۰۰ به بعد جابه‌جا می‌شد. یعنی
+        // فایلی که «مرجع همه‌چیز» است رونوشتِ دقیقِ حرفِ آدم نبود، و تکه‌ای که بعدا
+        // از روی افست خوانده می‌شد صدای جای دیگری را می‌گرفت.
         ZRecorder *rec = [[ZRecorder alloc] initWithURL:flac];
-        [rec feed:pcm];
+        for (NSUInteger o = 0; o < pcm.length; o += 3200)
+            [rec feed:[pcm subdataWithRange:NSMakeRange(o, MIN(3200u, pcm.length - o))]];
         [rec finish];
         ok(rec.url != nil, "صدا روی دیسک نشست");
+        {
+            ZFileDecoder *d = [[ZFileDecoder alloc] initWithURL:flac error:nil];
+            NSMutableData *all = [NSMutableData data];
+            for (;;) { NSData *c = [d nextChunk:nil]; if (!c) break; [all appendData:c]; }
+            ok(all.length >= pcm.length &&
+               memcmp(all.bytes, pcm.bytes, pcm.length) == 0,
+               "و بایت‌به‌بایت همان صداست، حتی با تکه‌های کوچک‌ترِ میکروفن");
+        }
 
         // و یک دورِ دوم روی همان فایل. تا امروز `finish` ضبط را برای همیشه می‌بست و
         // صدای دورِ دوم هیچ‌جا نمی‌رفت؛ حالا که تکه با افستِ همین فایل شناخته می‌شود،

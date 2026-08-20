@@ -174,12 +174,27 @@ static NSString *ZFixedCuts(NSData *pcm, NSString *lang, double sec) {
 // تازه را نشان می‌داد و متن به زبان قبلی می‌آمد، و چنین چیزی نباید دوباره بی‌صدا
 // برگردد. با speed=۰ (تندترین) این تست چند ثانیه بیشتر طول نمی‌کشد.
 static ZMeasureRun *ZRunWav(NSData *pcm, NSString *lang, double speed, BOOL preview,
-                            NSArray<NSArray *> *switches, NSArray<NSNumber *> *drops) {
+                            NSArray<NSArray *> *switches, NSArray<NSNumber *> *drops,
+                            BOOL asSession) {
     ZMeasureRun *run = [ZMeasureRun new];
     run.echoPreview = preview;
     ZEngine *eng = [[ZEngine alloc] initWithLang:lang];
     eng.delegate = run;
     eng.previewInFileMode = preview;
+    // یک سشنِ واقعی روی دیسک، با ضبط و دفترچه. تنها راهِ آزمودنِ «تکه‌ی در انتظار از
+    // بسته شدنِ اپ هم جان سالم می‌برد» بی‌میکروفن و بی‌آدم: پروسه وسطِ قطعی کشته
+    // می‌شود و لانچِ بعدی باید همان صف را تمام کند.
+    if (asSession) {
+        NSURL *dir = [ZSessionsDir() URLByAppendingPathComponent:ZTimestampId()];
+        [NSFileManager.defaultManager createDirectoryAtURL:dir
+                              withIntermediateDirectories:YES attributes:nil error:nil];
+        NSURL *audio = [dir URLByAppendingPathComponent:@"audio.flac"];
+        eng.recorder = [[ZRecorder alloc] initWithURL:audio];
+        eng.queue.audio = audio;
+        eng.queue.manifest = ZQueueManifestIn(dir);
+        eng.queue.lang = lang;
+        fprintf(stderr, "--- سشن: %s ---\n", dir.path.UTF8String);
+    }
     NSError *e = nil;
     if (![eng startFromPCM:pcm speed:speed error:&e]) {
         fprintf(stderr, "شروع نشد: %s\n", e.localizedDescription.UTF8String ?: "?");
@@ -251,7 +266,7 @@ static int ZTable(NSArray<NSString *> *takes, NSString *lang, double speed) {
             return 1;
         }
         NSString *ref = [NSString stringWithContentsOfFile:md encoding:NSUTF8StringEncoding error:nil];
-        ZMeasureRun *r = ZRunWav(pcm, lang, speed, NO, nil, nil);
+        ZMeasureRun *r = ZRunWav(pcm, lang, speed, NO, nil, nil, NO);
         if (!r) return 1;
         ZScore s = ZScoreText(ZScript(ref ?: @""), r.text ?: @"");
         double sec = pcm.length / kZPcmBytesPerSec;
@@ -328,6 +343,7 @@ int ZLiveWavMain(NSArray<NSString *> *args) {
     double fixed = 0;      // برش ثابت، فقط برای بازتولید خط مبنا
     BOOL table = NO;
     BOOL preview = NO;     // استریم نمایشی را هم روشن کن و متنش را چاپ کن
+    BOOL session = NO;     // سشنِ واقعی روی دیسک: ضبط، دفترچه، و برداشتن سر لانچ
     // هر بار --switchlang یک مرز اضافه می‌کند، پس «هر چند بار که خواستی» هم آزمودنی
     // است نه فقط یک بار. هر عضو: @[@(ثانیه), @"زبان"].
     NSMutableArray<NSArray *> *switches = [NSMutableArray array];
@@ -343,6 +359,7 @@ int ZLiveWavMain(NSArray<NSString *> *args) {
         else if ([a isEqualToString:@"--fixed"] && i + 1 < args.count) fixed = args[++i].doubleValue;
         else if ([a isEqualToString:@"--table"]) table = YES;
         else if ([a isEqualToString:@"--preview"]) preview = YES;
+        else if ([a isEqualToString:@"--session"]) session = YES;
         else if ([a isEqualToString:@"--switchlang"] && i + 2 < args.count) {
             double at = args[++i].doubleValue;
             [switches addObject:@[@(at), args[++i]]];
@@ -360,7 +377,7 @@ int ZLiveWavMain(NSArray<NSString *> *args) {
     }
     if (!file) {
         fprintf(stderr, "zemzeme --livewav <file.wav> [--lang fa-IR] [--speed 1] [--ref متن.md] [--preview]\n"
-                        "                        [--switchlang <ثانیه> <fa-IR|en-US>] [--drop <ثانیه>] ...\n"
+                        "                        [--switchlang <ثانیه> <fa-IR|en-US>] [--drop <ثانیه>] [--session] ...\n"
                         "zemzeme --livewav --table\n");
         return 2;
     }
@@ -383,7 +400,7 @@ int ZLiveWavMain(NSArray<NSString *> *args) {
         }
         return 0;
     }
-    ZMeasureRun *r = ZRunWav(pcm, lang, speed, preview, switches, drops);
+    ZMeasureRun *r = ZRunWav(pcm, lang, speed, preview, switches, drops, session);
     if (!r) return 1;
     printf("%s\n", (r.text ?: @"").UTF8String);
     if (r.second.length) fprintf(stderr, "\n[en-US] %s\n", r.second.UTF8String);
@@ -400,4 +417,34 @@ int ZLiveWavMain(NSArray<NSString *> *args) {
                 (unsigned long)s.ref, (unsigned long)s.got, (unsigned long)s.missing, s.match);
     }
     return 0;
+}
+
+// ---------- zemzeme --resume ----------
+// همان کاری که لانچ بی‌صدا می‌کند، ولی از خط فرمان و با انتظار: صف‌های نیمه‌کاره‌ی
+// سشن‌های قبلی برداشته و تمام می‌شوند. دلیل وجودش همان شرط سختِ بقیه‌ی اپ است:
+// ادعای «اپ که بسته شود حرف گم نمی‌شود» باید بی‌میکروفن و بی‌آدم تکرارپذیر باشد.
+int ZResumeMain(NSArray<NSString *> *args) {
+    double ceiling = 120;
+    NSUInteger i = [args indexOfObject:@"--resume"] + 1;
+    if (i < args.count && ![args[i] hasPrefix:@"--"]) ceiling = args[i].doubleValue;
+    ZResumePendingQueues();
+    // بی سقف صبر نمی‌کنیم، مثل هر انتظار دیگری در این اپ.
+    NSDate *end = [NSDate dateWithTimeIntervalSinceNow:ceiling];
+    NSFileManager *fm = NSFileManager.defaultManager;
+    for (;;) {
+        [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.3]];
+        NSUInteger left = 0;
+        for (NSURL *d in [fm contentsOfDirectoryAtURL:ZSessionsDir()
+                           includingPropertiesForKeys:nil options:0 error:nil]) {
+            if ([fm fileExistsAtPath:ZQueueManifestIn(d).path]) left++;
+        }
+        if (!left) {
+            printf("صفی نماند\n");
+            return 0;
+        }
+        if ([NSDate.date compare:end] != NSOrderedAscending) {
+            fprintf(stderr, "%lu سشن هنوز تکه‌ی در راه دارد\n", (unsigned long)left);
+            return 1;
+        }
+    }
 }

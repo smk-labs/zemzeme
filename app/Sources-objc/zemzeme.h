@@ -464,6 +464,10 @@ int ZLiveWavMain(NSArray<NSString *> *args);
 // zemzeme --aipass <متن.txt|-> [--second متن-en.txt]. تنها مسیری که چیزی از دستگاه
 // بیرون می‌فرستد، پس باید بشود بی‌سشن و بی‌آدم دقیقا دید چه رفت و چه برگشت.
 int ZAIPassMain(NSArray<NSString *> *args);
+
+// zemzeme --resume [سقف ثانیه]: صف‌های نیمه‌کاره را بردار و تمام کن، بی‌رابط. همان
+// کاری که لانچ می‌کند، ولی منتظر می‌ماند تا ادعای سرتاسری آزمودنی باشد.
+int ZResumeMain(NSArray<NSString *> *args);
 // zemzeme --checkkey: همان کلیدسنجی که منو می‌زند، روی کلیدِ ذخیره‌شده، بی‌پنجره.
 // کلید از این فایل بیرون نمی‌رود، پس خودِ خروجی هم اینجا چاپ می‌شود نه در فراخوان.
 int ZCheckKeyMain(void);

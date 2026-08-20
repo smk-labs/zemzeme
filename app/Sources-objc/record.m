@@ -11,6 +11,7 @@
 @implementation ZRecorder {
     NSURL *_want;               // جای فایل، پیش از ساخته شدنش
     ZFlacEncoder *_enc;
+    NSMutableData *_pend;       // پی‌سی‌امِ کمتر از یک بلاک، تا بلاک کامل شود
     NSFileHandle *_fh;
     NSLock *_lock;
     unsigned long long _pcmBytes;
@@ -120,12 +121,33 @@
     }
 }
 
+// **دقیقا یک بلاک در هر بار**، نه هرچه از میکروفن رسید. اندازه‌گیری‌شده و بد: با
+// تکه‌های ۳۲۰۰ بایتیِ میکروفن (۱۶۰۰ فریم، کمتر از یک بلاکِ ۴۶۰۸ فریمی) خروجی کدک با
+// همان صدا در تکه‌های بلاک‌اندازه **یکی نبود**، و فایل هم بلندتر از صدای ورودی درمی‌آمد
+// و هم از فریم ۴۸۰۰ به بعد محتوایش جابه‌جا می‌شد. یعنی audio.flac، همان فایلی که قرارِ
+// روز اولِ اپ «مرجع همه‌چیز» می‌داندش، رونوشتِ دقیقِ حرفِ آدم نبود.
+//
+// دلیلش صف داخلیِ خودِ AudioConverter است: چیزی که ما «مصرف‌شده» حساب می‌کنیم و آنچه
+// واقعا به یک بلاک تبدیل شده یکی نیستند، و آن اختلاف روی هم جمع می‌شود. با بلاکِ کامل
+// اصلا ته‌مانده‌ای در کار نیست و خروجی بایت‌به‌بایت همان ورودی است (tools/queue_test).
+- (void)encodeLocked:(NSData *)pcm {
+    if (!_pend) _pend = [NSMutableData data];
+    [_pend appendData:pcm];
+    NSUInteger block = (NSUInteger)_enc.blockFrames * 2;
+    if (!block) return;
+    while (_pend.length >= block) {
+        NSData *one = [_pend subdataWithRange:NSMakeRange(0, block)];
+        [_pend replaceBytesInRange:NSMakeRange(0, block) withBytes:NULL length:0];
+        [self writeLocked:[_enc encode:one]];
+    }
+}
+
 - (void)feed:(NSData *)pcm {
     if (!pcm.length) return;
     [_lock lock];
     if ([self openLocked]) {
         _pcmBytes += pcm.length;
-        [self writeLocked:[_enc encode:pcm]];
+        [self encodeLocked:pcm];
     }
     [_lock unlock];
 }
@@ -171,6 +193,7 @@
         _opened = NO;
         _broken = NO;    // خرابیِ قبلی مالِ فایلِ رفته بود
         _enc = nil;
+        _pend = nil;
         _pcmBytes = 0;
         _outBytes = 0;
     }
@@ -189,7 +212,7 @@
         NSUInteger have = (NSUInteger)(frames % MAX(1u, (unsigned)_enc.blockFrames));
         if (have) {
             NSUInteger padFrames = _enc.blockFrames - have;
-            [self writeLocked:[_enc encode:[NSMutableData dataWithLength:padFrames * 2]]];
+            [self encodeLocked:[NSMutableData dataWithLength:padFrames * 2]];
             frames += padFrames;
             // و سکوتِ پرکننده در شمارنده هم می‌آید. وگرنه بعد از یک مکث، «بایتِ
             // بلعیده‌شده» و «فریمِ داخل فایل» از هم فاصله می‌گرفتند و افستِ هر تکه‌ی
