@@ -1166,10 +1166,8 @@ static NSDictionary<NSString *, NSString *> *ZBatchHistoryIndex(void) {
 
 - (void)shotTo:(NSString *)dir name:(NSString *)name {
     [_back layoutSubtreeIfNeeded];
-    NSBitmapImageRep *rep = [_back bitmapImageRepForCachingDisplayInRect:_back.bounds];
-    if (!rep) return;
-    [_back cacheDisplayInRect:_back.bounds toBitmapImageRep:rep];
-    NSData *png = [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+    NSData *png = ZShotPNG(_back);
+    if (!png) return;
     [png writeToFile:[dir stringByAppendingPathComponent:
                       [NSString stringWithFormat:@"batch-%@.png", name]] atomically:YES];
 }

@@ -389,6 +389,23 @@ NSString *ZSigned(NSString *text) {
     return [NSString stringWithFormat:@"%@\n\n%@", text, line];
 }
 
+// ---------- عکسِ درون‌پروسه‌ای ----------
+// پیکسل دو برابرِ نقطه، و `size` روی نقطه می‌ماند: خودِ `cacheDisplayInRect` ضریبش
+// را از همین نسبت برمی‌دارد، پس متن و آیکون واقعا دو برابر کشیده می‌شوند نه اینکه
+// یک عکسِ یک‌برابری بزرگ شود.
+NSData *ZShotPNG(NSView *v) {
+    NSRect b = v.bounds;
+    if (b.size.width < 1 || b.size.height < 1) return nil;
+    NSBitmapImageRep *rep = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL
+        pixelsWide:(NSInteger)(b.size.width * 2) pixelsHigh:(NSInteger)(b.size.height * 2)
+        bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES isPlanar:NO
+        colorSpaceName:NSCalibratedRGBColorSpace bytesPerRow:0 bitsPerPixel:0];
+    if (!rep) return nil;
+    rep.size = b.size;
+    [v cacheDisplayInRect:b toBitmapImageRep:rep];
+    return [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+}
+
 // ---------- پارسر protobuf ----------
 // اسکیمای google_streaming_api.proto در Chromium:
 // event{status=1, result=2, endpoint=4} / result{alternative=1, final=2, stability=3}

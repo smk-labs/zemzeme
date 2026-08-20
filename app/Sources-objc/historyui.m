@@ -322,12 +322,8 @@ static const CGFloat kHRow = 26;
     [_back layoutSubtreeIfNeeded];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
-        NSBitmapImageRep *rep = [self->_back bitmapImageRepForCachingDisplayInRect:self->_back.bounds];
-        if (rep) {
-            [self->_back cacheDisplayInRect:self->_back.bounds toBitmapImageRep:rep];
-            NSData *png = [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
-            [png writeToFile:[dir stringByAppendingPathComponent:@"history.png"] atomically:YES];
-        }
+        NSData *png = ZShotPNG(self->_back);
+        [png writeToFile:[dir stringByAppendingPathComponent:@"history.png"] atomically:YES];
         [self->_panel orderOut:nil];
         if (done) done();
     });
