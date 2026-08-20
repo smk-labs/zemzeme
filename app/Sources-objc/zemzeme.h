@@ -207,6 +207,60 @@ NSString *ZTranscribeSegment(NSData *pcm, NSString *lang, BOOL rawUpload,
 // یعنی جواب اصلا نگرفتیم و باید دوباره رفت.
 BOOL ZCloseWasClean(NSString *why);
 
+// ---------- صف تکه‌ها ----------
+// واحدِ حقیقت **تکه** است، نه رشته‌ی سرهم‌شده. هر تکه یک جا دارد با حالتِ خودش، و
+// متن هر لحظه از روی جاها رندر می‌شود؛ پس ترتیب ساختاری است و هیچ جراحیِ رشته‌ای
+// («nامین نشانه را عوض کن») لازم نیست.
+//
+// سه حالت، و سومی همان چیزی است که این تغییر برای آن نوشته شد: تکه‌ای که سرور
+// شنید و حرفی در آن نبود، **تمام** است. `ZSegHasVoice` انرژی می‌سنجد نه حرف و
+// آستانه‌اش عمدا کوچک است (پچ‌پچ باید رد شود)، پس یک نفس هم از آن رد می‌شود و به
+// شبکه می‌رسد. جوابِ درستِ گوگل به آن «حرفی نبود» است، نه خرابی.
+typedef NS_ENUM(NSInteger, ZSlotState) {
+    ZSlotWaiting = 0,   // هنوز جوابی نگرفته؛ یا اصلا نرفته، یا نرسیده
+    ZSlotDone,          // متن دارد
+    ZSlotSilent,        // سرور گوش کرد و حرفی نبود؛ سهمش در متن هیچ است
+};
+
+@interface ZSlot : NSObject
+@property (nonatomic) NSInteger seq;        // جای ساختاری در متن
+@property (nonatomic) ZSlotState state;
+@property (nonatomic, copy) NSString *text;
+@property (nonatomic, copy) NSString *lang;
+@property (nonatomic, strong) NSData *pcm;  // فاز یک: صدا در حافظه
+@property (nonatomic) NSInteger tries;
+@property (nonatomic) BOOL secondOpinionUsed;
+@end
+
+// پله‌های عقب‌نشینیِ **مشترک**: ۱، ۲، ۴، ۸، ۱۵، ۳۰ ثانیه، سقف ۳۰.
+NSTimeInterval ZBackoffDelay(NSInteger step);
+
+// سقفِ انتظارِ دورِ اول سر پایانِ شنیدن. انتظارِ بی‌سقف در این اپ ممنوع است.
+#define kZQueueFirstPassCeilingSec 90.0
+
+// یک کارگر، یک درخواست در پرواز، یک ساعتِ عقب‌نشینی برای کلِ صف.
+//
+// و آنچه اینجا **نیست**: نه `SCNetworkReachability`، نه `NWPathMonitor`، نه probe.
+// پشت پروکسی و مسیر tun این دستگاه سیستم‌عامل «آنلاین» می‌گوید در حالی که گوگل در
+// دسترس نیست، پس هر سنجشِ خودکاری دروغ درمی‌آید. **خودِ تلاشِ دوباره** تنها سنجشِ
+// موجود است، و همان کافی است.
+@interface ZQueue : NSObject
+- (NSInteger)add:(NSData *)pcm lang:(NSString *)lang;   // جای تازه، برمی‌گرداند seq
+- (NSString *)text;                     // همه‌ی جاهای رسیده، به ترتیب، با یک فاصله
+- (NSString *)textFrom:(NSInteger)seq;  // فقط از این جا به بعد (دورِ تازه)
+@property (nonatomic, readonly) NSInteger nextSeq;
+@property (nonatomic, readonly) NSInteger waiting;      // چند تکه هنوز در راه است
+@property (nonatomic, readonly) BOOL drained;
+@property (nonatomic, readonly) unsigned long long bytesUp;
+// هر بار که حالِ یک جا عوض شد، روی نخ اصلی. پنل از همین‌جا تازه می‌شود.
+@property (nonatomic, copy) void (^onChange)(void);
+// بلوکه، تا هر جایی که تا این لحظه ساخته شده **یک بار** امتحان شود. نه تا خالی
+// شدن صف: آنچه رسیده حقِ کاربر است و همین حالا می‌رود.
+- (void)waitForFirstPass;
+- (void)discard;
+- (void)stop;
+@end
+
 // ---------- جای خالی ----------
 // تکه‌ای که حرف داشت و بی‌متن برگشت.
 //
