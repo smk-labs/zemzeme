@@ -15,6 +15,7 @@
     NSFileHandle *_fh;
     NSLock *_lock;
     unsigned long long _pcmBytes;
+    unsigned long long _fileFrames;   // فریمی که واقعا داخل فایل نشسته
     unsigned long long _outBytes;
     BOOL _opened;               // یک بایت هم که نوشته شد، فایل هست و می‌ماند
     BOOL _broken;               // یک بار شکست، دیگر هر تکه را دوباره امتحان نمی‌کنیم
@@ -139,6 +140,13 @@
         NSData *one = [_pend subdataWithRange:NSMakeRange(0, block)];
         [_pend replaceBytesInRange:NSMakeRange(0, block) withBytes:NULL length:0];
         [self writeLocked:[_enc encode:one]];
+        _fileFrames += _enc.blockFrames;
+        // و طول در هدر، **سر هر بلاک**، نه فقط سر بستن. هشت بایت و یک seek، یعنی
+        // هیچ. ولی بی آن، فایلِ سشنی که اپ وسطش کشته شده total_samples=0 دارد و
+        // هیچ ابزاری بازش نمی‌کند: نه afinfo، نه پنل رونویسی خودِ اپ، و نه مسیری که
+        // تکه‌ی جامانده صدایش را از همان‌جا پس می‌گیرد. یعنی دقیقا در همان حالتی که
+        // این فایل برای آن هست (کرش وسط دیکته)، بی‌فایده بود.
+        [self patchTotalSamplesLocked:_fileFrames];
     }
 }
 
@@ -169,6 +177,7 @@
     @try {
         [_fh seekToFileOffset:18];    // "fLaC"(۴) + سرِ بلاک(۴) + دو blocksize و دو frame size(۱۰)
         [_fh writeData:[NSData dataWithBytes:b length:8]];
+        [_fh seekToEndOfFile];        // وگرنه بلاکِ بعدی روی هدر می‌نشیند
     } @catch (NSException *e) {
         ZLog(@"record: نوشتن طول در هدر نشد (%@)؛ فایل باز می‌شود ولی طولش حدسی است", e.name);
     }
@@ -195,6 +204,7 @@
         _enc = nil;
         _pend = nil;
         _pcmBytes = 0;
+        _fileFrames = 0;
         _outBytes = 0;
     }
     [_lock unlock];
@@ -208,24 +218,16 @@
         // ته‌مانده‌ی کمتر از یک بلاک را انکودر هیچ‌وقت فریم نمی‌کند، پس تا ~۲۹۰
         // میلی‌ثانیه‌ی آخر (یعنی احتمالا آخرین کلمه) در فایل نمی‌آمد. با سکوت پرش
         // می‌کنیم؛ سکوتِ ته فایل بی‌آزار است، افتادنِ آخرین کلمه نه.
-        unsigned long long frames = _pcmBytes / 2;
-        NSUInteger have = (NSUInteger)(frames % MAX(1u, (unsigned)_enc.blockFrames));
+        NSUInteger have = (NSUInteger)((_pcmBytes / 2) % MAX(1u, (unsigned)_enc.blockFrames));
         if (have) {
             NSUInteger padFrames = _enc.blockFrames - have;
             [self encodeLocked:[NSMutableData dataWithLength:padFrames * 2]];
-            frames += padFrames;
             // و سکوتِ پرکننده در شمارنده هم می‌آید. وگرنه بعد از یک مکث، «بایتِ
             // بلعیده‌شده» و «فریمِ داخل فایل» از هم فاصله می‌گرفتند و افستِ هر تکه‌ی
             // دورِ بعد به اندازه‌ی همین چند صدم ثانیه دروغ می‌شد.
             _pcmBytes += (unsigned long long)padFrames * 2;
         }
-        // و هرچه در صف داخلی انکودر مانده
-        for (int i = 0; i < 8; i++) {
-            NSData *more = [_enc encode:[NSData data]];
-            if (!more.length) break;
-            [self writeLocked:more];
-        }
-        if (_fh) [self patchTotalSamplesLocked:frames];
+        if (_fh) [self patchTotalSamplesLocked:_fileFrames];
         [_fh closeFile];
         _fh = nil;
         ZLog(@"record: %@ · %.0f ثانیه · %.1f مگابایت", _want.lastPathComponent,
