@@ -37,12 +37,18 @@ recognition.
   handed over, so neither the clipboard nor the insertion has to have worked for the
   text to survive. Right Command + T opens the last 20, each with a one-click insert
   and copy. The store is an append-only JSONL file you can read with `tail`.
-- **Nothing you said is dropped when the network is.** A piece that comes back with
-  no text is a failure, never an answer, so its place in the text is marked
-  `⟨جامانده⟩` and you are told the moment it happens. Two failures in a row stop the
-  sending (not the recording). The next Esc re-sends only the missing pieces, each
-  landing back in its own slot; nothing incomplete is ever typed at your cursor
-  unless you ask for it with the insert button.
+- **An outage is invisible.** Keep talking: the audio keeps recording, pieces keep
+  getting cut and queued, and a piece that did not come back goes again on its own
+  after 1, 2, 4, 8, 15 and 30 seconds, the clock shared by the whole queue and reset
+  by the first piece that lands. Esc is never held hostage either: whatever has
+  arrived is delivered right then, and the rest drop into their own places later.
+  The panel shows a calm count, not an error.
+- **An empty answer is not always a failure**, and that correction is what makes the
+  above possible. The voice check measures energy, not speech, and its threshold is
+  deliberately low so a whisper survives, so a breath gets through and reaches the
+  network. Google answers "no words" and closes the stream cleanly. A clean close
+  with no text means that piece is finished and contributes nothing; any other
+  reason means we never got an answer, and it goes again.
 - **Optional AI cleanup** that sends **text only**, never audio, using your own free
   Gemini key. Off by default.
 - **An optional signature line** appended to every piece of text that leaves the app.
