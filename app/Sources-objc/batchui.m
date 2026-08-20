@@ -791,7 +791,9 @@ static NSString *ZClock(double sec) {
         [self flash:@"متنی برای کپی نیست"];
         return;
     }
-    [ZInjector copyFinal:t];
+    // امضا فقط روی کپی، نه در ادیتور: متنی که کاربر می‌بیند و ویرایش می‌کند مالِ
+    // خودش است، و «ذخیره‌ی فایل» هم همان را می‌نویسد.
+    [ZInjector copyFinal:ZSigned(t)];
     ZPlay(ZSoundCopy);
     [self flash:[NSString stringWithFormat:@"کپی شد · %@ نویسه", ZFaDigits(@(t.length).stringValue)]];
 }

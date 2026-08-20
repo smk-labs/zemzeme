@@ -556,6 +556,9 @@ static CGEventRef zHotkeyCallback(CGEventTapProxy proxy, CGEventType type, CGEve
     if (code == 0) return self.onAIPass;      // A، همیشه: تاگل است نه کارِ سشن
     if (code == 11) return self.onSecondPass; // B، همیشه: تاگل است (bilingual)
     if (code == 35) return self.onPreview;    // P، همیشه: تاگل است (preview/پیش‌نمایش)
+    // G مثل signature. حرف‌های نزدیک‌تر همه گرفته‌اند (A و S و I و C و…) و کلید هم
+    // مثل بقیه‌ی تاگل‌ها بی‌سشن کار می‌کند: تنظیم است، نه کارِ یک دیکته‌ی باز.
+    if (code == 5) return self.onSignature;   // G، همیشه: تاگل است (signature/امضا)
     if (!self.sessionActive) return nil;      // بقیه فقط در حین سشن
     switch (code) {
         case 49: return self.onPause;         // Space: مکث. تک‌تپ دیگر مکث نیست، پایان است

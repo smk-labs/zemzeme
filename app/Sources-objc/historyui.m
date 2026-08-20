@@ -461,7 +461,9 @@ static NSString *zWhen(NSDate *d) {
 - (void)tapRowCopy:(NSButton *)b {
     ZHistoryEntry *e = [self entryAt:b.tag];
     if (!e) return;
-    [ZInjector copyFinal:e.text];
+    // امضا لحظه‌ی خروج سوار می‌شود، نه در فایل تاریخچه. پس تاگل که خاموش شود،
+    // همین ردیفِ قدیمی هم از این به بعد بی‌امضا کپی می‌شود.
+    [ZInjector copyFinal:ZSigned(e.text)];
     ZPlay(ZSoundCopy);
     [self flash:@"کپی شد"];
 }
@@ -477,16 +479,17 @@ static NSString *zWhen(NSDate *d) {
     [self rememberTarget];
     NSRunningApplication *to = _target ?: NSWorkspace.sharedWorkspace.frontmostApplication;
     if (!to) { [self flash:@"برنامه‌ای برای درج پیدا نشد"]; return; }
-    [ZInjector copyFinal:e.text];
+    NSString *out = ZSigned(e.text);
+    [ZInjector copyFinal:out];
     ZInjector *inj = [ZInjector new];
     ZInsertMode im = [ZSettings.shared insertModeForBundleId:to.bundleIdentifier];
-    [inj insert:e.text pid:to.processIdentifier
+    [inj insert:out pid:to.processIdentifier
     delayMicros:ZSettings.shared.typeDelayMicros
  pasteIfRefused:im == ZInsertPaste
            done:^(BOOL viaAX) {
-        ZLog(@"historyui: درج شد (ax=%d، %lu نویسه)", viaAX, (unsigned long)e.text.length);
+        ZLog(@"historyui: درج شد (ax=%d، %lu نویسه)", viaAX, (unsigned long)out.length);
     }];
-    [inj copyFinalAfterPending:e.text];
+    [inj copyFinalAfterPending:out];
     ZPlay(ZSoundInsert);
     [self flash:[NSString stringWithFormat:@"درج شد در %@", to.localizedName ?: @"برنامه‌ی جلویی"]];
 }

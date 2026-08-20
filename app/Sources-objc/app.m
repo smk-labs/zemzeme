@@ -251,6 +251,10 @@ int ZSelfTest(NSString *file, NSString *lang) {
     // همان دو در می‌آید: دکمه‌ی نوار و میان‌بر.
     _hotkeys.onPreview = ^{ [ws togglePreview]; };
     _panel.onPreview = ^{ [ws togglePreview]; };
+    // G: امضا. مثل A و B و P یک تنظیم است، پس بی‌سشن هم کار می‌کند و از همان دو در
+    // می‌آید. متنِ خطش جای دیگری عوض می‌شود (شیتِ منوبار)؛ این کلید فقط روشن/خاموش.
+    _hotkeys.onSignature = ^{ [ws toggleSignature]; };
+    _panel.onSignature = ^{ [ws toggleSignature]; };
     // بقیه‌ی دکمه‌های نوار مالِ سشن‌اند و ZSession خودش در wirePanel می‌بنددشان.
 
 
@@ -701,6 +705,32 @@ int ZSelfTest(NSString *file, NSString *lang) {
         : @"فقط برای «تمیز کردن متن» لازم است. خودِ دیکته و رونویسی فایل رایگان‌اند و "
            "هیچ کلید و حسابی نمی‌خواهند. کلید هم رایگان است (Google AI Studio) و فقط "
            "در Keychain همین دستگاه می‌ماند.";
+
+    // امضا و خطش، پشت سر هم و به همان دلیلِ جفتِ بالا: یکی بی آن یکی نیمه‌کاره است.
+    // تاگل می‌گوید امضا برود یا نه، و ردیف بعدی می‌گوید چه چیزی برود. خطِ خالی هم
+    // یعنی «نرو»، پس دو راه برای خاموش کردن هست و هیچ‌کدام خطا نیست.
+    BOOL sgOn = ZSettings.shared.signatureEnabled;
+    NSString *sgLine = [ZSettings.shared.signatureLine
+                        stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSMenuItem *sg = [self icon:[self item:menu title:@"امضای ته متن"
+                                    action:@selector(menuToggleSignature) key:@"g"]
+                          symbol:@"signature"];
+    sg.state = sgOn ? NSControlStateValueOn : NSControlStateValueOff;
+    sg.toolTip = sgLine.length
+        ? [NSString stringWithFormat:
+           @"یک خط کوتاه، با یک خط فاصله، ته هر متنی که کپی یا درج می‌شود. هیچ‌جا "
+            "ذخیره نمی‌شود، فقط لحظه‌ی بیرون رفتن سوار می‌شود. الان این است:\n%@\n"
+            "(Command راست + G)", sgLine]
+        : @"خطِ امضا خالی است، پس روشن هم که باشد چیزی چسبانده نمی‌شود. متنش را از "
+           "ردیف بعدی بگذار. (Command راست + G)";
+    // خودِ خط: یک شیتِ کوچک، دقیقا مثل کلید Gemini. کار است نه تنظیم، پس در
+    // «پیشرفته» جایی ندارد؛ جایش زیر همان تاگلی است که به آن نیاز دارد.
+    NSMenuItem *sgEdit = [self icon:[self item:menu title:@"خطِ امضا…"
+                                        action:@selector(menuSetSignature) key:@""]
+                              symbol:@"text.cursor"];
+    sgEdit.toolTip = @"متنِ امضا را عوض کن. پیش‌فرضش برای دیکته‌ی پرامپت است، ولی هر "
+                      "چیزی می‌شود گذاشت: نام، ارجاع، یا یک سلبِ مسئولیت. دکمه‌ی "
+                      "«برگرداندن پیش‌فرض» همان‌جاست.";
     [menu addItem:NSMenuItem.separatorItem];
 
     // ---------- آخر از همه: چیزهایی که روی نوار نیستند ----------
@@ -1153,6 +1183,70 @@ BOOL ZMacDictationOnDoubleCommand(void) {
     ZPlay(ZSoundMode);
 }
 - (void)menuTogglePreview { [self togglePreview]; }
+
+// امضا. اثرش **همین حالا**ست و روی هر خروجیِ بعدی: امضا هیچ‌جا ذخیره نشده، پس
+// خاموش کردنش حتی متنِ ردیف‌های قدیمیِ تاریخچه را هم بی‌امضا می‌کند.
+//
+// پیام روشن‌شدن خودِ خط را می‌گوید، نه «امضا روشن شد». دلیلش این است که خط مالِ
+// کاربر است و اپ نمی‌داند چه نوشته: کسی که ماه پیش عوضش کرده باید همان لحظه ببیند
+// چه چیزی از این به بعد ته متنش می‌رود.
+- (void)toggleSignature {
+    BOOL on = !ZSettings.shared.signatureEnabled;
+    ZSettings.shared.signatureEnabled = on;
+    NSString *line = [ZSettings.shared.signatureLine
+                      stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSString *msg;
+    if (!on) msg = @"امضا خاموش شد";
+    else if (line.length) msg = [NSString stringWithFormat:@"امضا روشن شد؛ ته هر متن: %@", line];
+    // خطِ خالی و تاگلِ روشن: هیچ خطایی نیست و دیالوگی هم لازم نیست، فقط چیزی
+    // چسبانده نمی‌شود. پیام همین را می‌گوید و راهش را هم نشان می‌دهد.
+    else msg = @"امضا روشن شد ولی خطش خالی است؛ از منوبار متنش را بگذار";
+    [_panel flash:msg];
+    ZPlay(ZSoundMode);
+}
+- (void)menuToggleSignature { [self toggleSignature]; }
+
+// شیتِ خطِ امضا، مو به مو مثل شیتِ کلید Gemini و با همان دلیل: یک ورودیِ تک‌خطی
+// ارزشِ یک پنجره‌ی تنظیماتِ تازه را ندارد. تنها تفاوت فیلد است: اینجا متن دیده
+// می‌شود، چون رمز نیست و کاربر باید بخواند چه چیزی ته متنش می‌رود.
+//
+// جوابِ دکمه‌ها با شیءِ خودشان مقایسه می‌شود نه با عددِ ثابتِ NSAlert، همان قاعده‌ی
+// آن شیت: ترتیب دکمه‌ها یک روز عوض می‌شود و اندیس‌های هاردکد بی‌صدا غلط می‌شوند.
+- (void)menuSetSignature {
+    NSAlert *a = [NSAlert new];
+    a.messageText = @"خطِ امضا";
+    a.informativeText =
+        @"این خط، با یک خط فاصله، ته هر متنی می‌رود که کپی یا درج می‌شود.\n\n"
+         "هیچ‌جا ذخیره نمی‌شود: نه در ادیتور پنل، نه در تاریخچه، نه در فایلِ متنِ "
+         "سشن. فقط لحظه‌ی بیرون رفتن سوار می‌شود، پس خاموش کردنِ امضا متنِ "
+         "ردیف‌های قدیمی تاریخچه را هم بی‌امضا می‌کند.\n\n"
+         "پیش‌فرضش برای دیکته‌ی پرامپت است: خواننده بداند واژه‌ی عجیب و نویسه‌ی "
+         "جابه‌جا کارِ گفتاربه‌متن است. هر چیز دیگری هم می‌شود گذاشت: نام، ارجاع، "
+         "یا یک سلبِ مسئولیت.";
+    NSTextField *field = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 300, 24)];
+    field.stringValue = ZSettings.shared.signatureLine;
+    field.placeholderString = @"خالی بگذار تا چیزی چسبانده نشود";
+    a.accessoryView = field;
+    NSButton *save = [a addButtonWithTitle:@"ذخیره"];
+    NSButton *reset = [a addButtonWithTitle:@"برگرداندن پیش‌فرض"];
+    [a addButtonWithTitle:@"لغو"];
+    a.window.initialFirstResponder = field;
+    NSModalResponse resp = [a runModal];
+    if (resp == [a.buttons indexOfObject:save] + NSAlertFirstButtonReturn) {
+        // بی اعتبارسنجی، و عمدا: خطی که بعدِ تریم خالی است خودش یعنی «امضا نزن»، پس
+        // چیزی برای رد کردن نیست و دیالوگِ خطایی هم لازم نیست.
+        ZSettings.shared.signatureLine = field.stringValue;
+        NSString *line = [field.stringValue
+                          stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        [_panel flash:line.length
+                      ? [NSString stringWithFormat:@"خطِ امضا: %@", line]
+                      : @"خطِ امضا خالی شد؛ چیزی چسبانده نمی‌شود"];
+    } else if (resp == [a.buttons indexOfObject:reset] + NSAlertFirstButtonReturn) {
+        ZSettings.shared.signatureLine = kZSignatureDefault;
+        [_panel flash:[NSString stringWithFormat:@"خطِ امضا به پیش‌فرض برگشت: %@",
+                       kZSignatureDefault]];
+    }
+}
 - (void)menuToggleRecord { ZSettings.shared.recordSessions = !ZSettings.shared.recordSessions; }
 - (void)menuToggleSounds {
     ZSettings.shared.soundsEnabled = !ZSettings.shared.soundsEnabled;

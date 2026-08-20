@@ -312,6 +312,20 @@ NSFont *ZFont(CGFloat size, BOOL medium) {
 - (BOOL)previewStream { return [self.d boolForKey:@"previewStream"]; }
 - (void)setPreviewStream:(BOOL)v { [self.d setBool:v forKey:@"previewStream"]; }
 
+// امضا. تاگل پیش‌فرض خاموش، مثل هر چیزی که متنِ تحویل را عوض می‌کند: کسی که خبر
+// ندارد نباید یک خطِ اضافه سرِ پرامپتش پیدا کند.
+- (BOOL)signatureEnabled { return [self.d boolForKey:@"signature"]; }
+- (void)setSignatureEnabled:(BOOL)v { [self.d setBool:v forKey:@"signature"]; }
+
+// و خودِ خط. نبودنِ کلید یعنی پیش‌فرض، ولی رشته‌ی **خالی** عمدا محترم است و به
+// پیش‌فرض برنمی‌گردد: خالی کردنِ خط یکی از دو راهِ خاموش کردنِ امضاست، و اگر
+// پیش‌فرض جایش می‌نشست کاربر خط را پاک می‌کرد و همان جمله‌ی قبلی برمی‌گشت.
+- (NSString *)signatureLine {
+    NSString *v = [self.d stringForKey:@"signatureLine"];
+    return v ?: kZSignatureDefault;
+}
+- (void)setSignatureLine:(NSString *)v { [self.d setObject:v ?: @"" forKey:@"signatureLine"]; }
+
 // نبودنِ کلید یعنی پیش‌فرض، نه صفر. صفر اینجا معنیِ خودش را دارد («هرگز جارو نکن»)،
 // پس اگر مثل بقیه‌ی عددها مستقیم خوانده می‌شد، هر نصبِ تازه بی‌صدا با جاروی خاموش
 // بالا می‌آمد و همان چیزی که این تنظیم برایش هست اتفاق نمی‌افتاد.
@@ -358,6 +372,22 @@ NSFont *ZFont(CGFloat size, BOOL medium) {
 }
 
 @end
+
+// ---------- امضا ----------
+// پیش‌فرض. دلیلش دیکته‌ی پرامپت است: خواننده باید بداند نویسه‌ی جابه‌جا و واژه‌ی
+// عجیب کارِ گفتاربه‌متن است، نه چیزی که گوینده گفته. ولی این فقط یک پیش‌فرض است؛
+// خطش مالِ کاربر است و اپ هیچ فرضی روی محتوایش ندارد.
+NSString *const kZSignatureDefault = @"(speech-to-text, mentally fix typos)";
+
+// یک خطِ خالی فاصله، بعد امضا. یک خط تنها کافی نبود: در متنی که خودش چند پاراگراف
+// دارد، امضا به پاراگراف آخر می‌چسبید و مثل بخشی از حرف خوانده می‌شد.
+NSString *ZSigned(NSString *text) {
+    if (!ZSettings.shared.signatureEnabled) return text;
+    NSString *line = [ZSettings.shared.signatureLine
+                      stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (!line.length || !text.length) return text;
+    return [NSString stringWithFormat:@"%@\n\n%@", text, line];
+}
 
 // ---------- پارسر protobuf ----------
 // اسکیمای google_streaming_api.proto در Chromium:
