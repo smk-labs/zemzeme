@@ -1122,10 +1122,8 @@ static NSString *ZClock(NSTimeInterval sec) {
         // فرصتِ چرخیدنِ ران‌لوپ: فِیدِ دُم پیش‌نمایش تایمری است و بی این، عکس حالتِ
         // نیمه‌کاره را می‌گیرد نه حالتِ نشسته‌ای که کاربر واقعا می‌بیند.
         [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.25]];
-        NSBitmapImageRep *rep = [_effect bitmapImageRepForCachingDisplayInRect:_effect.bounds];
-        if (!rep) continue;
-        [_effect cacheDisplayInRect:_effect.bounds toBitmapImageRep:rep];
-        NSData *png = [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+        NSData *png = ZShotPNG(_effect);
+        if (!png) continue;
         [png writeToFile:[dir stringByAppendingPathComponent:
                           [NSString stringWithFormat:@"panel-%@.png", pair[0]]] atomically:YES];
     }

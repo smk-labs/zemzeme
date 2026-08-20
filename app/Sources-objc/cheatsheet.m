@@ -44,12 +44,8 @@ static NSString *const kCSAutosave = @"ZemzemeCheatSheet";
     [me build];
     [me->_win orderFrontRegardless];
     [me->_card layoutSubtreeIfNeeded];
-    NSBitmapImageRep *rep = [me->_card bitmapImageRepForCachingDisplayInRect:me->_card.bounds];
-    if (rep) {
-        [me->_card cacheDisplayInRect:me->_card.bounds toBitmapImageRep:rep];
-        NSData *png = [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
-        [png writeToFile:[dir stringByAppendingPathComponent:@"cheatsheet.png"] atomically:YES];
-    }
+    NSData *png = ZShotPNG(me->_card);
+    [png writeToFile:[dir stringByAppendingPathComponent:@"cheatsheet.png"] atomically:YES];
     [me->_win orderOut:nil];
 }
 
