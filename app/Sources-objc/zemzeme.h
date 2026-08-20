@@ -95,6 +95,14 @@ NSString *ZModeLabel(ZMode m);
 // می‌دهد، فقط زودتر دیده می‌شود. پیش‌فرض خاموش، چون خواندنِ حرفِ خود آدم در حالی که
 // دارد همان را می‌گوید، رشته‌ی کلام را پاره می‌کند.
 @property (nonatomic) BOOL previewStream;
+// امضا: یک خط کوتاه که به دُمِ هر متنی که از اپ بیرون می‌رود چسبانده می‌شود.
+// دو تنظیم است نه یکی، و عمدا: تاگل، و خودِ خط. خط مالِ کاربر است و اپ فقط حملش
+// می‌کند؛ پیش‌فرضش از دیکته‌ی پرامپت می‌آید (خواننده بداند غلط‌های عجیب کارِ
+// گفتاربه‌متن است، نه حرفِ گوینده) ولی هیچ‌جای کد به آن جمله تکیه نمی‌کند: کسی هم
+// می‌تواند نامش را بگذارد، هم یک ارجاع، هم یک سلبِ مسئولیت.
+@property (nonatomic) BOOL signatureEnabled;
+@property (nonatomic, copy) NSString *signatureLine;
+
 // تاریخچه و لاگ چند روز بمانند. پیش‌فرض شصت: بلند است که «آن متنِ هفته‌ی پیش» هنوز
 // پیدا شود، و کوتاه است که حرف‌های آدم تا ابد روی دیسک نمانند. صفر یعنی هرگز جارو
 // نکن، و آن هم انتخابِ صریحِ کاربر است نه پیش‌فرض.
@@ -104,6 +112,21 @@ NSString *ZModeLabel(ZMode m);
 - (useconds_t)typeDelayMicros;
 - (useconds_t)pasteDelayMicros;
 @end
+
+// خطِ پیش‌فرضِ امضا. یک جا، چون هم `signatureLine` بی‌کلید همین را برمی‌گرداند و هم
+// دکمه‌ی «برگرداندن پیش‌فرض» در شیت همین را می‌گذارد.
+extern NSString *const kZSignatureDefault;
+
+// امضا را می‌چسباند و متنِ **تحویل** را برمی‌گرداند. هیچ‌جا ذخیره نمی‌شود: نه در
+// ادیتور پنل، نه در تاریخچه، نه در text.txt. فقط لحظه‌ی خروج.
+//
+// این تفکیک تصادفی نیست. امضا که ذخیره می‌شد، سه چیز خراب می‌شد: خاموش کردنِ تاگل
+// ردیف‌های قدیمیِ تاریخچه را عوض نمی‌کرد، ویرایشِ متن در پنل با خطِ امضا درگیر
+// می‌شد، و هر بار که یک متن دو بار از دو مسیر بیرون می‌رفت دو امضا می‌گرفت.
+//
+// تاگل خاموش، یا خطی که بعدِ تریم خالی است: همان متن دست‌نخورده برمی‌گردد. پس هیچ
+// دیالوگِ اعتبارسنجی لازم نیست؛ خطِ خالی خودش یعنی «امضا نزن».
+NSString *ZSigned(NSString *text);
 
 // ---------- رویداد گفتار (پارس‌شده از protobuf گوگل) ----------
 @interface ZSpeechEvent : NSObject
@@ -661,6 +684,7 @@ static inline ZWritePath ZChooseWritePath(BOOL alwaysPaste, BOOL axAvailable, NS
 // سشن. «نگه داشتن صدا» عمدا میان‌بر ندارد: یک ترجیحِ یک‌باره است و جایش «پیشرفته».
 @property (nonatomic, copy) void (^onSecondPass)(void);     // B
 @property (nonatomic, copy) void (^onPreview)(void);        // P: مثل A و B یک تنظیم است، پس بی‌سشن هم کار می‌کند
+@property (nonatomic, copy) void (^onSignature)(void);      // G: امضا. مثل بقیه‌ی تاگل‌ها بی‌سشن هم کار می‌کند
 @property (nonatomic) BOOL sessionActive;
 @property (nonatomic, readonly) BOOL enabled;   // تپ واقعا بالا است، نه فقط enable صدا خورده
 - (void)enable;
@@ -791,6 +815,7 @@ int ZCaretProbeMain(NSArray<NSString *> *args);
 @property (nonatomic, copy) void (^onAIToggle)(void);   // A: روشن/خاموش کردن پاس هوش مصنوعی
 @property (nonatomic, copy) void (^onSecondPass)(void); // B: شنیدنِ دوزبانه، سومین تاگلِ نوار
 @property (nonatomic, copy) void (^onPreview)(void);    // P: پیش‌نمایش تکه‌ها حین حرف زدن
+@property (nonatomic, copy) void (^onSignature)(void);  // G: امضای دُمِ متن، پنجمین تاگلِ نوار
 - (void)show;
 - (void)hide;
 - (void)render:(ZPanelModel *)m;

@@ -45,6 +45,9 @@ recognition.
   unless you ask for it with the insert button.
 - **Optional AI cleanup** that sends **text only**, never audio, using your own free
   Gemini key. Off by default.
+- **An optional signature line** appended to every piece of text that leaves the app.
+  Right Command + G toggles it, the line itself is yours to edit, and it is never
+  stored anywhere. Off by default.
 - Works over Windows App remote desktop, where it always uses the clipboard route.
 
 ## Install
@@ -94,6 +97,32 @@ watches for it, so the hotkey comes up the moment you tick the box, with no rest
 
 Every button on the panel's toolbar has its shortcut letter printed under it, and
 **right Command + H** opens the full card.
+
+## The signature line
+
+One short line, separated by a blank line, appended to every piece of text that leaves
+Zemzeme: copy, insert, the Esc handover, the history window, and the file-transcription
+copy. **Right Command + G** toggles it. Off by default.
+
+The shipped default is:
+
+```
+(speech-to-text, mentally fix typos)
+```
+
+That default exists because the main use is dictating AI prompts: the reader should
+know an odd spelling or a swapped word is a speech-to-text artifact, not what you
+meant.
+
+**The line is yours, though.** The menu row **"خطِ امضا…"** opens a sheet where you can
+put anything: your name, a source note, a disclaimer. The same sheet has a **restore
+default** button. Leave the line empty and nothing is appended, even with the toggle
+on.
+
+The signature is **never stored**: not in the panel editor, not in the history, not in
+the session's text file. It is added at the moment text leaves. So turning the toggle
+off also changes what old history entries hand out, and editing text in the panel never
+collides with it.
 
 ## Getting the optional API key
 

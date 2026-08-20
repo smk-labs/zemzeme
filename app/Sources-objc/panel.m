@@ -41,7 +41,9 @@ NSColor *ZStatusColor(ZPanelModel *m) {
 // ۵۲۸ و نه ۵۰۰: دکمه‌ی تاریخچه که آمد، ردیف دکمه‌ها تا نزدیکِ نشان و ساعت می‌رسید.
 // یک گامِ دکمه پهن‌تر شد تا آن فاصله همان که بود بماند؛ بقیه‌ی چیدمان از همین عدد
 // حساب می‌شود، پس جای هیچ‌چیز دیگری دستی درست نشد.
-static const CGFloat kPW = 528;
+// پانزدهمین دکمه (امضا) روی ۵۲۸ به چیپ وضعیت و نشانِ ضربان می‌رسید: چهارده دکمه
+// ۴۳۲ واحد می‌گرفتند و ساعت و نشان لبه‌ی راست‌اند. ۵۵۶ فاصله را برمی‌گرداند.
+static const CGFloat kPW = 556;
 // دو ردیف، نه یکی. تا نسخه‌ی قبل خط وضعیت و یازده دکمه یک ردیف را شریک بودند و
 // نتیجه‌اش این شد که جمله‌ی «حرفت که تمام شد…» وسطش بریده می‌شد، یعنی دقیقا همان
 // جمله‌ای که تمام نسخه دو به آن بند است. حالا متن کل پهنا را دارد.
@@ -217,7 +219,7 @@ static NSBezierPath *ZSparkPath(NSPoint c, CGFloat r) {
     NSTextField *_previewTag;     // سرنویسِ کوچکِ بالای ادیتور، فقط وقتی دُم خاکستری هست
     ZBarButton *_btnClose, *_btnPause, *_btnCopy, *_btnTrash, *_btnInsert;
     ZBarButton *_btnLang, *_btnMode, *_btnFile, *_btnHistory, *_btnHelp;
-    ZBarButton *_btnSens, *_btnAI, *_btnSecond, *_btnPreview;
+    ZBarButton *_btnSens, *_btnAI, *_btnSecond, *_btnPreview, *_btnSign;
     NSView *_sep1, *_sep2;   // جداکننده‌ی دسته‌ها
     ZBusyView *_busy;                 // جای نشان، وقتی کاری در جریان است
     NSArray<ZBarButton *> *_bar;
@@ -365,6 +367,11 @@ static NSBezierPath *ZSparkPath(NSPoint c, CGFloat r) {
         // فقط زودتر نشان دادنِ همان متن.
         _btnPreview = [self makeButton:@"captions.bubble" key:@"P"
                                    tip:@"" action:@selector(previewTap)];
+        // امضا: پنجمین تاگل. یک خطِ کوتاه که به دُمِ هر متنی که بیرون می‌رود چسبانده
+        // می‌شود، و هیچ‌جا ذخیره نمی‌شود. جایش کنار تاگلِ متن است چون مثل آن کارش
+        // روی **متنِ تحویل** است، نه روی شنیدن.
+        _btnSign = [self makeButton:@"signature" key:@"G"
+                                tip:@"" action:@selector(signTap)];
         _btnFile = [self makeButton:@"arrow.up.doc" key:@"F"
                                 tip:@"رونویسی فایل صوتی: چند فایل پشت هم، با متن قابل ویرایش (Command راست + F)"
                              action:@selector(fileTap)];
@@ -394,7 +401,7 @@ static NSBezierPath *ZSparkPath(NSPoint c, CGFloat r) {
         // همین ردیف می‌نشیند، و اگر A وسط می‌ماند آن کلید صفِ تاگل‌ها را می‌شکست.
         _bar = @[_btnClose, _btnPause, _btnCopy, _btnInsert, _btnTrash,
                  _btnLang, _btnMode, _btnFile, _btnHistory, _btnHelp,
-                 _btnSens, _btnSecond, _btnPreview, _btnAI];
+                 _btnSens, _btnSecond, _btnPreview, _btnAI, _btnSign];
         _groupEnds = @[@4, @9];      // اندیس آخرین دکمه‌ی هر دسته
         _sep1 = [NSView new]; _sep1.wantsLayer = YES; [_effect addSubview:_sep1];
         _sep2 = [NSView new]; _sep2.wantsLayer = YES; [_effect addSubview:_sep2];
@@ -889,6 +896,23 @@ static NSString *ZClock(NSTimeInterval sec) {
         : @"پیش‌نمایش (آزمایشی): متن را هم‌گام با حرف زدنت نشان می‌دهد، خاکستری و خام. "
            "روی متنِ نهایی هیچ اثری ندارد. خاموش بماند بهتر است: خواندنِ حرفِ خودت وسط "
            "حرف زدن حواست را پرت می‌کند (Command راست + P)";
+    // امضا، پنجمین تاگل و با همان قاعده: رنگ می‌گیرد یعنی روشن است. تولتیپ خودِ خط
+    // را نشان می‌دهد نه یک توضیحِ کلی، چون خط مالِ کاربر است و اپ نمی‌داند چه نوشته:
+    // «امضا روشن است» بی دیدنِ خط، به کسی که ماه پیش عوضش کرده هیچ نمی‌گوید.
+    BOOL sg = ZSettings.shared.signatureEnabled;
+    _btnSign.contentTintColor = sg ? NSColor.systemBlueColor : nil;
+    NSString *sgLine = [ZSettings.shared.signatureLine
+                        stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    _btnSign.toolTip = !sg
+        ? @"امضا: یک خط کوتاه که به دُمِ هر متنی که کپی یا درج می‌شود بچسبد. متنِ خط را "
+           "از منوبار عوض کن. برای روشن کردن بزن (Command راست + G)"
+        : sgLine.length
+            ? [NSString stringWithFormat:
+               @"امضا روشن است و این خط ته هر متن می‌رود:\n%@\nبرای خاموش کردن بزن "
+                "(Command راست + G)", sgLine]
+            : @"امضا روشن است ولی خطش خالی است، پس چیزی چسبانده نمی‌شود. متنِ خط را از "
+               "منوبار بگذار (Command راست + G)";
+
     // حالت کنار کرسر پنلی ندارد که چیزی در آن نشان داده شود، پس دکمه هم آنجا معنا
     // ندارد. مثل بقیه‌ی نوار غیب نمی‌شود، فقط خاموش و بی‌رنگ می‌ماند و می‌گوید چرا.
     if (!collect) {
@@ -1023,6 +1047,7 @@ static NSString *ZClock(NSTimeInterval sec) {
 - (void)aiTap { if (self.onAIToggle) self.onAIToggle(); }
 - (void)secondTap { if (self.onSecondPass) self.onSecondPass(); }
 - (void)previewTap { if (self.onPreview) self.onPreview(); }
+- (void)signTap { if (self.onSignature) self.onSignature(); }
 
 // اسکرین‌شات برای بازبینی طراحی (بدون نیاز به اجازه ضبط صفحه)
 - (void)makeShots:(NSString *)dir {

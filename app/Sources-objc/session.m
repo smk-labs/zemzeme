@@ -402,7 +402,15 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
     // لازم نیست هیچ‌کدامشان درست کار کرده باشند. سرِ هر مکث دوباره نوشته می‌شود و
     // چون sid یکی است، همان یک ردیف تازه می‌شود نه ردیفِ تازه‌ای اضافه.
     ZHistoryAppend(all, _sessionDir.lastPathComponent, ZHistoryViaAuto, _target.localizedName);
-    [ZInjector copyFinal:all];
+    // امضا اینجا و فقط اینجا سوار می‌شود: تاریخچه و text.txt متنِ خودِ کاربر را
+    // گرفتند و امضا تویشان نیست. تاگل که فردا خاموش شود، همان ردیف‌های قدیمی هم
+    // بی‌امضا تحویل می‌دهند.
+    //
+    // و جای خالی که مانده باشد، امضا نمی‌خورد: این تحویلِ تمام‌شده نیست، متنی است
+    // که چند خط پایین‌تر نگه داشته می‌شود تا تکه‌هایش برسند. امضا زدن روی متنِ
+    // نشانه‌دار یعنی گفتنِ «تمام شد» به چیزی که تمام نشده.
+    BOOL sign = !_holes.count;
+    [ZInjector copyFinal:sign ? ZSigned(all) : all];
 
     // درج کِی: در حالت کرسر همیشه (پنلی نیست که متن را نشان بدهد)، و در حالت جمع
     // فقط سرِ Esc و دابل‌تپ. و همیشه فقط آنچه هنوز نرفته.
@@ -418,8 +426,11 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
             // بعدی که برسد از قبل جدا افتاده و به کلمه‌ی آخر نمی‌چسبد، و کرسر یک
             // قدم جلو می‌رود که در متنِ راست‌به‌چپ جای درستش را پیدا کند.
             // سرِ Esc نمی‌گذاریم: آنجا حرف تمام شده و فاصله‌ی اضافه فقط زباله است.
-            [self injectAtCaret:_closing ? fresh : [fresh stringByAppendingString:@" "]
-                           keep:all];
+            // امضا مالِ **درجِ آخر** است، نه هر تکه. در حالت کرسر متن سر هر مکث
+            // تکه‌تکه سر کرسر می‌رود؛ اگر امضا به هر تکه می‌چسبید، متنِ کاربر لای
+            // چند امضا تکه‌تکه می‌شد. `_closing` همان مرزِ «این آخرین تکه است».
+            [self injectAtCaret:_closing ? ZSigned(fresh) : [fresh stringByAppendingString:@" "]
+                           keep:ZSigned(all)];
             _inserted = all.length;
         }
     }
@@ -632,7 +643,7 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
     // دکمه‌ی کپی هم یک تحویل است: متنی که کاربر همین حالا برداشت. و در حالت جمع
     // ممکن است ویرایش‌شده باشد، یعنی چیزی که deliver نوشته بود دیگر همان نیست.
     ZHistoryAppend(t, _sessionDir.lastPathComponent, ZHistoryViaCopy, _target.localizedName);
-    [ZInjector copyFinal:t];
+    [ZInjector copyFinal:ZSigned(t)];
     ZPlay(ZSoundCopy);
     [_panel flash:@"کپی شد"];
 }
@@ -644,9 +655,13 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
         return;
     }
     ZHistoryAppend(t, _sessionDir.lastPathComponent, ZHistoryViaInsert, _target.localizedName);
-    [ZInjector copyFinal:t];
-    [self injectAtCaret:t keep:t];
-    _inserted = t.length;
+    // دکمه‌ی درج امضا می‌خورد حتی با جای خالیِ پذیرفته‌شده، و این با قاعده‌ی بالا
+    // نمی‌جنگد: آنجا اپ متن را نگه داشته بود، اینجا کاربر گفته «همین‌طور که هست
+    // ببرش». تحویل تمام شد، پس امضا حق دارد.
+    NSString *out = ZSigned(t);
+    [ZInjector copyFinal:out];
+    [self injectAtCaret:out keep:out];
+    _inserted = t.length;    // طولِ متنِ خودِ کاربر، بی امضا: امضا هیچ‌وقت شمرده نمی‌شود
     ZPlay(ZSoundInsert);
     // راهِ گریزِ متنِ سوراخ‌دار، و همین یکی: کاربر گفت همین‌طور که هست ببرش. از این به
     // بعد جاهای خالی پذیرفته‌اند و Esc دیگر جلوی بسته شدن سشن را نمی‌گیرد، وگرنه هر
