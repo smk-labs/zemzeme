@@ -98,6 +98,34 @@ watches for it, so the hotkey comes up the moment you tick the box, with no rest
 Every button on the panel's toolbar has its shortcut letter printed under it, and
 **right Command + H** opens the full card.
 
+## Shortcuts
+
+All of them are on the **right** Command key. The card at right Command + H shows this
+same table with keycaps, and tells you the state of each toggle right now.
+
+| Key | What it does |
+|---|---|
+| ⌘ twice | start and end dictation |
+| ⌘ once | you are done talking: the text arrives |
+| Esc | end dictation and insert the text |
+| ⌘ + Space | pause and resume |
+| ⌘ + C | copy the text so far |
+| ⌘ + I | insert the text at your cursor |
+| ⌘ + D | throw away everything so far: text, audio, timer. From zero |
+| ⌘ + L | switch language, mid sentence |
+| ⌘ + E | switch between "collect in the panel" and "cursor-side" |
+| ⌘ + S | high microphone sensitivity, for whispering and quiet rooms |
+| ⌘ + F | the file transcription panel |
+| ⌘ + T | history: the last 20 transcripts, with insert and copy |
+| ⌘ + H | the shortcut card |
+| ⌘ + B | bilingual listening |
+| ⌘ + P | raw preview |
+| ⌘ + A | AI text cleanup |
+| ⌘ + G | signature: one short line at the end of every text |
+
+Apart from `F`, `T`, `H`, `B`, `P`, `A` and `G`, the letters only work during a
+dictation. You can also drag the panel from any empty part of it.
+
 ## The signature line
 
 One short line, separated by a blank line, appended to every piece of text that leaves

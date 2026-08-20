@@ -137,7 +137,7 @@
 - (NSString *)attemptPiece:(ZBatchPiece *)p {
     if (self.cancelled) return @"";
     unsigned long long up = 0;
-    NSString *text = ZTranscribeSegment(p.pcm, self.lang, self.rawUp, &up);
+    NSString *text = ZTranscribeSegment(p.pcm, self.lang, self.rawUp, &up, NULL);
     [_stateLock lock];
     _bytesUp += up;
     [_stateLock unlock];

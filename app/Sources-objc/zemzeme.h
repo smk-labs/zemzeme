@@ -195,8 +195,17 @@ ZSegCut ZSegFind(const void *pcm, NSUInteger len, BOOL eof);
 
 BOOL ZSegHasVoice(NSData *pcm);
 // یک تکه، یک سشن، یک متن. بلوکه است: فقط از نخ پس‌زمینه.
+//
+// `why` دلیلِ بسته شدن اتصال را برمی‌گرداند و همان چیزی است که «متنِ خالی» را از یک
+// علامتِ مبهم به یک جواب تبدیل می‌کند. تا امروز این رشته فقط لاگ می‌شد، و نبودش
+// یعنی «سرور حرفی نشنید» و «به سرور نرسیدیم» یک شکل داشتند. نال هم می‌شود داد.
 NSString *ZTranscribeSegment(NSData *pcm, NSString *lang, BOOL rawUpload,
-                             unsigned long long *bytesUp);
+                             unsigned long long *bytesUp, NSString **why);
+
+// پایانِ سالم؟ یعنی رفت‌وبرگشت کامل شد و سرور خودش خط را بست. با متنِ خالی، این
+// جوابِ «حرفی نبود» است نه شکست. هر چیز دیگری (`err …`، `http …`، `cancelled`)
+// یعنی جواب اصلا نگرفتیم و باید دوباره رفت.
+BOOL ZCloseWasClean(NSString *why);
 
 // ---------- جای خالی ----------
 // تکه‌ای که حرف داشت و بی‌متن برگشت.

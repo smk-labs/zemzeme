@@ -49,8 +49,13 @@ BOOL ZSegHasVoice(NSData *pcm) {
 // ---------- یک تکه، یک سشن، یک متن ----------
 // بلوکه است، پس فقط از نخ پس‌زمینه. همان کاری که مسیر دسته‌ای نسخه یک می‌کرد، ولی
 // حالا تنها پیاده‌سازیِ موجود است و مسیر زنده هم از همین می‌خواند.
+BOOL ZCloseWasClean(NSString *why) {
+    return !why.length || [why isEqualToString:@"ok"];
+}
+
 NSString *ZTranscribeSegment(NSData *pcm, NSString *lang, BOOL rawUpload,
-                             unsigned long long *bytesUp) {
+                             unsigned long long *bytesUp, NSString **why) {
+    if (why) *why = nil;
     ZGoogleStream *s = [[ZGoogleStream alloc] initWithLang:lang];
     s.rawUpload = rawUpload;
     NSMutableArray<NSString *> *finals = [NSMutableArray array];
@@ -72,11 +77,17 @@ NSString *ZTranscribeSegment(NSData *pcm, NSString *lang, BOOL rawUpload,
         if (ev.hasResults && ev.interim.length > bestInterim.length) bestInterim = ev.interim;
         [lock unlock];
     };
-    // دلیلِ بسته شدن به لاگ می‌رود و دور ریخته نمی‌شود. تا امروز همین بلاک reason را
-    // می‌انداخت، پس یک خطای TLS یا یک ۴۰۳ هیچ ردی نمی‌گذاشت و تنها چیزی که می‌دیدیم
-    // «متن نیامد» بود، یعنی همان علامتی که هزار علت دیگر هم دارد. پایانِ سالم لاگ
-    // نمی‌شود (هر تکه یک خط، یعنی نویز)؛ فقط آنچه خراب بوده.
+    // دلیلِ بسته شدن هم لاگ می‌شود و هم **برمی‌گردد**. لاگ برای آدم است، و برگشتن
+    // برای تصمیم: تنها چیزی که «سرور حرفی نشنید» را از «به سرور نرسیدیم» جدا می‌کند
+    // همین رشته است، و هر دو حالت متنِ خالی می‌دهند. تا امروز فقط لاگ می‌شد و
+    // نتیجه‌اش این بود که یک نفس یا دستی روی میز، که گوگل درست «حرفی نبود» جوابش را
+    // می‌داد، همان‌قدر «خرابی» حساب می‌شد که یک ۴۰۳. پایانِ سالم لاگ نمی‌شود (هر تکه
+    // یک خط، یعنی نویز)؛ فقط آنچه خراب بوده.
+    __block NSString *closedBecause = nil;
     s.onClose = ^(NSString *reason) {
+        [lock lock];
+        closedBecause = reason;
+        [lock unlock];
         if (reason.length && ![reason isEqualToString:@"ok"]) {
             ZLog(@"seg[%@]: اتصال بسته شد: %@", lang, reason);
         }
@@ -110,6 +121,9 @@ NSString *ZTranscribeSegment(NSData *pcm, NSString *lang, BOOL rawUpload,
 
     [lock lock];
     NSString *text = finals.count ? [finals componentsJoinedByString:@" "] : bestInterim;
+    // «هیچ‌وقت بسته نشد» هم یک دلیل است، نه نبودِ دلیل: خودمان کنسلش کردیم چون سرور
+    // ساکت ماند، و آن **قطعا** پایانِ سالم نیست.
+    if (why) *why = closedBecause.length ? closedBecause : @"cancelled";
     [lock unlock];
     if (bytesUp) *bytesUp += s.bytesFed;
     return [text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
@@ -149,7 +163,7 @@ NSInteger ZRetryHoles(NSMutableArray<ZHole *> *holes, NSArray<NSMutableString *>
     NSUInteger i = 0;
     while (i < holes.count) {
         ZHole *h = holes[i];
-        NSString *t = ZTranscribeSegment(h.pcm, h.lang, NO, NULL);
+        NSString *t = ZTranscribeSegment(h.pcm, h.lang, NO, NULL, NULL);
         if (!t.length) {
             // هنوز نه. نشانه‌اش سر جایش می‌ماند و صدایش هم، پس Esc بعدی فقط یک
             // تلاشِ دیگر است. اینجا نه صبر می‌شود نه probe: **آدم** تصمیم می‌گیرد
@@ -331,14 +345,14 @@ NSInteger ZRetryHoles(NSMutableArray<ZHole *> *holes, NSArray<NSMutableString *>
             return;
         }
         unsigned long long up = 0;
-        NSString *t = ZTranscribeSegment(pcm, self->_lang, NO, &up);
+        NSString *t = ZTranscribeSegment(pcm, self->_lang, NO, &up, NULL);
         // یک تلاش دوباره، بی‌مکث و فقط برای همین یک حالت: تکه حرف داشت و سشن هیچ
         // متنی نداد. نقطه‌ی رایگان گاهی «لال» جواب می‌دهد و آن‌وقت یک بلوکِ هفت
         // ثانیه‌ای کامل گم می‌شود، یعنی دقیقا همان خرابی‌ای که نسخه دو برای رفعش
         // نوشته شده. مکث ندارد چون کاربر منتظر است؛ بیشتر از یکی هم نه.
         if (!t.length) {
             ZLog(@"pipe[%@] %ld: سشن لال، یک بار دیگر", self->_lang, (long)idx);
-            t = ZTranscribeSegment(pcm, self->_lang, NO, &up);
+            t = ZTranscribeSegment(pcm, self->_lang, NO, &up, NULL);
         }
         [self->_lock lock];
         // بایت‌ها را هرجور که شد بشمار: واقعا روی سیم رفته‌اند و این شمارنده‌ی شبکه

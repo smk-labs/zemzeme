@@ -157,7 +157,7 @@ static NSString *ZFixedCuts(NSData *pcm, NSString *lang, double sec) {
     for (NSUInteger off = 0; off < pcm.length; off += step) {
         NSData *piece = [pcm subdataWithRange:NSMakeRange(off, MIN(step, pcm.length - off))];
         if (!ZSegHasVoice(piece)) continue;
-        NSString *t = ZTranscribeSegment(piece, lang, NO, NULL);
+        NSString *t = ZTranscribeSegment(piece, lang, NO, NULL, NULL);
         if (t.length) [parts addObject:t];
     }
     return [parts componentsJoinedByString:@" "];
