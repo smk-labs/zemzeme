@@ -282,7 +282,17 @@ NSTimeInterval ZBackoffDelay(NSInteger step);
 - (void)waitForFirstPass;
 - (void)discard;
 - (void)stop;
+// برداشتنِ یک صف از روی دفترچه. جاهای رسیده متنشان را با خود می‌آورند و جاهای در
+// انتظار فقط افست و طول؛ صدا از audio.flac خوانده می‌شود. نال یعنی چیزی برای
+// برداشتن نبود. `resume` بعد از سیم‌کشیِ onChange صدا زده می‌شود، نه پیش از آن.
++ (ZQueue *)queueFromManifest:(NSURL *)file;
+- (void)resume;
 @end
+
+// سر لانچ: هر سشنی که تکه‌ی در راه دارد برداشته و تمام می‌شود، بی رابط و بی کلید.
+// متن در text.txt می‌نشیند و ردیف تاریخچه‌ی همان سشن تازه می‌شود (تاریخچه سر خواندن
+// با sid جمع می‌کند، پس ردیف تازه‌ای اضافه نمی‌شود).
+void ZResumePendingQueues(void);
 
 // مسیر دفترچه‌ی یک سشن. یک جا نوشته می‌شود چون هم نویسنده لازمش دارد هم لانچ.
 NSURL *ZQueueManifestIn(NSURL *sessionDir);

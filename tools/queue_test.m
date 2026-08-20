@@ -42,6 +42,7 @@ void ZMicSetHighSensitivity(BOOL on) { (void)on; }
 // وقتی دو خط لوله به یک صف می‌ریزند: نقطه‌ی رایگان جای فن‌اوت نیست).
 static NSMutableArray<NSArray<NSString *> *> *gScript;
 static NSInteger gCalls, gLive, gMaxLive;
+static NSUInteger gLastFed;      // چند بایت صدا به آخرین تماس داده شد
 static NSLock *gLock;
 
 static void ZTestScript(NSArray<NSArray<NSString *> *> *lines) {
@@ -74,7 +75,7 @@ static NSArray<NSString *> *ZTestReply(void) {
     if (gLive > gMaxLive) gMaxLive = gLive;
     [gLock unlock];
 }
-- (void)feed:(NSData *)pcm { _fed += pcm.length; }
+- (void)feed:(NSData *)pcm { _fed += pcm.length; gLastFed = _fed; }
 - (void)finishUpload {
     _bytesFed = _fed;
     NSArray<NSString *> *reply = ZTestReply();
@@ -397,6 +398,74 @@ int main(void) { @autoreleasepool {
         while ([fm fileExistsAtPath:man.path] && [NSDate.date compare:until] == NSOrderedAscending)
             usleep(20000);
         ok(![fm fileExistsAtPath:man.path], "چیزی در انتظار نماند، پس دفترچه هم رفت");
+        [fm removeItemAtURL:dir error:nil];
+    }
+
+    // ---------- ۱۱: صف از روی دفترچه برداشته می‌شود ----------
+    // همان قولِ اصلی، سرتاسری: اپ وسط قطعی بسته شده، و لانچِ بعدی حرفِ گفته‌شده را
+    // تمام می‌کند. تکه هیچ صدایی با خودش ندارد؛ فقط یک افست در audio.flac.
+    {
+        NSURL *dir = [[NSURL fileURLWithPath:NSTemporaryDirectory()]
+                      URLByAppendingPathComponent:@"zemzeme-resume-test"];
+        NSFileManager *fm = NSFileManager.defaultManager;
+        [fm removeItemAtURL:dir error:nil];
+        [fm createDirectoryAtURL:dir withIntermediateDirectories:YES attributes:nil error:nil];
+        NSURL *flac = [dir URLByAppendingPathComponent:@"audio.flac"];
+
+        NSData *audio = ZTestThreePieces();
+        ZRecorder *rec = [[ZRecorder alloc] initWithURL:flac];
+        [rec feed:audio];
+        [rec finish];
+
+        // دفترچه‌ی یک سشنِ نیمه‌کاره: اولی و سومی رسیده‌اند، دومی نه.
+        const unsigned long long one = 7 * 16000;    // ~هفت ثانیه، وسطِ تکه‌ی دوم
+        NSDictionary *doc = @{@"v": @1, @"audio": flac.path, @"lang": @"fa-IR", @"slots": @[
+            @{@"seq": @0, @"state": @(ZSlotDone), @"text": @"یک", @"lang": @"fa-IR",
+              @"frame": @0, @"frames": @(one), @"tries": @1, @"second": @NO},
+            @{@"seq": @1, @"state": @(ZSlotWaiting), @"text": @"", @"lang": @"fa-IR",
+              @"frame": @(one), @"frames": @(one), @"tries": @3, @"second": @YES},
+            @{@"seq": @2, @"state": @(ZSlotDone), @"text": @"سه", @"lang": @"fa-IR",
+              @"frame": @(one * 2), @"frames": @(one), @"tries": @1, @"second": @NO}]};
+        NSURL *man = ZQueueManifestIn(dir);
+        [[NSJSONSerialization dataWithJSONObject:doc options:0 error:nil]
+         writeToURL:man atomically:YES];
+
+        ZQueue *q = [ZQueue queueFromManifest:man];
+        ok(q != nil, "دفترچه برداشته شد");
+        ok(q.waiting == 1, "و فقط همان یکی هنوز در راه است");
+        okEq(q.text, @"یک سه", "متنی که قبلا رسیده بود دوباره فرستاده نمی‌شود");
+
+        ZTestScript(@[@[@"دو", @"ok"]]);
+        gLastFed = 0;
+        [q resume];
+        ok(ZTestSettle(q, 10), "و بی هیچ کلیدی خودش تمام شد");
+        okEq(q.text, @"یک دو سه", "حرفِ جامانده سر جای خودش نشست");
+        ok(gLastFed == one * 2, "و صدایش از خودِ audio.flac آمد، به همان طولِ نوشته‌شده");
+
+        NSDate *until = [NSDate dateWithTimeIntervalSinceNow:3];
+        while ([fm fileExistsAtPath:man.path] && [NSDate.date compare:until] == NSOrderedAscending)
+            usleep(20000);
+        ok(![fm fileExistsAtPath:man.path], "و دفترچه رفت، پس لانچِ بعدی دوباره برش نمی‌دارد");
+        [fm removeItemAtURL:dir error:nil];
+    }
+
+    // ---------- ۱۲: دفترچه‌ی بی‌صدا برداشته نمی‌شود ----------
+    // صدا نباشد، هیچ‌کدام از آن جاها برنمی‌گردند و دفترچه فقط یک حلقه‌ی بی‌پایان است.
+    {
+        NSURL *dir = [[NSURL fileURLWithPath:NSTemporaryDirectory()]
+                      URLByAppendingPathComponent:@"zemzeme-resume-noaudio"];
+        NSFileManager *fm = NSFileManager.defaultManager;
+        [fm removeItemAtURL:dir error:nil];
+        [fm createDirectoryAtURL:dir withIntermediateDirectories:YES attributes:nil error:nil];
+        NSURL *man = ZQueueManifestIn(dir);
+        NSDictionary *doc = @{@"v": @1, @"lang": @"fa-IR",
+                              @"audio": [dir URLByAppendingPathComponent:@"audio.flac"].path,
+                              @"slots": @[@{@"seq": @0, @"state": @(ZSlotWaiting), @"text": @"",
+                                            @"frame": @0, @"frames": @1000, @"tries": @1}]};
+        [[NSJSONSerialization dataWithJSONObject:doc options:0 error:nil]
+         writeToURL:man atomically:YES];
+        ok([ZQueue queueFromManifest:man] == nil, "دفترچه‌ی بی‌صدا برداشته نمی‌شود");
+        ok(![fm fileExistsAtPath:man.path], "و همان‌جا پاک می‌شود");
         [fm removeItemAtURL:dir error:nil];
     }
 

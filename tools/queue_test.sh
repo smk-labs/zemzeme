@@ -12,7 +12,7 @@ work="${TMPDIR:-/tmp}/zemzeme-queue-work"
 clang -fobjc-arc -O1 -Wall -Werror -I app/Sources-objc \
   app/Sources-objc/core.m app/Sources-objc/seg.m app/Sources-objc/pipe.m \
   app/Sources-objc/queue.m app/Sources-objc/flac.m app/Sources-objc/record.m \
-  app/Sources-objc/decode.m tools/queue_test.m \
+  app/Sources-objc/decode.m app/Sources-objc/history.m tools/queue_test.m \
   -framework Foundation -framework AppKit -framework CoreText \
   -framework AVFoundation -framework AudioToolbox -framework CoreMedia -o "$out"
 

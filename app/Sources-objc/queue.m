@@ -269,7 +269,8 @@ NSURL *ZQueueManifestIn(NSURL *sessionDir) {
         return;
     }
     NSInteger epoch = _epoch;
-    NSData *pcm = [self pcmForLocked:s];
+    NSData *pcm = s.pcm;
+    unsigned long long frame = s.frame, frames = s.frames;
     NSString *lang = s.lang;
     NSInteger seq = s.seq;
     BOOL first = s.tries == 0;
@@ -277,17 +278,31 @@ NSURL *ZQueueManifestIn(NSURL *sessionDir) {
     s.tries++;
     [_lock unlock];
 
+    // صدا: از حافظه، وگرنه از خودِ audio.flac. جای برداشته‌شده از دفترچه هیچ صدایی
+    // در حافظه ندارد و اصلا برای همین است که دفترچه کار می‌کند.
+    //
+    // و **بیرون از قفل**، چون خواندن از فایل تا کسری از ثانیه طول می‌کشد و قفلِ
+    // این صف را نخِ صدا هم می‌گیرد (هر برشِ تازه یک `add` است). قفل نگه داشتن سرِ
+    // دیسک یعنی لکنتِ ضبط.
+    if (!pcm.length && self.audio) {
+        NSError *de = nil;
+        pcm = ZDecodePCMRange(self.audio, frame, frames, &de);
+        if (!pcm.length) ZLog(@"queue %ld: صدایش از فایل خوانده نشد: %@", (long)seq,
+                              de.localizedDescription ?: @"?");
+    }
     NSString *why = nil;
     unsigned long long up = 0;
     NSString *t = pcm.length ? ZTranscribeSegment(pcm, lang, NO, &up, &why) : @"";
-    if (!pcm.length) why = @"no-audio";
+    // صدایی در کار نیست، پس تلاشِ دوباره هم بی‌معناست: این تکه دیگر برنمی‌گردد و
+    // ماندنش در انتظار فقط یعنی یک حلقه‌ی بی‌پایان روی یک فایلِ نبوده.
+    BOOL noAudio = !pcm.length;
     // نظرِ دوم، یک بار در عمرِ هر تکه و بی‌مکث: پیش از باور کردنِ **هر کدام** از دو
     // حکم. نقطه‌ی رایگان گاهی «لال» جواب می‌دهد و آن‌وقت یک بلوکِ هفت ثانیه‌ای کامل
     // گم می‌شود؛ اندازه‌گیری می‌گوید همین یک تلاشِ اضافه حدود ۱۳٪ خالی‌ها را نجات
     // می‌دهد. و در جهت دیگر هم لازم است: «حرفی نبود» حکمِ نهایی است و یک بار دیگر
     // پرسیدن ارزانش است.
     BOOL askedAgain = NO;
-    if (!t.length && mayAskAgain) {
+    if (!t.length && mayAskAgain && !noAudio) {
         ZLog(@"queue %ld: خالی برگشت (%@)، یک بار دیگر", (long)seq, why ?: @"?");
         askedAgain = YES;
         t = pcm.length ? ZTranscribeSegment(pcm, lang, NO, &up, &why) : @"";
@@ -303,7 +318,7 @@ NSURL *ZQueueManifestIn(NSURL *sessionDir) {
         if (t.length) {
             live.text = t;
             live.state = ZSlotDone;
-        } else if (ZCloseWasClean(why) || live.extra) {
+        } else if (noAudio || ZCloseWasClean(why) || live.extra) {
             // رفت‌وبرگشت کامل شد و سرور خودش خط را بست: یعنی گوش کرد و حرفی نشنید.
             // این تکه **تمام** است، نه خراب. نفس و صدای دست و ته‌مانده‌ی سکوت از
             // همین در بیرون می‌روند و دیگر چیزی را گرو نمی‌گیرند.
@@ -332,6 +347,8 @@ NSURL *ZQueueManifestIn(NSURL *sessionDir) {
     } else if (st == ZSlotDone) {
         ZLog(@"queue %ld ← %lu نویسه%@", (long)seq, (unsigned long)t.length,
              tries > 1 ? [NSString stringWithFormat:@" (تلاش %ld)", (long)tries] : @"");
+    } else if (st == ZSlotSilent && noAudio) {
+        ZLog(@"queue %ld: صدایش پیدا نشد، از صف افتاد", (long)seq);
     } else if (st == ZSlotSilent) {
         ZLog(@"queue %ld: سرور شنید و حرفی نبود، این تکه تمام است", (long)seq);
     } else {
@@ -349,10 +366,6 @@ NSURL *ZQueueManifestIn(NSURL *sessionDir) {
     }
     dispatch_async(_q, ^{ [self pump]; });
 }
-
-// صدای یک جا. فاز یک: در حافظه. فاز دو همین‌جا از audio.flac می‌خواند و آن‌وقت
-// این تنها جایی است که باید عوض شود.
-- (NSData *)pcmForLocked:(ZSlot *)s { return s.pcm; }
 
 - (void)persist {
     NSURL *file = self.manifest;
@@ -383,6 +396,118 @@ NSURL *ZQueueManifestIn(NSURL *sessionDir) {
         NSData *d = [NSJSONSerialization dataWithJSONObject:doc
                                                     options:NSJSONWritingSortedKeys error:nil];
         if (d) [d writeToURL:file options:NSDataWritingAtomic error:nil];
+    });
+}
+
+
+// ---------- برداشتنِ صف سر لانچ ----------
+// «تکه‌ی در انتظار از بسته شدنِ اپ هم جان سالم می‌برد» تا اینجا فقط یک فایل بود.
+// این تابع آن را به قول تبدیل می‌کند: هر سشنی که دفترچه دارد برداشته می‌شود و
+// تمام می‌شود، بی هیچ رابطی و بی هیچ کلیدی.
+//
+// **بی رابط، و عمدا.** اپ تازه بالا آمده و کاربر شاید دارد کار دیگری می‌کند؛ پنجره
+// یا نشانِ تازه‌ای برای حرفِ ده دقیقه پیش، مزاحمت است نه خدمت. متن سر جای خودش
+// می‌نشیند (text.txt) و ردیف تاریخچه‌ی همان سشن تازه می‌شود، چون تاریخچه سر خواندن
+// با sid جمع می‌کند. کاربر هر وقت سراغش برود، کامل پیدایش می‌کند.
+//
+// و پاسِ تمیزکاری اینجا اجرا **نمی‌شود**: کلید در کی‌چین است و خواندنش می‌تواند یک
+// پنجره‌ی رمز بالا بیاورد، آن هم بی‌آنکه کسی منتظرِ چیزی باشد. متنِ خام و کامل، از
+// متنِ تمیزِ نصفه بهتر است.
+static NSMutableArray<ZQueue *> *gResumed;
+
++ (ZQueue *)queueFromManifest:(NSURL *)file {
+    NSData *raw = [NSData dataWithContentsOfURL:file];
+    NSDictionary *doc = raw ? [NSJSONSerialization JSONObjectWithData:raw options:0 error:nil] : nil;
+    if (![doc isKindOfClass:NSDictionary.class]) return nil;
+    NSString *audio = doc[@"audio"];
+    NSArray *rows = doc[@"slots"];
+    if (![rows isKindOfClass:NSArray.class] || !audio.length) return nil;
+    // صدا نباشد، هیچ‌کدام از این جاها برنمی‌گردند. دفترچه‌ی بی‌صدا فقط یک حلقه‌ی
+    // بی‌پایان است، پس همان‌جا برداشته می‌شود.
+    if (![NSFileManager.defaultManager fileExistsAtPath:audio]) {
+        ZLog(@"queue: دفترچه بود ولی صدایش نه، پاک شد: %@", file.path);
+        [NSFileManager.defaultManager removeItemAtURL:file error:nil];
+        return nil;
+    }
+    ZQueue *q = [ZQueue new];
+    q.manifest = file;
+    q.audio = [NSURL fileURLWithPath:audio];
+    q.lang = doc[@"lang"];
+    BOOL any = NO;
+    NSInteger top = 0;
+    for (NSDictionary *r in rows) {
+        if (![r isKindOfClass:NSDictionary.class]) continue;
+        ZSlot *s = [ZSlot new];
+        s.seq = [r[@"seq"] integerValue];
+        s.state = (ZSlotState)[r[@"state"] integerValue];
+        s.text = r[@"text"];
+        s.lang = [r[@"lang"] length] ? r[@"lang"] : q.lang;
+        s.frame = [r[@"frame"] unsignedLongLongValue];
+        s.frames = [r[@"frames"] unsignedLongLongValue];
+        s.tries = [r[@"tries"] integerValue];
+        s.secondOpinionUsed = [r[@"second"] boolValue];
+        // صدا با خودش نمی‌آید و نباید بیاید: افست و طول تنها چیزی است که لازم است.
+        if (s.state == ZSlotWaiting && !s.frames) continue;
+        if (s.state == ZSlotWaiting) any = YES;
+        [q addRestored:s];
+        if (s.seq >= top) top = s.seq + 1;
+    }
+    [q setNextSeq:top];
+    return any ? q : nil;
+}
+
+- (void)addRestored:(ZSlot *)s {
+    [_lock lock];
+    [_slots addObject:s];
+    [_lock unlock];
+}
+
+- (void)setNextSeq:(NSInteger)n {
+    [_lock lock];
+    _nextSeq = n;
+    _firstPassThrough = n - 1;   // دورِ اولِ این‌ها قبلا رفته؛ کسی منتظرشان نیست
+    [_lock unlock];
+}
+
+- (void)resume { [self kick]; }
+
+void ZResumePendingQueues(void) {
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        NSFileManager *fm = NSFileManager.defaultManager;
+        NSArray<NSURL *> *dirs = [fm contentsOfDirectoryAtURL:ZSessionsDir()
+                                   includingPropertiesForKeys:nil options:0 error:nil];
+        for (NSURL *dir in dirs) {
+            NSURL *file = ZQueueManifestIn(dir);
+            if (![fm fileExistsAtPath:file.path]) continue;
+            ZQueue *q = [ZQueue queueFromManifest:file];
+            if (!q) continue;
+            NSString *sid = dir.lastPathComponent;
+            ZLog(@"queue: سشن %@ برداشته شد، %ld تکه در راه", sid, (long)q.waiting);
+            __weak ZQueue *wq = q;
+            q.onChange = ^{
+                ZQueue *me = wq;
+                if (!me || !me.drained) return;
+                NSString *all = [me.text stringByTrimmingCharactersInSet:
+                                 NSCharacterSet.whitespaceAndNewlineCharacterSet];
+                if (!all.length) return;
+                // بلندتر یا هیچ. متنِ روی دیسک می‌تواند نسخه‌ی تمیزشده‌ی همان حرف‌ها
+                // باشد و آن را با نسخه‌ی خام عوض کردن، یک قدم عقب است. ولی متنی که
+                // تکه‌های جامانده‌اش رسیده‌اند تقریبا همیشه بلندتر است، و همان قاعده
+                // به زبان ساده: تکه‌ی دیررس فقط اضافه می‌کند، هیچ‌وقت کم نمی‌کند.
+                NSURL *txt = [me.manifest.URLByDeletingLastPathComponent
+                              URLByAppendingPathComponent:@"text.txt"];
+                NSString *had = [NSString stringWithContentsOfURL:txt
+                                                         encoding:NSUTF8StringEncoding error:nil];
+                if (all.length <= had.length) return;
+                [all writeToURL:txt atomically:YES encoding:NSUTF8StringEncoding error:nil];
+                ZHistoryAppend(all, sid, ZHistoryViaAuto, nil);
+                ZLog(@"queue: سشن %@ دیر تمام شد، %lu نویسه در تاریخچه نشست",
+                     sid, (unsigned long)all.length);
+            };
+            if (!gResumed) gResumed = [NSMutableArray array];
+            [gResumed addObject:q];
+            [q resume];
+        }
     });
 }
 

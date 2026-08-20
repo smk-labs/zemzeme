@@ -288,6 +288,9 @@ int ZSelfTest(NSString *file, NSString *lang) {
     }
     // سشن‌های قدیمی‌تر از هفت روز همین‌جا و بی‌صدا جارو می‌شوند
     ZSweepOldSessions();
+    // و صفِ نیمه‌کاره‌ی سشن‌های قبلی، اگر اپ وسط یک قطعی بسته شده باشد. بی رابط و
+    // بی‌صدا: حرفِ گفته‌شده خودش سر جایش می‌نشیند و ردیف تاریخچه‌اش کامل می‌شود.
+    ZResumePendingQueues();
     [self startDailySweep];
     ZLog(@"app: launched res=%@ data=%@ ax=%d", ZRes().path, ZSupport().path,
          [ZInjector accessibilityOK]);
