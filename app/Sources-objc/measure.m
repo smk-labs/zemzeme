@@ -118,6 +118,10 @@ static NSData *ZReadWav(NSString *path, NSString **err) {
 
 // ---------- یک اجرا ----------
 
+// سقفِ صبر برای خالی شدنِ صف در اندازه‌گیری. آدمی پشتِ این مسیر نیست، ولی انتظارِ
+// بی‌سقف هم ممنوع است.
+#define kZMeasureSettleSec 60.0
+
 @interface ZMeasureRun : NSObject <ZEngineDelegate>
 @property (nonatomic, copy) NSString *text, *second;
 @property (nonatomic, copy) NSString *preview;      // آخرین متنِ خامِ پیش‌نمایش
@@ -205,6 +209,21 @@ static ZMeasureRun *ZRunWav(NSData *pcm, NSString *lang, double speed, BOOL prev
             [eng discardText];
         }
         [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+    }
+    // متن باید **کامل** گزارش شود، نه نصفه. موتور سر پایان فقط تا دورِ اول صبر
+    // می‌کند (تحویل به آدم نباید گروگانِ یک تکه بماند)، ولی اندازه‌گیری آدمی پشتش
+    // ندارد که منتظر بماند: بی این حلقه، یک قطعیِ گذرای ده ثانیه‌ای وسط اجرا به یک
+    // عددِ پایین‌ترِ دروغ تبدیل می‌شد. سقف دارد، مثل هر انتظار دیگری در این اپ.
+    if (eng.queue.waiting) {
+        fprintf(stderr, "--- %ld تکه در راه؛ تا خالی شدن صف صبر می‌کنیم ---\n",
+                (long)eng.queue.waiting);
+        NSDate *ceiling = [NSDate dateWithTimeIntervalSinceNow:kZMeasureSettleSec];
+        while (eng.queue.waiting && [NSDate.date compare:ceiling] == NSOrderedAscending) {
+            [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.2]];
+        }
+        fprintf(stderr, "--- %ld تکه هنوز در راه ---\n", (long)eng.queue.waiting);
+        run.text = [eng.queue textFrom:0 extra:NO];
+        run.second = [eng.queue textFrom:0 extra:YES];
     }
     run.degraded = eng.degradedCuts;
     return run;
