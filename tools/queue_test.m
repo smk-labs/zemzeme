@@ -264,6 +264,35 @@ int main(void) { @autoreleasepool {
         ok(q.nextSeq == 0, "شمارشِ جاها هم از صفر");
     }
 
+    // ---------- ۸: همان بازه، از خودِ audio.flac ----------
+    // مسیرِ واقعی و کامل: پی‌سی‌امِ شناخته‌شده با همان ضبط‌کننده‌ی محصول روی دیسک
+    // می‌رود و بعد یک بازه‌ی وسطش پس گرفته می‌شود. موجِ ورودی عمدا **نردبانی** است نه
+    // مربعی: با موج مربعی هر افستی شبیه هر افست دیگری است و یک اشتباهِ یک فریمی
+    // هیچ‌وقت دیده نمی‌شود.
+    {
+        const NSUInteger n = 16000 * 3;
+        NSMutableData *pcm = [NSMutableData dataWithLength:n * 2];
+        int16_t *p = pcm.mutableBytes;
+        for (NSUInteger i = 0; i < n; i++) p[i] = (int16_t)((i * 37) % 20000 - 10000);
+
+        NSURL *dir = [NSURL fileURLWithPath:NSTemporaryDirectory()];
+        NSURL *flac = [dir URLByAppendingPathComponent:@"zemzeme-range-test.flac"];
+        [NSFileManager.defaultManager removeItemAtURL:flac error:nil];
+        ZRecorder *rec = [[ZRecorder alloc] initWithURL:flac];
+        [rec feed:pcm];
+        [rec finish];
+        ok(rec.url != nil, "صدا روی دیسک نشست");
+
+        NSError *e = nil;
+        NSData *back = ZDecodePCMRange(rec.url, 16000, 8000, &e);
+        ok(back.length == 8000 * 2, "بازه به همان طولِ خواسته‌شده برگشت");
+        ok(back && memcmp(back.bytes, (const uint8_t *)pcm.bytes + 32000, back.length) == 0,
+           "و بایت به بایت همان صدایی است که آن‌جای فایل گفته شده");
+        ok(ZDecodePCMRange(rec.url, 16000 * 99, 8000, NULL) == nil,
+           "افستِ بیرون از فایل خطا می‌دهد، نه صدای کسِ دیگر");
+        [NSFileManager.defaultManager removeItemAtURL:flac error:nil];
+    }
+
     // ---------- قاعده‌های ریشه‌ای، روی خودِ سورس ----------
     NSString *pip = ZTestSrc(@"pipe.m"), *que = ZTestSrc(@"queue.m");
     NSString *eng = ZTestSrc(@"engine.m"), *ses = ZTestSrc(@"session.m");

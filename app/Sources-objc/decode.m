@@ -220,3 +220,51 @@ static NSArray<NSString *> *ZUnsupportedExts(void) {
 }
 
 @end
+
+// ---------- یک بازه از فایل ----------
+// تکه‌ی در انتظار صدای خودش را ذخیره نمی‌کند: audio.flac همه‌ی نمونه‌ها را از قبل
+// دارد و تکه فقط یک افست و یک طول است. این تابع همان بازه را برمی‌گرداند.
+//
+// و از **اول** فایل می‌خواند و تا رسیدن به افست دور می‌ریزد، به‌جای پرشِ واقعی. چرا:
+// دو درِ دیکد دو جور پرش دارند (`ExtAudioFileSeek` در برابر `AVAssetReader`، که
+// اصلا پرش ندارد و باید با یک بازه‌ی زمانیِ تازه از نو ساخته شود)، و هر کدام روی
+// قالبی که خودش نمی‌گیرد رفتار دیگری دارد. سشنِ این اپ سقفِ پنج دقیقه دارد، یعنی
+// بدترین حالتِ خواندن حدود ۹٫۶ مگابایت پی‌سی‌ام است و کسری از ثانیه طول می‌کشد؛
+// هزینه‌اش در برابر یک مسیرِ پرشِ دوشاخه‌ی سخت‌آزمون، هیچ است.
+NSData *ZDecodePCMRange(NSURL *url, unsigned long long frame, unsigned long long frames,
+                        NSError **err) {
+    if (!frames) return [NSData data];
+    ZFileDecoder *d = [[ZFileDecoder alloc] initWithURL:url error:err];
+    if (!d) return nil;
+    const unsigned long long want = frames * 2, skip = frame * 2;   // s16le مونو
+    NSMutableData *out = [NSMutableData dataWithCapacity:(NSUInteger)want];
+    unsigned long long seen = 0;
+    for (;;) {
+        NSError *e = nil;
+        NSData *c = [d nextChunk:&e];
+        if (!c) {
+            if (e) {
+                if (err) *err = e;
+                return nil;
+            }
+            break;      // پایان فایل
+        }
+        unsigned long long end = seen + c.length;
+        if (end > skip) {
+            unsigned long long from = seen > skip ? 0 : skip - seen;
+            unsigned long long n = MIN((unsigned long long)c.length - from, want - out.length);
+            [out appendBytes:(const uint8_t *)c.bytes + from length:(NSUInteger)n];
+            if (out.length >= want) break;
+        }
+        seen = end;
+    }
+    // کوتاه‌تر از خواسته یعنی فایل به آن‌جا نرسیده. خطا نیست و نباید باشد: صدای سر
+    // پایان با سکوت پر و فریم می‌شود، پس یکی دو فریمِ آخر می‌تواند کم بیاید. ولی
+    // **هیچ** یعنی افست بیرون از فایل است و آن واقعا خراب است.
+    if (!out.length) {
+        if (err) *err = [NSError errorWithDomain:@"zemzeme.decode" code:19 userInfo:@{
+            NSLocalizedDescriptionKey: @"این بازه در فایل صدا نیست"}];
+        return nil;
+    }
+    return out;
+}
