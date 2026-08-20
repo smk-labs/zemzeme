@@ -43,6 +43,12 @@ recognition.
   by the first piece that lands. Esc is never held hostage either: whatever has
   arrived is delivered right then, and the rest drop into their own places later.
   The panel shows a calm count, not an error.
+- **Killing the app does not lose speech either.** Every waiting piece is one row in
+  a small notebook beside the session (`queue.json`), and its audio is the
+  `audio.flac` already sitting next to it, so a piece is a frame offset, not a copy
+  of the sound. The next launch picks the queue up and finishes it with no window
+  and no key: the text lands in `text.txt` and updates that session's own history
+  row.
 - **An empty answer is not always a failure**, and that correction is what makes the
   above possible. The voice check measures energy, not speech, and its threshold is
   deliberately low so a whisper survives, so a breath gets through and reaches the
