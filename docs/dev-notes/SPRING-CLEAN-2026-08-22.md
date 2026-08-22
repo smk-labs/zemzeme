@@ -49,6 +49,7 @@
 | U2 | گاردِ مسیرهای نام‌برده در متن (`tools/paths_test.sh`) + دو اشاره‌ی مرده‌ی `swift-port` | Replace | ✅ `c8e0031` |
 | U3 | دفترِ اندازه با بندِ جابه‌جایی (`tools/ledger_test.sh`) | Split (پیش‌نیاز) | ✅ `6813781` |
 | U4 | ریدمی: «هشت تست» و مستندکردنِ دو گاردِ تازه | Keep | ✅ `bbcfb7b` |
+| U4b | گاردِ مسیر: مسیرِ gitignore‌شده کلاسی بیرون بماند (خودِ گارد سرِ کامیتِ U4 قرمز شد و `history.png` را گرفت) | Replace | ✅ `85e6fdb` |
 | U5 | `app.m` ۱۳۶۲ خط. درزِ آماده: `menuNeedsUpdate:` تنهایی ۳۲۲ خط است ← منو به فایلِ خودش | Split | todo (مک) |
 | U6 | `batchui.m` ۱۲۸۰ خط. `build` ۱۰۰ خط، دیتاسورسِ جدول جدا شود | Split | todo (مک) |
 | U7 | `panel.m` ۱۱۳۵ خط. `render:` ۱۸۷ و `init` ۱۷۴ | Split | todo (مک) |
