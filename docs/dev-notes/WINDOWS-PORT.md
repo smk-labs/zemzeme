@@ -2,7 +2,7 @@
 
 Written 2026-07-24 from a full read of this repo. **No code has been written. This is a decision record, not a task list in progress.** Pick it up whenever; nothing here expires except the risk note at the bottom.
 
-> **Read this against version 1.** The Mac app was rewritten as version 2 after this note was filed, and three pieces it costs out are gone: the Persian polish daemon (`polish.py`, phase 3), the `app/swift-port/` tree, and the overlap-and-stitch pipeline the session rotation existed to repair. Version 2 cuts audio into ~7-second chunks at silence and concatenates them, so a port today is smaller than the estimate below, not larger. The wire protocol, the injection model and the risk section still hold.
+> **Read this against version 1.** The Mac app was rewritten as version 2 after this note was filed, and three pieces it costs out are gone: the Persian polish daemon (`polish.py`, phase 3), the `app/swift-port/` [deleted] tree, and the overlap-and-stitch pipeline the session rotation existed to repair. Version 2 cuts audio into ~7-second chunks at silence and concatenates them, so a port today is smaller than the estimate below, not larger. The wire protocol, the injection model and the risk section still hold.
 
 ## What a port actually costs
 
@@ -10,7 +10,7 @@ Roughly 2,900 lines of C#, zero third-party packages, in five phases. Two of the
 
 ## Read from the right tree
 
-Port from `app/Sources-objc/` (~2,900 lines). **Do not port from `app/swift-port/`.** That tree is a same-day snapshot that was never updated and is missing, at minimum: the whole Persian polish pass, pause/resume, the mic-dead watchdog, the interim salvage-merge, the `hasResults` empty-frame guard, and the 600 ms paste delay that a real RDP test forced. Porting from it would silently ship a worse product than the Mac one.
+Port from `app/Sources-objc/` (14,660 lines as of 22 Aug 2026; the ~2,900 figure below dates from version 1). There was also a half-finished Swift port under `app/swift-port/` [deleted]; removing it was the right outcome. It was a same-day snapshot that was never updated and was missing, at minimum: the whole Persian polish pass, pause/resume, the mic-dead watchdog, the interim salvage-merge, the `hasResults` empty-frame guard, and the 600 ms paste delay that a real RDP test forced. Porting from it would silently ship a worse product than the Mac one.
 
 ## Language: C# on .NET 8, no NuGet
 
