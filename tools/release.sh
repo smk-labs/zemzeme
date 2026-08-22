@@ -43,8 +43,19 @@ check "با origin/$BRANCH برابریم" '[ "$(git rev-list --left-right --cou
 check "gh لاگین است" 'gh auth status >/dev/null 2>&1'
 
 # تست‌ها: همه‌ی تست‌های طلایی. اگر یکی قرمز است، ریلیز حتی شروع هم نمی‌شود.
-for t in mainq seg flick insert history livestring injectq deafmic hole; do
-  check "تست $t سبز است" "bash tools/${t}_test.sh >/dev/null 2>&1"
+#
+# فهرست از خودِ پوشه درمی‌آید، نه از یک لیستِ دستی. لیستِ دستی دو بار بی‌صدا شکست و
+# هر دو بارش را کسی ندید: `hole_test` سرِ کامیت 5cabba1 حذف شد و جایش `queue_test`
+# آمد، ولی اسمِ مرده در لیست ماند. یعنی این گارد روی فایلی که وجود ندارد `bash` صدا
+# می‌زد، ۱۲۷ می‌گرفت، و ریلیز **همیشه** قرمز بود؛ و در همان حال بزرگ‌ترین تستِ ریپو
+# (۵۷۲ خط) اصلا در گارد نبود. با گلاب، تستِ تازه خودش وارد می‌شود و تستِ حذف‌شده خودش
+# بیرون می‌رود، پس این کلاس اشتباه دیگر تکرارشدنی نیست.
+shopt -s nullglob
+tests=(tools/*_test.sh)
+[ "${#tests[@]}" -gt 0 ] || die "هیچ تست طلایی‌ای پیدا نشد (tools/*_test.sh): گاردِ تست بی‌معنا می‌شود"
+for f in "${tests[@]}"; do
+  t=$(basename "$f" _test.sh)
+  check "تست $t سبز است" "bash '$f' >/dev/null 2>&1"
 done
 
 if [ -z "$want" ]; then
