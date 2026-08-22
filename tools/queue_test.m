@@ -155,11 +155,33 @@ static ZQueue *ZTestRun(NSArray<NSArray<NSString *> *> *script, BOOL secondPass)
     return q;
 }
 
-// تا خالی شدنِ صف صبر کن، ولی نه بی‌سقف: انتظارِ بی‌سقف در این ریپو ممنوع است.
-static BOOL ZTestSettle(ZQueue *q, double ceiling) {
-    NSDate *end = [NSDate dateWithTimeIntervalSinceNow:ceiling];
-    while (q.waiting && [NSDate.date compare:end] == NSOrderedAscending) usleep(20000);
-    return q.waiting == 0;
+// انتظار با سقف: انتظارِ بی‌سقف در این ریپو ممنوع است. ولی سقف تنها کارش همین
+// ممنوع‌کردن است، نه اندازه‌گیریِ سرعت. روی دستگاهِ سالم هر انتظارِ این تست با شرطِ
+// خودش تمام می‌شود و این عدد هیچ‌وقت دیده نمی‌شود، پس عمدا بزرگ است.
+//
+// قبلا هر جا سقفِ خودش را داشت، ۳ تا ۱۰ ثانیه، یعنی سقف چسبیده به زمانِ واقعیِ کار.
+// نتیجه‌اش ۲۲ آگوست ۲۰۲۶ روی مک دیده شد: پیش‌پروازِ ریلیز یک بار همین تست را قرمز
+// داد و همان تست در حدود سی اجرای بعدی (تنها، زیرِ بار، و در شش دورِ کاملِ یازده‌تایی)
+// سبز بود. قرمزِ الکی گاردی است که کسی جدی نمی‌گیرد، پس سقف یک‌جا شد و بزرگ.
+//
+// اندازه‌گیری، با ZTEST_WAITLOG=1 که همین پایین چاپش می‌کند: بلندترین انتظارِ این
+// تست روی دستگاهِ بی‌کار ۲۵ میلی‌ثانیه است (یعنی یک تیکِ حلقه)، و زیرِ بارِ هشت تستِ
+// موازی و چهار کامپایلِ هم‌زمان هم همان ۲۵. سقفِ ۲۰ ثانیه ۸۰۰ برابرِ آن است.
+static const double ZTestCeiling = 20.0;
+
+static BOOL ZTestWaitUntil(BOOL (^done)(void)) {
+    NSDate *t0 = NSDate.date;
+    NSDate *end = [t0 dateByAddingTimeInterval:ZTestCeiling];
+    while (!done() && [NSDate.date compare:end] == NSOrderedAscending) usleep(20000);
+    BOOL got = done();
+    if (getenv("ZTEST_WAITLOG"))
+        fprintf(stderr, "waitlog %.0f ms got=%d\n",
+                -[t0 timeIntervalSinceNow] * 1000.0, got);
+    return got;
+}
+
+static BOOL ZTestSettle(ZQueue *q) {
+    return ZTestWaitUntil(^{ return (BOOL)(q.waiting == 0); });
 }
 
 static NSString *ZTestSrc(NSString *name) {
@@ -213,7 +235,7 @@ int main(void) { @autoreleasepool {
                                @[@"", @"err -1009 offline"], @[@"", @"err -1009 offline"],
                                @[@"سه", @"ok"],
                                @[@"دو", @"ok"]], NO);
-        ok(ZTestSettle(q, 5), "خودش، بی هیچ کلیدی، دوباره رفت و رسید");
+        ok(ZTestSettle(q), "خودش، بی هیچ کلیدی، دوباره رفت و رسید");
         okEq(q.text, @"یک دو سه", "تکه‌ی دیررس سر جای ساختاریِ خودش نشست");
         okEq([q settledTextFrom:0], @"یک دو سه", "و حالا همه‌ی متن قطعی است");
         ok(gCalls == 5, "تلاشِ دوباره یکی بود؛ نظرِ دوم یک بار در عمرِ هر تکه خرج می‌شود");
@@ -366,15 +388,13 @@ int main(void) { @autoreleasepool {
         }
         [fa finish];
         [q waitForFirstPass];
-        // نوشتن آسنکرون است (نخ صدا حق ندارد منتظر دیسک بماند)، پس یک مهلت کوتاه
-        NSDate *until = [NSDate dateWithTimeIntervalSinceNow:3];
-        NSDictionary *doc = nil;
-        while ([NSDate.date compare:until] == NSOrderedAscending) {
+        // نوشتن آسنکرون است (نخ صدا حق ندارد منتظر دیسک بماند)، پس انتظار با سقف
+        __block NSDictionary *doc = nil;
+        ZTestWaitUntil(^{
             NSData *raw = [NSData dataWithContentsOfURL:man];
             doc = raw ? [NSJSONSerialization JSONObjectWithData:raw options:0 error:nil] : nil;
-            if ([doc[@"slots"] count] == 3) break;
-            usleep(20000);
-        }
+            return (BOOL)([doc[@"slots"] count] == 3);
+        });
         ok([doc[@"slots"] count] == 3, "هر سه جا در دفترچه‌اند، نه فقط آنکه نرسیده");
         ok([doc[@"slots"][1][@"state"] integerValue] == ZSlotWaiting &&
            [doc[@"slots"][1][@"frames"] unsignedLongLongValue] > 0,
@@ -407,10 +427,8 @@ int main(void) { @autoreleasepool {
         [fa feed:ZTestThreePieces() at:0];
         [fa finish];
         [q waitForFirstPass];
-        ok(ZTestSettle(q, 5), "تکه‌ی جامانده خودش رسید");
-        NSDate *until = [NSDate dateWithTimeIntervalSinceNow:3];
-        while ([fm fileExistsAtPath:man.path] && [NSDate.date compare:until] == NSOrderedAscending)
-            usleep(20000);
+        ok(ZTestSettle(q), "تکه‌ی جامانده خودش رسید");
+        ZTestWaitUntil(^{ return (BOOL)(![fm fileExistsAtPath:man.path]); });
         ok(![fm fileExistsAtPath:man.path], "چیزی در انتظار نماند، پس دفترچه هم رفت");
         [fm removeItemAtURL:dir error:nil];
     }
@@ -452,13 +470,11 @@ int main(void) { @autoreleasepool {
         ZTestScript(@[@[@"دو", @"ok"]]);
         gLastFed = 0;
         [q resume];
-        ok(ZTestSettle(q, 10), "و بی هیچ کلیدی خودش تمام شد");
+        ok(ZTestSettle(q), "و بی هیچ کلیدی خودش تمام شد");
         okEq(q.text, @"یک دو سه", "حرفِ جامانده سر جای خودش نشست");
         ok(gLastFed == one * 2, "و صدایش از خودِ audio.flac آمد، به همان طولِ نوشته‌شده");
 
-        NSDate *until = [NSDate dateWithTimeIntervalSinceNow:3];
-        while ([fm fileExistsAtPath:man.path] && [NSDate.date compare:until] == NSOrderedAscending)
-            usleep(20000);
+        ZTestWaitUntil(^{ return (BOOL)(![fm fileExistsAtPath:man.path]); });
         ok(![fm fileExistsAtPath:man.path], "و دفترچه رفت، پس لانچِ بعدی دوباره برش نمی‌دارد");
         [fm removeItemAtURL:dir error:nil];
     }
@@ -520,7 +536,7 @@ int main(void) { @autoreleasepool {
         ZQueue *q = [ZQueue queueFromManifest:man];
         ZSettings.shared.recordSessions = keep ? YES : NO;
         [q resume];
-        ok(ZTestSettle(q, 10), keep ? "صف برداشته‌شده تمام شد (ضبط روشن)"
+        ok(ZTestSettle(q), keep ? "صف برداشته‌شده تمام شد (ضبط روشن)"
                                     : "صف برداشته‌شده تمام شد (ضبط خاموش)");
         ZFinishResumedSession(q, @"zemzeme-resume-audio");
         ok([fm fileExistsAtPath:flac.path] == (keep ? YES : NO),
