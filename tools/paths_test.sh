@@ -53,15 +53,27 @@ for f in $(git ls-files '*.md' '*.m' '*.h' '*.sh' '*.json' '*.plist'); do
     [ -n "${text:-}" ] || continue
     printf '%s' "$text" | grep -qE "$MARKER" && continue
     if printf '%s' "$text" | grep -qE "$FUTURE"; then
-      # نشانِ آینده روی مسیری که حالا وجود دارد، دروغِ جامانده است.
+      # نشان، مسیرهای ناموجودِ همین خط را معاف می‌کند. ولی خطی که نشان دارد و
+      # **هیچ** مسیرِ ناموجودی ندارد، نشانش دروغِ جامانده است: یعنی آن مسیر ساخته
+      # شده و کسی یادش رفته نشان را بردارد.
+      #
+      # و شرط «هیچ» است نه «همه»: یک خط حق دارد مسیرِ موجود و مسیرِ آینده را با هم
+      # ببرد («core.m را با deliver_test.m کامپایل کن»)، و آن خط سالم است.
+      pending=0
       for p in $(printf '%s' "$text" |
                  grep -oE '(^|[[:space:]`"(])(app|tools|docs)/[A-Za-z0-9_./-]+' |
                  sed -E 's/^[[:space:]`"(]+//' | sort -u); do
         p="${p%%[.,;:)]}"
-        [ -e "$p" ] || continue
-        printf '✗ %s:%s مسیرِ «%s» ساخته شده، ولی نشانِ [آینده] رویش مانده.\n' "$f" "$ln" "$p" >&2
-        echo x >> "$tmp"
+        skip "$p" && continue
+        [ -e "$p" ] && continue
+        compgen -G "$p.*" >/dev/null && continue
+        pending=1
       done
+      if [ "$pending" = 0 ]; then
+        printf '✗ %s:%s نشانِ [آینده] مانده، ولی هر مسیرِ این خط ساخته شده. نشان را بردار.\n' \
+          "$f" "$ln" >&2
+        echo x >> "$tmp"
+      fi
       continue
     fi
     # مسیرها را با کاراکترِ مرزیِ قبلشان می‌گیریم تا وسطِ یک مسیرِ بزرگ‌تر گیر نکنند:
