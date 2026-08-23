@@ -2,7 +2,7 @@
 
 *[نسخه‌ی کامل فارسی](README.md)*
 
-![The Zemzeme panel holding a finished dictation](docs/img/panel-review.png)
+![The Zemzeme panel holding a finished dictation](extras/docs/img/panel-review.png)
 
 A menu-bar dictation app for macOS, tuned for Persian. Double-tap the right Command
 key, talk, and **tap right Command once when you are done**: the text arrives all at
@@ -32,7 +32,7 @@ recognition.
   old language, what follows in the new one, and both are joined in order.
 - **File transcription**: audio and video files (voice notes, meeting recordings,
   podcasts) to text, no key and no ffmpeg. Also usable from Claude Code through the
-  plugin in `tools/claude-plugin/`.
+  plugin in `extras/claude-plugin/`.
 - **A history of every delivered transcript**, written the instant the text is
   handed over, so neither the clipboard nor the insertion has to have worked for the
   text to survive. Right Command + T opens the last 20, each with a one-click insert

@@ -32,7 +32,7 @@ FUTURE='\[(آینده|future)\]'
 # قاعده‌ی اول کلاسی است، نه فهرستی: مسیری که .gitignore کنارش گذاشته، **قرار نیست**
 # روی یک چک‌اوتِ تازه باشد، پس نبودنش خرابی نیست. سه‌تایشان روی همین ریپو مصداق
 # دارند و هر سه هم درست‌اند: app/.build/ (بیلدِ محلی)، مسیرهای dmg که با متغیرِ شل
-# ساخته می‌شوند، و docs/img/history.png که عمدا وارد گیت نمی‌شود چون متنِ واقعیِ
+# ساخته می‌شوند، و extras/docs/img/history.png که عمدا وارد گیت نمی‌شود چون متنِ واقعیِ
 # دیکته‌ی کاربر است. فهرستِ دستی اینجا سه اسم می‌شد و چهارمی را بی‌صدا جا می‌انداخت.
 #
 # و هیچ نامِ سختی اینجا نیست. مسیرِ آینده با نشانِ [آینده] روی خطِ خودش بیرون
@@ -47,6 +47,8 @@ tmp="${TMPDIR:-/tmp}/zpaths.$$"
 trap 'rm -f "$tmp"' EXIT
 
 # .gitignore فایلِ الگو است نه اشاره به مسیرِ موجود، پس در لیستِ زیر نیست.
+# و پیشوندها چهارتاست: app و tools و docs و extras. اضافه شدنِ extras سرِ
+# جابه‌جاییِ موادِ جانبی لازم شد، وگرنه همان جابه‌جایی دیدِ گارد را کور می‌کرد.
 for f in $(git ls-files '*.md' '*.m' '*.h' '*.sh' '*.json' '*.plist'); do
   # خط‌به‌خط، چون بندِ رهایی خصوصیتِ همان خط است نه همه‌ی فایل.
   while IFS=: read -r ln text; do
@@ -61,7 +63,7 @@ for f in $(git ls-files '*.md' '*.m' '*.h' '*.sh' '*.json' '*.plist'); do
       # ببرد («core.m را با deliver_test.m کامپایل کن»)، و آن خط سالم است.
       pending=0
       for p in $(printf '%s' "$text" |
-                 grep -oE '(^|[[:space:]`"(])(app|tools|docs)/[A-Za-z0-9_./-]+' |
+                 grep -oE '(^|[[:space:]`"(])(app|tools|docs|extras)/[A-Za-z0-9_./-]+' |
                  sed -E 's/^[[:space:]`"(]+//' | sort -u); do
         p="${p%%[.,;:)]}"
         skip "$p" && continue
@@ -79,7 +81,7 @@ for f in $(git ls-files '*.md' '*.m' '*.h' '*.sh' '*.json' '*.plist'); do
     # مسیرها را با کاراکترِ مرزیِ قبلشان می‌گیریم تا وسطِ یک مسیرِ بزرگ‌تر گیر نکنند:
     # «/Applications/Zemzeme.app/Contents/MacOS/» نباید به «app/Contents/MacOS/» بشکند.
     for p in $(printf '%s' "$text" |
-               grep -oE '(^|[[:space:]`"(])(app|tools|docs)/[A-Za-z0-9_./-]+' |
+               grep -oE '(^|[[:space:]`"(])(app|tools|docs|extras)/[A-Za-z0-9_./-]+' |
                sed -E 's/^[[:space:]`"(]+//' | sort -u); do
       p="${p%%[.,;:)]}"                  # نقطه یا ویرگولِ آخرِ جمله
       skip "$p" && continue
@@ -89,7 +91,7 @@ for f in $(git ls-files '*.md' '*.m' '*.h' '*.sh' '*.json' '*.plist'); do
       printf '✗ %s:%s مسیرِ ناموجود «%s»\n' "$f" "$ln" "$p" >&2
       echo x >> "$tmp"
     done
-  done < <(grep -nE '(app|tools|docs)/' "$f" 2>/dev/null)
+  done < <(grep -nE '(app|tools|docs|extras)/' "$f" 2>/dev/null)
 done
 
 if [ -s "$tmp" ]; then
