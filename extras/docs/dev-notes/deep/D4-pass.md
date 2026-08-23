@@ -122,7 +122,7 @@ bash tools/aipass_test.sh سبز است و بی کلید Gemini و با شبکه
 > - `http:timeout:status:headers:`: ۵۵۲-۵۹۱ ✓
 > - `send:label:status:headers:`: ۶۲۳-۶۵۳ ✓
 > - `ask:parts:label:key:thinking:usage:error:` (امضای واقعی در سورس چیزی شبیه `ask:parts:label:` است، تابع از خط ۷۶۸ تا ۸۱۲): محدوده‌ی کلی درست
-> - `zemzeme.h` رابط `ZFinalPass` (۶۳۳-۶۵۳): `runOnText` در ۶۳۳ و ۶۳۸، `askText` در ۶۴۷، `promptNamed` در ۶۵۰ — همه داخل بازه ✓
+> - `zemzeme.h` رابط `ZFinalPass` (۶۳۳-۶۵۳): `runOnText` در ۶۳۳ و ۶۳۸، `askText` در ۶۴۷، `promptNamed` در ۶۵۰، همه داخل بازه ✓
 > - `tools/release.sh` خط ۵۹ الگوی `tools/*_test.sh` را می‌گیرد: تأیید شد (خط ۵۹ دقیقا `tests=(tools/*_test.sh)`) ✓
 > - `tools/seg_test.sh` واقعا با `-framework Foundation -framework AppKit` کامپایل می‌کند (خط ۹)، همان الگویی که testPlan ادعا می‌کند ✓
 >

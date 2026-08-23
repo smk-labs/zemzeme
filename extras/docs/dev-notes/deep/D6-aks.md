@@ -110,7 +110,7 @@ bash tools/snap_test.sh سبز می‌دهد، و grep -c 'ZSettings.shared' app
 
 > سنجیده شد. یک خطا پیدا شد:
 >
-> **testPlan.compiles** — ادعا می‌کند دستور کامپایل snap_test.m «دقیقا مثل ZChooseWritePath در insert_test» فقط با Foundation کار می‌کند. غلط است: `tools/insert_test.sh` خطِ ۸ تا ۱۰، `core.m` را هم کامپایل می‌کند و به `-framework AppKit -framework CoreText` هم نیاز دارد، نه فقط Foundation. ZChooseWritePath در همان فایل تست می‌شود ولی تنها چیزی نیست که لینک می‌شود.
+> **testPlan.compiles**، ادعا می‌کند دستور کامپایل snap_test.m «دقیقا مثل ZChooseWritePath در insert_test» فقط با Foundation کار می‌کند. غلط است: `tools/insert_test.sh` خطِ ۸ تا ۱۰، `core.m` را هم کامپایل می‌کند و به `-framework AppKit -framework CoreText` هم نیاز دارد، نه فقط Foundation. ZChooseWritePath در همان فایل تست می‌شود ولی تنها چیزی نیست که لینک می‌شود.
 >
 > بقیه‌اش درست بود:
 > - خط ۷۲، ۱۰۱، ۲۲۰، ۳۲۰، ۳۶۵، ۳۶۸، ۵۲۷، ۵۲۹، ۵۶۲، ۶۱۰، ۷۱۷، ۷۳۱، ۸۱۶ (خواندن) و ۶۹۹، ۷۱۸، ۷۳۲ (نوشتن) در session.m همه دقیق‌اند؛ `grep -c 'ZSettings'` واقعا ۱۶ می‌دهد و `grep -c 'ZSettings.shared'` هم ۱۶.

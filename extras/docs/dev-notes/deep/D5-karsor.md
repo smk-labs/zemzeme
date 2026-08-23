@@ -104,9 +104,9 @@ bash tools/caret_test.sh سبز، و bash tools/ledger_test.sh سبز. دو گا
 
 > غلط‌ها:
 >
-> 1. لنگر `41 (ZCaretSource) و 50 (ZCaretHit)` — اشتباه است، واقعا `40` و `51` است.
+> 1. لنگر `41 (ZCaretSource) و 50 (ZCaretHit)`، اشتباه است، واقعا `40` و `51` است.
 > 2. `1082 ZCaretProbeMain` در caret.m درست است، ولی زمزمه.h اعلانش خط `875` است نه `874 و 875` (874 فقط کامنت است، اعلان فقط در 875).
 > 3. ادعای پایانی «مثل نه تستِ دیگر» غلط است: الان ۱۰ فایل `*_test.sh` دیگر در tools/ هست (deafmic, flick, history, injectq, insert, ledger, livestring, mainq, paths, queue, seg)، نه نه‌تا.
-> 4. ادعای acceptance درباره‌ی tools/release.sh غلط است: آن اسکریپت اسم تست‌ها را صریح نمی‌برد؛ با گلوب `tools/*_test.sh` (خط ۵۹) خودکار پیدایشان می‌کند، پس نیازی به افزودن نام caret_test.sh در release.sh نیست — فقط ساختن فایل با پسوند `_test.sh` کافی است.
+> 4. ادعای acceptance درباره‌ی tools/release.sh غلط است: آن اسکریپت اسم تست‌ها را صریح نمی‌برد؛ با گلوب `tools/*_test.sh` (خط ۵۹) خودکار پیدایشان می‌کند، پس نیازی به افزودن نام caret_test.sh در release.sh نیست، فقط ساختن فایل با پسوند `_test.sh` کافی است.
 >
 > بقیه (129 خط 604-732، ZCaretHit/ZCaretSource محتوا، سه تابع دقیق 193/370/412، سه‌گانه‌ی 130/141/153، سه‌گانه‌ی 228/248/253، سه‌گانه‌ی 331/441/489، ZProbeOnce 1046، caretprobe.log خط 74، ledger_test.sh خط 22، seg_test.m با 139 خط، و 20 نتیجه برای `grep hit.src=|hit.how=`) درست بودند.

@@ -148,7 +148,7 @@ NOTES=$(mktemp)
 
 if [ "$publish" = 0 ]; then
   echo
-  echo "— آماده است و هیچ‌چیز منتشر نشد. یادداشت ریلیز:"
+  echo "آماده است و هیچ‌چیز منتشر نشد. یادداشت ریلیز:"
   echo
   sed 's/^/    /' "$NOTES"
   echo

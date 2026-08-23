@@ -110,7 +110,7 @@ NSTimeInterval ZBackoffDelay(NSInteger step);   // از queue.m به همین‌
 
 ## معیار پذیرش
 
-bash tools/try_test.sh && bash tools/queue_test.sh && bash tools/seg_test.sh && bash tools/paths_test.sh && bash tools/ledger_test.sh && bash app/build.sh — همه سبز، و این سه سنجه کنارش: grep -c 'ZCloseWasClean\|_nextTryAt = \[NSDate dateWithTimeIntervalSinceNow' app/Sources-objc/queue.m صفر بدهد و grep -c 'coolDownIfDeaf\|prevWords\|0.4 \* sec' app/Sources-objc/batch.m صفر بدهد (تصمیم بیرون آمده)، و grep -n 'ZTranscribeSegment' app/Sources-objc/batch.m همان NULL را نشان بدهد (این واحد به پلامبِ دلیل دست نزده). [آینده]
+bash tools/try_test.sh && bash tools/queue_test.sh && bash tools/seg_test.sh && bash tools/paths_test.sh && bash tools/ledger_test.sh && bash app/build.sh، همه سبز، و این سه سنجه کنارش: grep -c 'ZCloseWasClean\|_nextTryAt = \[NSDate dateWithTimeIntervalSinceNow' app/Sources-objc/queue.m صفر بدهد و grep -c 'coolDownIfDeaf\|prevWords\|0.4 \* sec' app/Sources-objc/batch.m صفر بدهد (تصمیم بیرون آمده)، و grep -n 'ZTranscribeSegment' app/Sources-objc/batch.m همان NULL را نشان بدهد (این واحد به پلامبِ دلیل دست نزده). [آینده]
 
 ## ریسک‌ها
 
@@ -130,10 +130,10 @@ bash tools/try_test.sh && bash tools/queue_test.sh && bash tools/seg_test.sh && 
 
 > سنجیده شد. غلط‌ها:
 >
-> 1. **tools/queue_test.m** — لنگر «خط ۵۶۰» درست است، اما ادعای انطباق کامل با متن نه (رشته دقیقاً همان است، این ردیف درست بود؛ فقط یادآوری: در همان تابع بلافاصله قبلش تست دیگری هست روی `pip`، بی‌ربط به این ادعا).
+> 1. **tools/queue_test.m**، لنگر «خط ۵۶۰» درست است، اما ادعای انطباق کامل با متن نه (رشته دقیقاً همان است، این ردیف درست بود؛ فقط یادآوری: در همان تابع بلافاصله قبلش تست دیگری هست روی `pip`، بی‌ربط به این ادعا).
 >
-> 2. **testPlan.rows، ردیف «همان تعداد کلمه دو بار پشت سر هم … کامیت bc3c68e»** — نادرست. `bc3c68e` کامیتِ باز کردنِ فرمت‌های ogg/opus/amr است، هیچ ربطی به منطقِ تکرارِ کلمه‌ی برابر ندارد. کامیتِ درست را باید با `git log -S"words == prevWords"` پیدا کرد.
+> 2. **testPlan.rows، ردیف «همان تعداد کلمه دو بار پشت سر هم … کامیت bc3c68e»**، نادرست. `bc3c68e` کامیتِ باز کردنِ فرمت‌های ogg/opus/amr است، هیچ ربطی به منطقِ تکرارِ کلمه‌ی برابر ندارد. کامیتِ درست را باید با `git log -S"words == prevWords"` پیدا کرد.
 >
-> 3. **testPlan.compiles / files برای واحد تازه (`try.m`, `tools/try_test.m`, `tools/try_test.sh`, و نام‌های `ZTryTake/ZTrySilent/ZTryAgain/ZTryStop/kZClockLive/kZClockBatch`)** — هیچ‌کدام در درخت وجود ندارند (طبیعی چون این‌ها هدفِ ساختِ همین واحدند، نه ادعای غلط، ولی توجه شود که این نام‌ها هیچ پیشینه‌ای در کد امروز ندارند و باید از صفر طراحی شوند). [آینده]
+> 3. **testPlan.compiles / files برای واحد تازه (`try.m`, `tools/try_test.m`, `tools/try_test.sh`, و نام‌های `ZTryTake/ZTrySilent/ZTryAgain/ZTryStop/kZClockLive/kZClockBatch`)**، هیچ‌کدام در درخت وجود ندارند (طبیعی چون این‌ها هدفِ ساختِ همین واحدند، نه ادعای غلط، ولی توجه شود که این نام‌ها هیچ پیشینه‌ای در کد امروز ندارند و باید از صفر طراحی شوند). [آینده]
 >
-> بقیه — لنگرهای queue.m (۳۰۴، ۳۲۱، ۳۳۳-۳۳۵، ZBackoffDelay خط ۲۵)، batch.m (۷۴-۹۱، ۱۰۵-۱۳۴، خط ۱۴۰ با NULL و تأییدِ کامیت f98e42f)، zemzeme.h (۲۰۷ و ۲۴۴)، queue_test.m جدول پله‌ها (۱۹۸-۲۰۱)، seg_test.sh، README (۳۷۵-۳۷۷)، و شمارش‌های grep در acceptance (۲ و ۶) — همه درست تأیید شدند.
+> بقیه، لنگرهای queue.m (۳۰۴، ۳۲۱، ۳۳۳-۳۳۵، ZBackoffDelay خط ۲۵)، batch.m (۷۴-۹۱، ۱۰۵-۱۳۴، خط ۱۴۰ با NULL و تأییدِ کامیت f98e42f)، zemzeme.h (۲۰۷ و ۲۴۴)، queue_test.m جدول پله‌ها (۱۹۸-۲۰۱)، seg_test.sh، README (۳۷۵-۳۷۷)، و شمارش‌های grep در acceptance (۲ و ۶)، همه درست تأیید شدند.

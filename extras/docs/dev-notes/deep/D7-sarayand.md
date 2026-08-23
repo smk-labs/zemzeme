@@ -98,9 +98,9 @@ bash tools/seam_test.sh سبز، bash tools/ledger_test.sh سبز و در خط �
 
 > خطاها:
 >
-> - `app/Sources-objc/zemzeme.h` — سرفصل‌ها **۳۰** تاست، نه ۳۱.
+> - `app/Sources-objc/zemzeme.h`، سرفصل‌ها **۳۰** تاست، نه ۳۱.
 > - تعداد اعلان عمومی (۳۱۸) را نمی‌شود از این grep سنجید؛ منبعش `ledger_test.sh` خط ۷۸ (`SURFACE=318`) است، نه شمارش خودم روی همین grep که طرح ادعا کرده.
 > - بقیه لنگرها درست بودند: `queue_test.sh` خط ۱۲-۱۸ (فراخوان clang با core/seg/pipe/queue/flac/record/decode/history + ZGoogleStream)، `seg_test.sh` خط ۷-۱۰ (seg.m تنها، Foundation)، `history_test.sh` خط ۱۲-۱۵ (core.m+history.m)، `insert_test.sh` خط ۶-۹ (core.m تنها)، `flick_test.sh` خط ۷-۱۰ (flick.m تنها، AppKit)، `ledger_test.sh` (SURFACE=318 خط ۷۸)، `build.sh` خط ۳۰-۳۶ (حلقه `Sources-objc/*.m`)، `SPRING-CLEAN...md` خط ۱۰۴ ردیف U9.
-> - `tools/seam_test.sh` وجود ندارد (طرح فرض کرده هست، اما باید ساخته شود — این بخشی از طرح است نه یک ادعای مسیر موجود، پس اشکالی نیست، فقط توجه شود). [آینده]
+> - `tools/seam_test.sh` وجود ندارد (طرح فرض کرده هست، اما باید ساخته شود، این بخشی از طرح است نه یک ادعای مسیر موجود، پس اشکالی نیست، فقط توجه شود). [آینده]
 >
 > بقیه (فایل‌های testPlan.compiles: core.m، seg.m، pipe.m، queue.m، flac.m، record.m، decode.m، history.m، flick.m، tools/queue_test.m) همه موجودند.

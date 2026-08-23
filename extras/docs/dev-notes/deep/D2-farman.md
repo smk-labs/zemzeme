@@ -114,7 +114,7 @@ bash tools/cmd_test.sh سبز، و bash tools/ledger_test.sh سبز بعد از 
 لنگرهای بالا روی درختِ واقعی سنجیده شدند و اصلاح‌های زیر در همین سند اعمال شده‌اند.
 متنِ خامِ سنجش، برای اینکه چیزی بی‌شاهد نماند:
 
-> cmd.m and tools/cmd_test.sh don't exist yet (this is a future-work plan, expected — not a defect since the unit hasn't been built). Everything else checked against the real tree. [آینده]
+> cmd.m and tools/cmd_test.sh don't exist yet (this is a future-work plan, expected، not a defect since the unit hasn't been built). Everything else checked against the real tree. [آینده]
 >
 > سنجیده شد، این‌ها غلط بودند:
 >
@@ -123,4 +123,4 @@ bash tools/cmd_test.sh سبز، و bash tools/ledger_test.sh سبز بعد از 
 >
 > بقیه‌ی همه‌ی لنگرها (zemzeme.h/ZPanel، app.m از جمله applicationDidFinishLaunching و ۳۰ متد menuXxx و menuNeedsUpdate خط ۵۳۲ تا ۸۵۳ دقیقا ۳۲۲ خط، panel.m از جمله `_groupEnds = @[@4, @9]` دقیقا خط ۴۰۵، cheatsheet.m، inject.m خط ۵۵۱ تا ۵۷۹، session.m خط ۱۵۳ و ۱۷۰، README.md خط ۱۳۸ تا ۱۵۶) درست است.
 >
-> نکته‌ی جانبی درباره‌ی testPlan.compiles: `app/Sources-objc/cmd.m` و `tools/cmd_test.sh` هنوز روی درخت وجود ندارند — طبیعی است چون D2 هنوز ساخته نشده، این خودش غلط طرح نیست، فقط پیش‌نیاز اجرای testPlan است. [آینده]
+> نکته‌ی جانبی درباره‌ی testPlan.compiles: `app/Sources-objc/cmd.m` و `tools/cmd_test.sh` هنوز روی درخت وجود ندارند، طبیعی است چون D2 هنوز ساخته نشده، این خودش غلط طرح نیست، فقط پیش‌نیاز اجرای testPlan است. [آینده]
