@@ -33,7 +33,7 @@ Rejected: C++ (streaming HTTP is fragile and slow to build against), Rust (an HT
 | Settings | `NSUserDefaults` | `settings.json` in `%APPDATA%\zemzeme` |
 | Font | Copied from the build machine's own font folder | Bundle Vazirmatn in the repo. The Mac build should adopt this too; today it silently falls back to the system font on any machine that lacks the font. |
 
-New code lives in `app/win/`. The macOS tree is not touched.
+New code lives in `app/win/` [future]. The macOS tree is not touched.
 
 ## Phases
 
@@ -56,7 +56,7 @@ New code lives in `app/win/`. The macOS tree is not touched.
 
 ## Defaults chosen here
 
-Language and UI: C# .NET 8 with WPF, no external packages. Default hotkey: double-tap right Ctrl, changeable in settings. Code location: `app/win/`. Data and logs: `%APPDATA%\zemzeme`.
+Language and UI: C# .NET 8 with WPF, no external packages. Default hotkey: double-tap right Ctrl, changeable in settings. Code location: `app/win/` [future]. Data and logs: `%APPDATA%\zemzeme`.
 
 ## Inherited risk worth knowing
 
