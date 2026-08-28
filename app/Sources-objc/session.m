@@ -19,6 +19,7 @@
 // منتظر است، خراب است. پس این جمله سه جا نوشته می‌شود: روی پنل، کنار کرسر، و در
 // کارت راهنما.
 #import "zemzeme.h"
+#import "rewrite.h"
 
 // «حرفت که تمام شد، یک بار Command راست را بزن». یک رشته، سه مصرف‌کننده: اگر هر
 // کدام متن خودش را داشت، یکی‌شان دیر یا زود عقب می‌ماند.
@@ -46,8 +47,10 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
     // نشان می‌داد و همان را «تحویل‌شده» علامت می‌زد، پس Esc بعدی چیزی برای درج
     // پیدا نمی‌کرد و متن فقط در کلیپ‌بورد می‌ماند.
     NSUInteger _inserted;            // چقدر از متن واقعا سر کرسر رفته
-    NSString *_polished;             // آخرین متنی که مدل نوشته؛ پایه‌ی جوشِ دور بعد
-    NSInteger _polishedThrough;      // مدل تا این جا را دیده؛ بعدش خام است
+    NSString *_rewrite;              // آخرین بازنویسیِ متن: کارِ مدل، یا خودِ کاربر
+    NSIndexSet *_rewritten;          // جاهایی که بازنویسی جایشان را گرفته؛ بقیه دُم‌اند
+    NSIndexSet *_shown;              // جاهایی که آخرین متنِ نوشته‌شده در ادیتور داشت
+    BOOL _userWrote;                 // بازنویسی مالِ کاربر است؛ مدل حق ندارد رویش بنویسد
     // تحویل شده ولی هنوز تکه‌ای در راه است. سشن باز می‌ماند و خودش پر می‌شود؛ Escِ
     // بعدی یعنی «همین بس است» و می‌بندد، و صف در پس‌زمینه کارش را تمام می‌کند.
     BOOL _settling;
@@ -260,24 +263,12 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
     [self polishThenDeliver];
 }
 
-// متنِ همین لحظه: آنچه مدل تمیز کرده، به‌اضافه‌ی هر چه بعد از آن رسیده. هیچ رشته‌ای
-// انباشته نمی‌شود، پس تکه‌ی دیررس خودش سر جای ساختاری‌اش می‌نشیند و هیچ جراحی لازم
-// ندارد. و پاسِ ردشده هم دیگر «چسباندنِ دستی» لازم ندارد: دُمِ خام از قبل اینجاست.
-- (NSString *)liveText { return [self textWithTail:[_queue textFrom:_polishedThrough extra:NO]]; }
+// متنِ همین لحظه: بازنویسی (کارِ مدل یا ویرایشِ کاربر)، به‌اضافه‌ی هر جایی که بازنویسی
+// جایش را نگرفته. هیچ رشته‌ای انباشته نمی‌شود، پس تکه‌ی دیررس جراحی لازم ندارد.
+- (NSString *)liveText { return ZRewriteText(_rewrite, _rewritten, _queue.snapshot, NO); }
 
-// و متنی که حق دارد سر کرسر برود: فقط تا اولین جای نرسیده. اگر تکه‌ی هفتم در راه
-// باشد و هشتم را حالا درج کنیم، هفتم که برسد جایی برای نشستن ندارد و ترتیبِ حرفِ
-// آدم به هم می‌خورد. صف که خالی باشد، این دقیقا همان متنِ کامل است.
-- (NSString *)caretText {
-    if (_queue.drained) return self.liveText;
-    return [self textWithTail:[_queue settledTextFrom:_polishedThrough]];
-}
-
-- (NSString *)textWithTail:(NSString *)tail {
-    if (!_polished.length) return tail ?: @"";
-    if (!tail.length) return _polished;
-    return [NSString stringWithFormat:@"%@ %@", _polished, tail];
-}
+// و متنی که حق دارد سر کرسر برود: همان یک منبع، فقط تا اولین جای نرسیده.
+- (NSString *)caretText { return ZRewriteText(_rewrite, _rewritten, _queue.snapshot, YES); }
 
 // صدا تمام شد و هر تکه دستِ‌کم یک بار امتحان شده. `text` و `second` را موتور از
 // روی همین صف ساخته و اینجا لازم نیستند: سشن خودش صاحبِ صف است و آنچه می‌خواهد
@@ -301,6 +292,20 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
     [self polishThenDeliver];
 }
 
+// ویرایشِ کاربر، **پیش از** هر تصمیمی: ویرایش یک لایه‌ی بازنویسی روی همان جاهایی است
+// که ادیتور نشان داده بود، نه جایگزینِ کلِ متن. تا دیروز جایگزین بود و هر تکه‌ای که
+// بعدِ ویرایش می‌رسید از کلیپ‌بورد و تاریخچه می‌افتاد در حالی که سر کرسر می‌رفت (باگ
+// C1، سشن ۲۰۲۶-۰۸-۲۶-۰۳-۲۳-۵۷: ۱۰۵۷ نویسه سر کرسر، ۲۵۹ نویسه در کلیپ‌بورد).
+// و دو مصرف‌کننده دارد نه یکی: تحویل (سرِ Esc، بی پاس) و تصمیمِ پاس (سرِ رسیدنِ تکه،
+// پیش از تحویل). با یک جا، آن یکی مسیر همیشه متنِ کهنه را می‌دید.
+- (void)captureEdit {
+    if (_mode != ZModeCollect || ![_panel editorTouched] || ![_panel editorText].length) return;
+    _rewrite = [_panel editorText];
+    _rewritten = _shown;
+    _userWrote = YES;
+    ZLog(@"session: ویرایشِ کاربر نشست، %lu نویسه", (unsigned long)_rewrite.length);
+}
+
 // پاس هوش مصنوعی، فقط روی متن و فقط اگر خودت خواسته باشی. هیچ‌وقت بلوکه‌کننده نیست:
 // نتیجه‌اش که نیامد، همین متن خام تحویل می‌شود.
 //
@@ -308,8 +313,9 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
 // وسطش جای نرسیده‌ای باشد، آن درز را «تمیز» می‌کند و تکه‌ی بعدی که برسد دیگر جایی
 // ندارد. پس تا آخرین تکه نرسیده، متن خام می‌ماند و همان تحویل می‌شود.
 - (void)polishThenDeliver {
-    NSInteger through = _queue.nextSeq;
-    NSString *fresh = [_queue textFrom:_polishedThrough extra:NO];
+    [self captureEdit];
+    NSIndexSet *through = ZRewriteCovers(_rewritten, _queue.snapshot);
+    NSString *fresh = ZRewriteText(nil, _rewritten, _queue.snapshot, NO);
     // شرطِ پاس، و **نه `hasKey`**. این یک خط چند وقت پاس هوش مصنوعی را بی‌صدا خاموش
     // نگه داشته بود: `hasKey` روی نخ اصلی عمدا محافظه‌کار است و فقط جوابِ کش‌شده‌ی
     // پرسشِ **بی‌پنجره**ی کی‌چین را می‌دهد. روی این دستگاه آن پرسش همیشه ۲۵۲۹۳
@@ -317,7 +323,10 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
     // اجرا نمی‌شد. معیار درست «کلید را همین حالا در دست دارم» نیست، «می‌دانیم که
     // کلیدی نیست» است: مسیر خودِ پاس با اجازه‌ی پنجره می‌خواند و اگر آخرش کلید نبود
     // خودش خطای روشن برمی‌گرداند و متن خام سر جایش می‌ماند.
-    BOOL want = ZSettings.shared.finalPassEnabled && _queue.drained && fresh.length > 0;
+    // و `_userWrote` هم شرط: مدل کلِ متن را از نو می‌نویسد و متنِ کاربر را کسی از نو
+    // نمی‌نویسد، پس ویرایش که آمد پاس تا آخرِ سشن خاموش می‌ماند.
+    BOOL want = ZSettings.shared.finalPassEnabled && _queue.drained
+                && fresh.length > 0 && !_userWrote;
     if (!want || ZFinalPass.keyKnownMissing) {
         if (want) {
             // یک منبع حقیقت برای این جمله. «نیست» و «پذیرفته نشد» دو کارِ مختلف از
@@ -331,7 +340,7 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
     _workingMsg = @"در حال تمیز کردن متن…";
     [self render];
     __weak typeof(self) ws = self;
-    NSString *before = _polished;
+    NSString *before = _rewrite;
     NSInteger epoch = _dropEpoch;
     void (^landed)(NSString *, NSString *) = ^(NSString *out, NSString *err) {
         __strong typeof(ws) s = ws;
@@ -345,9 +354,10 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
             [s deliver];
             return;
         }
-        if (out.length) {
-            s->_polished = out;
-            s->_polishedThrough = through;
+        // و جوابِ در پرواز، وقتی وسطش کاربر نوشته: مالِ متنی که دیگر مرجع نیست.
+        if (out.length && !s->_userWrote) {
+            s->_rewrite = out;
+            s->_rewritten = through;
         } else if (err.length) {
             // مدل جواب نداد. چیزی گم نمی‌شود و چسباندنِ دستی هم لازم نیست: متن از
             // روی جاها رندر می‌شود، پس دُمِ خام از قبل سر جایش است.
@@ -391,6 +401,7 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
     // دُم خاکستری دقیقا همان‌قدر می‌ماند که کار واقعا تمام نشده. رنگ یک معنی دارد و
     // همین است.
     [_panel setPreviewText:nil];
+    [self captureEdit];
     NSString *all = [self.liveText stringByTrimmingCharactersInSet:
                      NSCharacterSet.whitespaceAndNewlineCharacterSet];
     [self writeTranscript:all];
@@ -412,23 +423,10 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
         else { _paused = YES; [self render]; }
         return;
     }
-    // در حالت جمع، متنِ ادیتور مرجع است نه متنِ خام: کاربر ممکن است ویرایشش کرده باشد.
-    //
-    // **اول بخوان، بعد بنویس.** تا امروز برعکس بود (`setEditorText:all` و بعد پس
-    // خواندنِ همان)، یعنی متنِ خام روی تایپِ کاربر نوشته می‌شد و بعد همان خام پس
-    // خوانده می‌شد: `edited` همیشه با `all` یکی درمی‌آمد و ویرایش کاربر بی‌صدا گم
-    // می‌شد. این ادعا از روز اول در همین کامنت بود و از روز اول هم غلط بود؛ فقط
-    // چون ادیتور فوکوس نمی‌گرفت هیچ‌کس نمی‌توانست ببیندش. حالا که می‌گیرد، اولین
-    // تایپ و Esc همان لحظه نشانش می‌دهد.
+    // و ادیتور از همان یک منبع تازه می‌شود: آنچه کاربر می‌بیند همان است که بیرون رفت.
     if (_mode == ZModeCollect) {
-        if ([_panel editorTouched]) {
-            // متن مالِ کاربر است و برنده هم همان: پاس هوش مصنوعی هم حق ندارد رویش
-            // بنویسد. ادیتور هم دست نمی‌خورد تا چیزی که می‌بیند همان چیزی باشد که رفت.
-            NSString *edited = [_panel editorText];
-            if (edited.length) all = edited;
-        } else {
-            [_panel setEditorText:all];
-        }
+        [_panel setEditorText:all];
+        _shown = ZRewriteCovers(_rewritten, _queue.snapshot);
     }
     // خانه‌ی خودِ متن، و **پیش از** هر تحویلی. کلیپ‌بورد ممکن است دست مدیر کلیپ‌بورد
     // نیفتد و درج ممکن است جای عوضی بنشیند؛ این تنها خطی است که برای ماندنِ متن
@@ -671,8 +669,10 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
     // جوابش که آمد بی‌اثر می‌افتد). تا دیروز این سه تا سه جای مختلف بودند و یکی‌شان
     // همیشه جا می‌ماند: پنل می‌گفت همه‌چیز پاک شد و Esc بعدی همان حرف‌ها را برمی‌گرداند.
     [_engine discardText];
-    _polished = nil;
-    _polishedThrough = 0;
+    _rewrite = nil;
+    _rewritten = nil;
+    _shown = nil;
+    _userWrote = NO;
     _inserted = 0;
     _secondsBefore = 0;
     _settling = NO;
