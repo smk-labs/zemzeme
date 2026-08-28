@@ -271,12 +271,6 @@ NSTimeInterval ZBackoffDelay(NSInteger step);
 - (NSArray<ZSlot *> *)snapshot;
 - (NSString *)text;                     // همه‌ی جاهای رسیده، به ترتیب، با یک فاصله
 - (NSString *)textFrom:(NSInteger)seq extra:(BOOL)extra;
-// متن تا **اولین جای نرسیده**، و نه یک کلمه بیشتر. تنها متنی که حق دارد سر کرسر
-// برود همین است: اگر تکه‌ی هفتم هنوز در راه باشد و هشتم را الان درج کنیم، وقتی
-// هفتم برسد دیگر جایی برای نشستن ندارد و ترتیبِ حرفِ آدم به هم می‌خورد. پنل و
-// کلیپ‌بورد کلِ `text` را می‌گیرند (دیدن بیشتر ضرری ندارد)، کرسر فقط این را.
-- (NSString *)settledTextFrom:(NSInteger)seq;
-@property (nonatomic, readonly) NSInteger nextSeq;
 @property (nonatomic, readonly) NSInteger waiting;      // چند تکه هنوز در راه است
 @property (nonatomic, readonly) BOOL drained;
 @property (nonatomic, readonly) unsigned long long bytesUp;

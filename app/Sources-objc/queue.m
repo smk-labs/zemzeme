@@ -114,32 +114,11 @@ NSURL *ZQueueManifestIn(NSURL *sessionDir) {
 
 - (NSString *)text { return [self textFrom:0 extra:NO]; }
 
-// تا اولین جای نرسیده و بس. جایی که سرور گفت حرفی نبود سدِ راه نیست: آن تکه تمام
-// است و هیچ‌وقت چیزی به متن اضافه نمی‌کند، پس ماندن پشتش یعنی معطلیِ بی‌دلیل.
-- (NSString *)settledTextFrom:(NSInteger)seq {
-    NSMutableArray<NSString *> *parts = [NSMutableArray array];
-    [_lock lock];
-    for (ZSlot *s in _slots) {
-        if (s.extra || s.seq < seq) continue;
-        if (s.state == ZSlotWaiting) break;
-        if (s.state == ZSlotDone && s.text.length) [parts addObject:s.text];
-    }
-    [_lock unlock];
-    return [parts componentsJoinedByString:@" "];
-}
-
 - (NSArray<ZSlot *> *)snapshot {
     [_lock lock];
     NSArray<ZSlot *> *copy = [_slots copy];
     [_lock unlock];
     return copy;
-}
-
-- (NSInteger)nextSeq {
-    [_lock lock];
-    NSInteger n = _nextSeq;
-    [_lock unlock];
-    return n;
 }
 
 - (NSInteger)waiting {
