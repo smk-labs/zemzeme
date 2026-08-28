@@ -17,6 +17,7 @@
 // از همین جنس ۱۷۴۱ نویسه را گروگان گرفت، کاربر چهار بار Esc زد و آخرش چهار دقیقه
 // دیکته را دور ریخت. جداکننده از قبل در دست بود و فقط لاگ می‌شد: دلیلِ بسته شدن.
 #import "zemzeme.h"
+#import "rewrite.h"
 
 // یک ساعتِ عقب‌نشینی برای **کلِ صف**، نه یکی برای هر تکه. خرابی مالِ شبکه است نه
 // مالِ آن تکه‌ی بخصوص، پس ده تکه‌ی در انتظار یعنی ده برابر تلاشِ بی‌فایده روی همان
@@ -402,7 +403,44 @@ NSURL *ZQueueManifestIn(NSURL *sessionDir) {
 // و پاسِ تمیزکاری اینجا اجرا **نمی‌شود**: کلید در کی‌چین است و خواندنش می‌تواند یک
 // پنجره‌ی رمز بالا بیاورد، آن هم بی‌آنکه کسی منتظرِ چیزی باشد. متنِ خام و کامل، از
 // متنِ تمیزِ نصفه بهتر است.
-static NSMutableArray<ZQueue *> *gResumed;
+// و دو در به این مسیر باز می‌شود، نه یکی: لانچ (پایین)، و پایانِ سشن که صفِ
+// بی‌صاحبش را همین‌جا می‌سپارد (`ZAdoptOrphanQueue`). هر دو یک سیم‌کشی دارند، پس
+// تکه‌ی دیررس چه در همین اجرا برسد چه در اجرای بعدی، از یک راه می‌نشیند.
+//
+// جدول با sid کلید می‌خورد و صف را **زنده نگه می‌دارد** تا خالی شدنش. دو نخ لمسش
+// می‌کنند (نخ اصلی سرِ پایانِ سشن، نخ کارگرِ لانچ سرِ بالا آمدن)، پس قفل دارد. قفل
+// فقط خودِ جدول را می‌پوشاند و روی هیچ کال‌بکی نگه داشته نمی‌شود.
+static NSMutableDictionary<NSString *, ZQueue *> *gResumed;
+static NSLock *gResumedLock;
+
+static NSLock *zResumedLock(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        gResumed = [NSMutableDictionary dictionary];
+        gResumedLock = [NSLock new];
+    });
+    return gResumedLock;
+}
+
+// نه یعنی این sid از قبل دستِ یکی هست. همین یک جواب است که جلوی دو صف روی یک صدا
+// را می‌گیرد، یعنی جلوی دو ردیف تاریخچه و دو بار نوشتنِ text.txt.
+static BOOL zHoldResumed(NSString *sid, ZQueue *q) {
+    NSLock *lock = zResumedLock();
+    [lock lock];
+    BOOL fresh = gResumed[sid] == nil;
+    if (fresh) gResumed[sid] = q;
+    [lock unlock];
+    return fresh;
+}
+
+// و رها کردن، همان لحظه که صف واقعا تمام شد. بی این، هر سشنی که با تکه‌ی در راه
+// بسته شود تا بسته شدنِ اپ یک صف و یک بلاک را زنده نگه می‌دارد.
+static void zDropResumed(NSString *sid, ZQueue *q) {
+    NSLock *lock = zResumedLock();
+    [lock lock];
+    if (gResumed[sid] == q) [gResumed removeObjectForKey:sid];
+    [lock unlock];
+}
 
 + (ZQueue *)queueFromManifest:(NSURL *)file {
     NSData *raw = [NSData dataWithContentsOfURL:file];
@@ -460,43 +498,100 @@ static NSMutableArray<ZQueue *> *gResumed;
 
 - (void)resume { [self kick]; }
 
+// متن را سرِ جایش می‌نشاند و جواب می‌دهد که **واقعا نشست**. جدا از تابع پایین، چون
+// تنها همین یک جواب حق دارد صدا را پاک کند و بدون آن، «تور» پیش از چیزی که باید
+// نجاتش بدهد می‌رفت.
+static BOOL zLandResumedText(ZQueue *q, NSString *sid,
+                             NSString *rewrite, NSIndexSet *covers) {
+    NSCharacterSet *edges = NSCharacterSet.whitespaceAndNewlineCharacterSet;
+    // دو متن، همان دو تای مسیر زنده. تحویل از لایه‌ی بازنویسی می‌آید (ویرایشِ کاربر
+    // یا پاس)، خام از خودِ صف. سپردنِ صف بی لایه یعنی تکه‌ی دیررس متنِ ویرایش‌شده را
+    // با خام عوض کند، یعنی همان باگ C1 از درِ پشتی برگردد.
+    NSString *all = [ZRewriteText(rewrite, covers, q.snapshot, NO) stringByTrimmingCharactersInSet:edges];
+    NSString *raw = [q.text stringByTrimmingCharactersInSet:edges];
+    // متنی در کار نیست، پس تنها نسخه‌ی این حرف‌ها همان audio.flac است.
+    if (!all.length) return NO;
+    NSURL *dir = q.manifest.URLByDeletingLastPathComponent;
+    // بلندتر یا هیچ. متنِ روی دیسک می‌تواند نسخه‌ی تمیزشده‌ی همان حرف‌ها باشد و آن را
+    // با نسخه‌ی خام عوض کردن، یک قدم عقب است. ولی متنی که تکه‌های جامانده‌اش رسیده‌اند
+    // تقریبا همیشه بلندتر است، و همان قاعده به زبان ساده: تکه‌ی دیررس فقط اضافه
+    // می‌کند، هیچ‌وقت کم نمی‌کند. و همین حالت یعنی متن از قبل امن است، نه اینکه شکست
+    // خورده باشد.
+    NSURL *txt = [dir URLByAppendingPathComponent:@"text.txt"];
+    NSString *had = [NSString stringWithContentsOfURL:txt
+                                             encoding:NSUTF8StringEncoding error:nil];
+    if (all.length <= had.length) return YES;
+    NSError *err = nil;
+    if (![all writeToURL:txt atomically:YES encoding:NSUTF8StringEncoding error:&err]) {
+        ZLog(@"queue: سشن %@ متنش روی دیسک ننشست (%@)، پس صدا هم دست نمی‌خورد",
+             sid, err.localizedDescription ?: @"?");
+        return NO;
+    }
+    // raw.txt هم همین‌جا تازه می‌شود، چون مسیر زنده هر بار هر دو را می‌نویسد و
+    // تکه‌ی دیررس نباید یکی از آن دو را عقب‌مانده جا بگذارد. سرِ لانچِ بعدی لایه‌ای
+    // در کار نیست (با پروسه رفته)، پس آنجا این دو یکی درمی‌آیند و همان درست است.
+    [raw writeToURL:[dir URLByAppendingPathComponent:@"raw.txt"]
+         atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    ZHistoryAppend(all, raw, sid, ZHistoryViaAuto, nil);
+    ZLog(@"queue: سشن %@ دیر تمام شد، %lu نویسه در تاریخچه نشست",
+         sid, (unsigned long)all.length);
+    return YES;
+}
+
 // آنچه سرِ تمام شدنِ یک صفِ برداشته‌شده باید بیفتد. بیرون از بلوک، چون بلوکِ داخلِ
 // یک حلقه‌ی دو تو در تو جای منطق نیست و چون تست باید بتواند صدایش بزند بی آنکه
 // پوشه‌ی واقعیِ سشن‌ها را بخواند. `sid` نامِ پوشه‌ی سشن است: هم برای لاگ، هم برای
 // ردیف تاریخچه، که سر خواندن با همین جمع می‌شود.
-void ZFinishResumedSession(ZQueue *q, NSString *sid) {
+static void zFinishResumed(ZQueue *q, NSString *sid,
+                           NSString *rewrite, NSIndexSet *covers) {
     if (!q || !q.drained) return;
+    BOOL safe = zLandResumedText(q, sid, rewrite, covers);
     // و همان تاگل «ضبط صدای سشن»، اینجا هم. سشن سر پایانش صدا را نگه داشته بود چون
     // تکه‌ای در راه بود، بعد اپ بسته شد، و تا امروز دیگر هیچ‌کس سراغ آن صدا نمی‌آمد:
     // تنها راه رفتنش جاروی هفت‌روزه بود. یعنی دقیقا همان سشنی که با شبکه‌ی بد بسته
     // شده، تاگل رویش بی‌اثر می‌ماند. حالا همین‌جا که صف تمام می‌شود، تاگل حرف آخر را
-    // می‌زند. و پیش از نوشتنِ متن، چون آن پایین دو راهِ برگشتِ زودهنگام هست.
+    // می‌زند.
+    //
+    // و **بعد** از تاییدِ نوشتنِ متن، نه پیش از آن. تا امروز برعکس بود و درست بالای
+    // دو راهِ برگشتِ زودهنگام می‌نشست: متن که ننشیند، صدا از قبل رفته بود و آن سشن
+    // هیچ نسخه‌ای نداشت. صدا تنها تور واقعی است (متنِ گم‌شده‌ی B1 از همین فایل با
+    // `--transcribe` برگشت)، پس تور آخر از همه می‌رود (باگ B2).
     //
     // و تاگلِ **همین حالا** خوانده می‌شود، نه حالش سرِ ضبط. تاگل یک قاعده‌ی ایستاست نه
     // انتخابِ تکیِ هر سشن، و اپ از قبل هر صدایی را سر هفت روز جارو می‌کند. نگه داشتنِ
     // حالِ آن روز در دفترچه، یک کلید تازه و یک مسیرِ مهاجرت می‌خواست، آن هم فقط برای
     // کسی که درست بین دو لانچ تاگل را عوض کرده باشد.
-    if (!ZSettings.shared.recordSessions && q.audio) {
+    if (safe && !ZSettings.shared.recordSessions && q.audio) {
         [NSFileManager.defaultManager removeItemAtURL:q.audio error:nil];
         ZLog(@"queue: سشن %@ تمام شد و صدایش رفت (ضبط صدای سشن خاموش است)", sid);
     }
-    NSString *all = [q.text stringByTrimmingCharactersInSet:
-                     NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    if (!all.length) return;
-    // بلندتر یا هیچ. متنِ روی دیسک می‌تواند نسخه‌ی تمیزشده‌ی همان حرف‌ها باشد و آن را
-    // با نسخه‌ی خام عوض کردن، یک قدم عقب است. ولی متنی که تکه‌های جامانده‌اش رسیده‌اند
-    // تقریبا همیشه بلندتر است، و همان قاعده به زبان ساده: تکه‌ی دیررس فقط اضافه
-    // می‌کند، هیچ‌وقت کم نمی‌کند.
-    NSURL *txt = [q.manifest.URLByDeletingLastPathComponent
-                  URLByAppendingPathComponent:@"text.txt"];
-    NSString *had = [NSString stringWithContentsOfURL:txt
-                                             encoding:NSUTF8StringEncoding error:nil];
-    if (all.length <= had.length) return;
-    [all writeToURL:txt atomically:YES encoding:NSUTF8StringEncoding error:nil];
-    // و خام همان `all` است: این مسیر رابطی ندارد، پس نه ویرایشی رویش رفته نه پاسی.
-    ZHistoryAppend(all, all, sid, ZHistoryViaAuto, nil);
-    ZLog(@"queue: سشن %@ دیر تمام شد، %lu نویسه در تاریخچه نشست",
-         sid, (unsigned long)all.length);
+    zDropResumed(sid, q);
+}
+
+// و همان، از بیرون: مسیرِ لانچ لایه‌ای ندارد چون لایه با پروسه‌ی قبلی رفته.
+void ZFinishResumedSession(ZQueue *q, NSString *sid) {
+    zFinishResumed(q, sid, nil, nil);
+}
+
+// سشن بسته شد و تکه‌ای هنوز در راه است. تا امروز حرف دقیقا همین‌جا گم می‌شد: تنها
+// نگه‌دارنده‌ی سشن `app.m` است و `onFinish` همان لحظه رهایش می‌کند، پس کال‌بکِ صف که
+// با `__weak` بسته شده روی نال خالی می‌شود. شاهدش این بود که «تکه‌ی دیررس نشست» در
+// کلِ تاریخِ app.log صفر بار نوشته شده (باگ B1).
+//
+// پس صف از سشن جدا می‌شود و صاحبِ تازه‌اش همین جدول است، با همان سیم‌کشیِ لانچ.
+// رابطی هم در کار نیست و نباید باشد: کاربر رفته و پنجره‌ی تازه مزاحمت است نه خدمت.
+void ZAdoptOrphanQueue(ZQueue *q, NSString *sid, NSString *rewrite, NSIndexSet *covers) {
+    if (!q || !sid.length) return;
+    // چیزی در راه نیست، پس مسیر زنده خودش تحویل داده و text.txt همان متنِ تحویل‌شده
+    // است. برداشتنِ صف اینجا یعنی متنِ خام روی متنِ پاس‌خورده بنشیند.
+    if (q.drained) return;
+    if (!zHoldResumed(sid, q)) return;
+    __weak ZQueue *wq = q;
+    q.onChange = ^{ zFinishResumed(wq, sid, rewrite, covers); };
+    ZLog(@"queue: سشن %@ بی‌صاحب ماند و برداشته شد، %ld تکه در راه", sid, (long)q.waiting);
+    // و اگر همان تکه درست میانِ دیدن و سیم‌کشی رسیده باشد، کال‌بکِ کهنه‌اش روی سشنِ
+    // رفته خالی شده و کسی خبردار نشده. یک بار همین‌جا پرسیده می‌شود.
+    if (q.drained) zFinishResumed(q, sid, rewrite, covers);
 }
 
 void ZResumePendingQueues(void) {
@@ -510,11 +605,13 @@ void ZResumePendingQueues(void) {
             ZQueue *q = [ZQueue queueFromManifest:file];
             if (!q) continue;
             NSString *sid = dir.lastPathComponent;
+            // همان سشن می‌تواند همین حالا دستِ `ZAdoptOrphanQueue` باشد: دفترچه تا
+            // خالی شدنِ صف روی دیسک می‌ماند، پس این تابع هم می‌بیندش. دو صف روی یک
+            // صدا یعنی دو ردیف تاریخچه و دو بار نوشتنِ همان فایل.
+            if (!zHoldResumed(sid, q)) continue;
             ZLog(@"queue: سشن %@ برداشته شد، %ld تکه در راه", sid, (long)q.waiting);
             __weak ZQueue *wq = q;
             q.onChange = ^{ ZFinishResumedSession(wq, sid); };
-            if (!gResumed) gResumed = [NSMutableArray array];
-            [gResumed addObject:q];
             [q resume];
         }
     });

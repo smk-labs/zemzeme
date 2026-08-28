@@ -184,6 +184,59 @@ static BOOL ZTestSettle(ZQueue *q) {
     return ZTestWaitUntil(^{ return (BOOL)(q.waiting == 0); });
 }
 
+// همان انتظار و همان سقف، ولی نخِ اصلی هم می‌چرخد. صف کال‌بکش را روی نخِ اصلی
+// dispatch می‌کند و در یک باینریِ خطی هیچ‌وقت نوبتش نمی‌رسد؛ یعنی تستی که با usleep
+// صبر کند، سیم‌کشیِ کال‌بک را اصلا نسنجیده سبز می‌شود.
+static BOOL ZTestPumpUntil(BOOL (^done)(void)) {
+    NSDate *end = [NSDate dateWithTimeIntervalSinceNow:ZTestCeiling];
+    while (!done() && [NSDate.date compare:end] == NSOrderedAscending)
+        [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.02]];
+    return done();
+}
+
+// چند خط به نامِ این سشن در تاریخچه نوشته شده. خواننده با sid جمع می‌کند و تازه‌ترین
+// را می‌دهد، پس ردیفِ تکراری در رابط دیده نمی‌شود و تنها همین شمار لوش می‌دهد.
+static NSInteger ZTestHistoryRows(NSString *sid) {
+    NSString *s = [NSString stringWithContentsOfURL:ZHistoryFile()
+                                           encoding:NSUTF8StringEncoding error:nil];
+    NSString *needle = [NSString stringWithFormat:@"\"sid\":\"%@\"", sid];
+    NSInteger n = 0;
+    for (NSString *line in [(s ?: @"") componentsSeparatedByString:@"\n"])
+        if ([line containsString:needle]) n++;
+    return n;
+}
+
+// یک پوشه‌ی سشنِ خالی با صدای واقعی کنارش، همان شکلی که `start` می‌سازد.
+static NSURL *ZTestSessionDir(NSString *name) {
+    NSURL *dir = [[NSURL fileURLWithPath:NSTemporaryDirectory()]
+                  URLByAppendingPathComponent:name];
+    NSFileManager *fm = NSFileManager.defaultManager;
+    [fm removeItemAtURL:dir error:nil];
+    [fm createDirectoryAtURL:dir withIntermediateDirectories:YES attributes:nil error:nil];
+    ZRecorder *rec = [[ZRecorder alloc] initWithURL:
+                      [dir URLByAppendingPathComponent:@"audio.flac"]];
+    [rec feed:ZTestThreePieces()];
+    [rec finish];
+    return dir;
+}
+
+// و صفی به شکلِ صفِ یک سشنِ زنده: صدا و دفترچه و زبان سرِ جایشان، و یک تکه که هنوز
+// جواب نگرفته. `pcm` در حافظه است، همان‌طور که در مسیر زنده هست.
+static ZQueue *ZTestLiveQueue(NSURL *dir) {
+    ZQueue *q = [ZQueue new];
+    q.audio = [dir URLByAppendingPathComponent:@"audio.flac"];
+    q.manifest = ZQueueManifestIn(dir);
+    q.lang = @"fa-IR";
+    NSData *pcm = [ZTestThreePieces() subdataWithRange:NSMakeRange(0, 7 * 16000 * 2)];
+    [q add:pcm lang:@"fa-IR" extra:NO frame:0 frames:7 * 16000];
+    return q;
+}
+
+static NSString *ZTestFileAt(NSURL *dir, NSString *name) {
+    return [NSString stringWithContentsOfURL:[dir URLByAppendingPathComponent:name]
+                                    encoding:NSUTF8StringEncoding error:nil] ?: @"";
+}
+
 static NSString *ZTestSrc(NSString *name) {
     NSString *s = [NSString stringWithContentsOfFile:
                    [@"app/Sources-objc/" stringByAppendingString:name]
@@ -644,6 +697,117 @@ int main(void) { @autoreleasepool {
         [q stop];
     }
 
+    // ---------- ۱۶: سشن که بسته شد، تکه‌ی دیررس در همین اجرا می‌نشیند ----------
+    // باگ B1، و گران‌ترینِ این سند. سشن `endNow` می‌زند، `app.m` همان لحظه رهایش
+    // می‌کند، و کال‌بکِ صف که با `__weak` بسته شده روی نال خالی می‌شود: تکه ده ثانیه
+    // بعد می‌رسد و هیچ‌کس نیست بگیردش. شاهدش این بود که «تکه‌ی دیررس نشست» در کلِ
+    // تاریخِ app.log صفر بار نوشته شده، یعنی آن مسیر هرگز یک بار هم ندویده.
+    //
+    // اینجا سشن نیست (کامپایل نمی‌شود)، ولی همان درزِ واقعی هست: صفی که صاحبش رفته،
+    // و `ZAdoptOrphanQueue` که باید صاحبِ تازه‌اش شود. کال‌بک عمدا از روی نخِ اصلی
+    // خوانده می‌شود، وگرنه تست سیم‌کشی را ندیده سبز می‌ماند.
+    {
+        NSFileManager *fm = NSFileManager.defaultManager;
+        NSString *sid = @"zemzeme-orphan";
+        NSURL *dir = ZTestSessionDir(sid);
+        ZSettings.shared.recordSessions = YES;
+        // دو «قطع» یعنی تکه سرِ پایانِ سشن هنوز در راه است، و پله‌ی اولِ عقب‌نشینی یک
+        // ثانیه فرصت می‌دهد: همان لحظه‌ای که کاربر Esc می‌زند.
+        ZTestScript(@[@[@"", @"قطع"], @[@"", @"قطع"], @[@"دیررس", @"ok"]]);
+        ZQueue *q = ZTestLiveQueue(dir);
+        ok(q.waiting == 1, "سر پایانِ سشن یک تکه هنوز در راه است");
+
+        ZAdoptOrphanQueue(q, sid, nil, nil);
+        ok(ZTestPumpUntil(^{ return (BOOL)ZTestFileAt(dir, @"text.txt").length; }),
+           "صفِ بی‌صاحب برداشته شد و تکه‌ی دیررس خودش نشست");
+        okEq(ZTestFileAt(dir, @"text.txt"), @"دیررس", "متنِ دیررس در text.txt");
+        okEq(ZTestFileAt(dir, @"raw.txt"), @"دیررس", "و خام هم همان‌جا، مثل مسیر زنده");
+        ok(ZTestHistoryRows(sid) == 1, "دقیقا یک ردیف تاریخچه، نه دو تا");
+        ZHistoryEntry *e = ZHistoryRecent(20).firstObject;
+        ok([e.sid isEqualToString:sid] && [e.text isEqualToString:@"دیررس"] &&
+           [e.raw isEqualToString:@"دیررس"], "و ردیف، خامِ همان سشن را با خود دارد");
+        ok([fm fileExistsAtPath:q.audio.path], "ضبط روشن بود، پس صدا سر جایش ماند");
+
+        // و رها شدنِ صف، که تنها راهِ دیدنش همین است: جدول با sid کلید می‌خورد، پس
+        // اگر ردِ سشنِ تمام‌شده نرفته باشد، صفِ تازه‌ی همان sid پس زده می‌شود و متنِ
+        // دومش هیچ‌وقت نمی‌نشیند. بی این، هر سشنِ شبکه‌بد تا بسته شدنِ اپ می‌ماند.
+        ZTestScript(@[@[@"", @"قطع"], @[@"", @"قطع"], @[@"دوباره", @"ok"]]);
+        ZQueue *q2 = ZTestLiveQueue(dir);
+        [fm removeItemAtURL:[dir URLByAppendingPathComponent:@"text.txt"] error:nil];
+        ZAdoptOrphanQueue(q2, sid, nil, nil);
+        ok(ZTestPumpUntil(^{ return (BOOL)ZTestFileAt(dir, @"text.txt").length; }),
+           "صفِ تمام‌شده جایش را خالی کرده بود، پس sid دوباره پذیرفته شد");
+        [q stop];
+        [q2 stop];
+        [fm removeItemAtURL:dir error:nil];
+    }
+
+    // ---------- ۱۷: تکه‌ی دیررس ویرایشِ کاربر را پاک نمی‌کند ----------
+    // درِ پشتیِ باگ C1. سشن با یک تکه در راه بسته می‌شود، پس صفش سپرده می‌شود؛ ولی
+    // متنی که کاربر تحویل گرفته ویرایش‌شده است و صف فقط خام را می‌شناسد. صف که بی
+    // لایه سپرده شود، تکه‌ی دیررس «بلندتر است» می‌شود و متنِ ویرایش‌شده را با خام عوض
+    // می‌کند: هم text.txt و هم ردیف تاریخچه، که چون با sid جمع می‌شود همان ردیفِ
+    // ویرایش‌شده را می‌پوشاند. یعنی همان چیزی که C1 بست، از این در باز می‌شد.
+    {
+        NSFileManager *fm = NSFileManager.defaultManager;
+        NSString *sid = @"zemzeme-orphan-edit";
+        NSURL *dir = ZTestSessionDir(sid);
+        ZSettings.shared.recordSessions = YES;
+        ZTestScript(@[@[@"", @"قطع"], @[@"", @"قطع"], @[@"دیررس", @"ok"]]);
+        ZQueue *q = ZTestLiveQueue(dir);
+        // جای صفر از قبل رسیده و کاربر رویش دست برده: «خام یک» شده «ویرایشِ کاربر».
+        // پس لایه جای صفر را پوشانده و تکه‌ی بعدی باید **پشتِ** آن بنشیند.
+        [q add:[NSData dataWithBytes:(char[]){0} length:2] lang:@"fa-IR" extra:NO
+            frame:0 frames:1];
+        NSIndexSet *covers = [NSIndexSet indexSetWithIndex:0];
+        NSString *edited = @"ویرایشِ کاربر";
+        [edited writeToURL:[dir URLByAppendingPathComponent:@"text.txt"]
+                atomically:YES encoding:NSUTF8StringEncoding error:nil];
+
+        ZAdoptOrphanQueue(q, sid, edited, covers);
+        ok(ZTestPumpUntil(^{ return (BOOL)[ZTestFileAt(dir, @"text.txt") containsString:@"دیررس"]; }),
+           "تکه‌ی دیررس نشست");
+        okEq(ZTestFileAt(dir, @"text.txt"), @"ویرایشِ کاربر دیررس",
+             "و پشتِ ویرایشِ کاربر نشست، نه به جایش");
+        ZHistoryEntry *e = ZHistoryRecent(20).firstObject;
+        okEq(e.text, @"ویرایشِ کاربر دیررس", "ردیف تاریخچه هم ویرایش را نگه داشت");
+        ok([e.raw containsString:@"دیررس"] && ![e.raw containsString:@"ویرایش"],
+           "و خامش خام ماند: هرچه شنیده شد، بی ویرایش");
+        [q stop];
+        [fm removeItemAtURL:dir error:nil];
+    }
+
+    // ---------- ۱۸: تور آخر از همه می‌رود ----------
+    // باگ B2. پاک کردنِ audio.flac بالای نوشتنِ متن نشسته بود و دو راهِ برگشتِ
+    // زودهنگام زیرش: یعنی متن که ننشیند، صدا از قبل رفته و آن سشن هیچ نسخه‌ای ندارد.
+    // تا امروز فقط به دو تصادف آسیب نزد (تاگل روشن بود، و B1 جلوی اجرای کد را گرفت).
+    // صدا تور واقعی است: متنِ گم‌شده‌ی B1 از همین فایل با `--transcribe` برگشت.
+    //
+    // هر دو راهِ برگشت آزموده می‌شود، وگرنه ترتیبِ تازه با یکی‌شان هم سبز می‌ماند.
+    for (int mode = 0; mode < 2; mode++) {
+        NSFileManager *fm = NSFileManager.defaultManager;
+        NSString *sid = mode ? @"zemzeme-net-write" : @"zemzeme-net-empty";
+        NSURL *dir = ZTestSessionDir(sid);
+        NSURL *flac = [dir URLByAppendingPathComponent:@"audio.flac"];
+        ZSettings.shared.recordSessions = NO;
+        // حالت ۰: سرور گوش کرد و حرفی نبود، پس متنی در کار نیست.
+        // حالت ۱: متن هست ولی جایش گرفته است (پوشه‌ای به نامِ text.txt)، پس نوشتن
+        // شکست می‌خورد. تنها راهِ ساختنِ یک نوشتنِ شکست‌خورده بی دست بردن در کد.
+        ZTestScript(mode ? @[@[@"یک", @"ok"]] : @[@[@"", @"ok"], @[@"", @"ok"]]);
+        if (mode) [fm createDirectoryAtURL:[dir URLByAppendingPathComponent:@"text.txt"]
+              withIntermediateDirectories:YES attributes:nil error:nil];
+        ZQueue *q = ZTestLiveQueue(dir);
+        ok(ZTestSettle(q), mode ? "متن رسید ولی جای نوشتنش گرفته است"
+                                : "سرور شنید و حرفی نبود، پس متنی نیست");
+        ZFinishResumedSession(q, sid);
+        ok([fm fileExistsAtPath:flac.path],
+           mode ? "نوشتن شکست خورد، پس صدا دست نخورد" : "متنی نبود، پس صدا دست نخورد");
+        ok(ZTestHistoryRows(sid) == 0, "و ردیف تاریخچه‌ای هم ننشست");
+        [q stop];
+        [fm removeItemAtURL:dir error:nil];
+    }
+    ZSettings.shared.recordSessions = NO;
+
     // ---------- قاعده‌های ریشه‌ای، روی خودِ سورس ----------
     NSString *pip = ZTestSrc(@"pipe.m"), *que = ZTestSrc(@"queue.m");
     NSString *eng = ZTestSrc(@"engine.m"), *ses = ZTestSrc(@"session.m");
@@ -696,6 +860,20 @@ int main(void) { @autoreleasepool {
        "سر پایان فقط تا دورِ اول صبر می‌شود، نه تا خالی شدنِ صف");
     ok([ses containsString:@"if (_queue.waiting) {"] && [ses containsString:@"[self showWaiting];"],
        "تکه‌ی در راه یک شمارِ آرام است، نه حالتِ خطا");
+
+    // پایانِ سشن باید صف را **بسپارد**، و این تنها جایی است که سنجیدنش ممکن است:
+    // session.m در این باینری کامپایل نمی‌شود. بی این خط، تکه‌ی دیررس دوباره روی
+    // سشنِ آزادشده خالی می‌شود و باگ B1 بی‌صدا برمی‌گردد.
+    NSUInteger endAt = [ses rangeOfString:@"- (void)endNow {"].location;
+    ok(endAt != NSNotFound &&
+       [ses rangeOfString:@"ZAdoptOrphanQueue(_queue, _sessionDir.lastPathComponent, _rewrite, _rewritten);"
+                  options:0 range:NSMakeRange(endAt, ses.length - endAt)].location != NSNotFound,
+       "endNow صف را به ZAdoptOrphanQueue می‌سپارد");
+
+    // و شاخه‌ی مرده‌ی B3 برنگردد: کدی که ادعا می‌کرد تکه‌ی دیررس را می‌گیرد و نمی‌گرفت،
+    // همان چیزی بود که B1 را قایم نگه داشت. لاگش هم با آن رفت.
+    ok(![ses containsString:@"ZLog(@\"session: تکه‌ی دیررس نشست"],
+       "ادعای دروغِ «تکه‌ی دیررس نشست» از session.m رفت");
 
     // آنچه **نباید** باشد. هر کدام یک بار وسوسه شد و جواب همیشه یکی است: پشت
     // پروکسی و مسیر tun این دستگاه، سیستم‌عامل «آنلاین» می‌گوید در حالی که گوگل در

@@ -328,6 +328,13 @@ static void scenarioPure(void) {
     okEq(ZRewriteText(nil, covers, gSlots, YES), @"", "خالص: جای پوشیده سدِ راه نیست ولی چیزی هم اضافه نمی‌کند");
 }
 
+// بدلِ سپردنِ صف. این تست فقط لایه‌ی بازنویسی را می‌سنجد و صفش هم بدل است، پس
+// سپردنِ واقعی اینجا معنایی ندارد؛ ولی `endNow` صدایش می‌زند و بی این، لینک نمی‌شود.
+// گاردِ خودِ سپردن جای دیگری است: tools/queue_test.sh بندهای ۱۶ و ۱۷.
+void ZAdoptOrphanQueue(ZQueue *q, NSString *sid, NSString *rewrite, NSIndexSet *covers) {
+    (void)q; (void)sid; (void)rewrite; (void)covers;
+}
+
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
         NSString *which = argc > 1 ? @(argv[1]) : @"c1";
