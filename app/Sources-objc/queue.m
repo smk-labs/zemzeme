@@ -229,6 +229,27 @@ NSURL *ZQueueManifestIn(NSURL *sessionDir) {
     return nil;
 }
 
+// بلندترین صدمیلی‌ثانیه‌ی یک تکه. تنها روی شاخه‌ی «سرور شنید و حرفی نبود» خوانده
+// می‌شود و کارش این است که آن حکم را **قابلِ تکذیب** کند: آن حکم نهایی است و متنِ
+// تکه برای همیشه هیچ می‌شود، پس اگر روزی روی تکه‌ای بیفتد که به بلندیِ همسایه‌هایش
+// بوده، حرفِ کاربر گم شده و تا امروز هیچ ردی از آن در لاگ نمی‌ماند (باگ B5).
+//
+// ۲۸ اوت ۲۰۲۶ همین سنجش یک نمونه را تبرئه کرد: در سشن ۲۰۲۶-۰۸-۲۸-۰۵-۰۶-۲۶ تکه‌ی
+// ۶۸٫۱ تا ۷۳٫۰ ثانیه «حرفی نبود» گرفت و اوجش ۰٫۰۲۰ بود، هفت برابر آرام‌تر از دو
+// همسایه‌اش (۰٫۱۴۶ و ۰٫۱۱۳)، و هیچ کلمه‌ای هم از متن نیفتاده بود. یعنی مکثِ واقعی.
+static float zPeakRMS(NSData *pcm) {
+    const int16_t *p = pcm.bytes;
+    NSUInteger n = pcm.length / 2, win = 1600;   // قابِ صدمیلی‌ثانیه‌ای، مثل برش‌زن
+    float peak = 0;
+    for (NSUInteger w = 0; w + win <= n; w += win) {
+        double acc = 0;
+        for (NSUInteger i = 0; i < win; i++) { double v = p[w + i] / 32768.0; acc += v * v; }
+        float rms = (float)sqrt(acc / win);
+        if (rms > peak) peak = rms;
+    }
+    return peak;
+}
+
 - (void)pump {
     NSTimeInterval wait = 0;
     [_lock lock];
@@ -340,7 +361,10 @@ NSURL *ZQueueManifestIn(NSURL *sessionDir) {
     } else if (st == ZSlotSilent && noAudio) {
         ZLog(@"queue %ld [%@]: صدایش پیدا نشد، از صف افتاد", (long)seq, span);
     } else if (st == ZSlotSilent) {
-        ZLog(@"queue %ld [%@]: سرور شنید و حرفی نبود، این تکه تمام است", (long)seq, span);
+        // اوجِ بلندی کنارِ حکم، و همین یک عدد است که این حکم را قابلِ تکذیب می‌کند:
+        // «حرفی نبود» روی تکه‌ای که به بلندیِ همسایه‌هایش بوده یعنی حرفِ کاربر گم شده.
+        ZLog(@"queue %ld [%@]: سرور شنید و حرفی نبود، این تکه تمام است (اوج %.4f، آستانه %.4f)",
+             (long)seq, span, zPeakRMS(pcm), kZVoiceRMS);
     } else {
         ZLog(@"queue %ld [%@]: نرسید (%@)، تلاش %ld، %.0f ثانیه دیگر",
              (long)seq, span, why ?: @"?", (long)tries, MAX(0.0, nextIn));
