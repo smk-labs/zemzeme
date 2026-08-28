@@ -36,7 +36,10 @@ recognition.
 - **A history of every delivered transcript**, written the instant the text is
   handed over, so neither the clipboard nor the insertion has to have worked for the
   text to survive. Right Command + T opens the last 20, each with a one-click insert
-  and copy. The store is an append-only JSONL file you can read with `tail`.
+  and copy. The store is an append-only JSONL file you can read with `tail`. Every
+  row keeps two texts: the one that was delivered, and the raw one, everything that
+  was heard before your own edits and before the AI pass. A switch under the text box
+  flips between them, so a broken delivery no longer takes the safety net with it.
 - **An outage is invisible.** Keep talking: the audio keeps recording, pieces keep
   getting cut and queued, and a piece that did not come back goes again on its own
   after 1, 2, 4, 8, 15 and 30 seconds, the clock shared by the whole queue and reset
@@ -204,8 +207,9 @@ work fully without it.
   Gemini's **free tier**, Google's own terms say it may use what you send for
   training; read the [Gemini API terms](https://ai.google.dev/gemini-api/terms)
   before you paste a key.
-- Session audio recording is off by default. When on, it stays on your disk for
-  seven days and is then swept automatically.
+- Session audio is kept by default (this changed on 28 August 2026). It stays on
+  your own disk for seven days and is then swept automatically. Turn it off in the
+  menu, under Advanced, and the audio is deleted the moment the text is ready.
 - Transcript history is on by default and kept for 60 days in `history.jsonl`, next
   to everything else on your own disk. Change it with
   `defaults write io.seyed.zemzeme historyKeepDays 30`; `0` means never sweep. The

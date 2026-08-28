@@ -27,7 +27,8 @@ static const CGFloat kHRow = 26;
     NSTextView *_full;
     NSScrollView *_fullScroll;
     NSView *_fullBox;
-    NSTextField *_fullCap;
+    NSSegmentedControl *_which;
+    NSButton *_btnCopyShown;
     NSTextField *_status;
     NSButton *_btnReveal, *_btnRefresh;
     NSArray<ZHistoryEntry *> *_rows;
@@ -182,11 +183,22 @@ static const CGFloat kHRow = 26;
 // ردیفِ انتخاب‌شده را کامل نشان می‌دهد، پس «مرور» واقعا مرور است نه حدس زدن از
 // روی چند کلمه‌ی اول.
 - (void)buildFull {
-    _fullCap = [NSTextField labelWithString:@"متن کامل"];
-    _fullCap.font = ZFont(10.5, NO);
-    _fullCap.textColor = NSColor.tertiaryLabelColor;
-    _fullCap.alignment = NSTextAlignmentRight;
-    [_back addSubview:_fullCap];
+    // دو حالتِ همین یک جعبه، و همین‌جا کاربر متنِ گم‌شده‌اش را پیدا می‌کند: «تحویل‌شده»
+    // آنچه بیرون رفت، «خام» هرچه گوگل شنید. جدا شدنشان از باگ C1 آمد (۲۶ اوت ۲۰۲۶):
+    // متنی که تحویل شد نصفه بود و هیچ‌جای رابط نمی‌شد به نصفه‌ی دوم رسید، در حالی که
+    // همان لحظه روی دیسک بود.
+    _which = [NSSegmentedControl segmentedControlWithLabels:@[@"متن تحویل‌شده", @"متن خام"]
+                                              trackingMode:NSSegmentSwitchTrackingSelectOne
+                                                    target:self action:@selector(tapWhich)];
+    _which.segmentStyle = NSSegmentStyleRounded;
+    _which.font = ZFont(10.5, NO);
+    _which.selectedSegment = 0;
+    _which.userInterfaceLayoutDirection = NSUserInterfaceLayoutDirectionRightToLeft;
+    _which.toolTip = @"«خام» یعنی هرچه شنیده شد، پیش از ویرایشِ خودت و پیش از پاس هوش مصنوعی";
+    [_back addSubview:_which];
+
+    _btnCopyShown = [self button:@"doc.on.doc" tip:@"کپی همین متنی که پایین می‌بینی"
+                          action:@selector(tapCopyShown)];
 
     _fullBox = [NSView new];
     _fullBox.wantsLayer = YES;
@@ -237,10 +249,13 @@ static const CGFloat kHRow = 26;
     CGFloat fullTop = kHEdge + kHFull;
     _fullBox.frame = NSMakeRect(kHEdge, kHEdge, sz.width - kHEdge * 2, kHFull);
     _fullScroll.frame = NSMakeRect(2, 2, _fullBox.frame.size.width - 4, kHFull - 4);
-    _fullCap.frame = NSMakeRect(kHEdge, fullTop + 4, sz.width - kHEdge * 2, 14);
+    // کلید دو حالت سمت راست، چون سرِ جمله آنجاست؛ دکمه‌ی کپی ته خط، چون کار است نه عنوان.
+    CGFloat whichW = 190;
+    _which.frame = NSMakeRect(right - whichW, fullTop + 3, whichW, 20);
+    _btnCopyShown.frame = NSMakeRect(kHEdge, fullTop + 1, 24, 24);
 
     CGFloat tableTop = top - 32;
-    CGFloat tableBottom = fullTop + 24;
+    CGFloat tableBottom = fullTop + 30;
     _tableScroll.frame = NSMakeRect(kHEdge, tableBottom,
                                     sz.width - kHEdge * 2, MAX(60, tableTop - tableBottom));
     // و بعد از هر تغییر اندازه، ستون‌ها دقیقا به پهنای قاب برگردند. جدول به‌خودی‌خود
@@ -355,9 +370,25 @@ static const CGFloat kHRow = 26;
 }
 
 - (void)showFullForSelection {
-    NSInteger i = _table.selectedRow;
-    _full.string = (i >= 0 && i < (NSInteger)_rows.count) ? _rows[i].text : @"";
+    ZHistoryEntry *e = [self entryAt:_table.selectedRow];
+    // ردیفی که پیش از این نسخه نوشته شده خام ندارد، و کلیدِ روشنی که متنِ تحویل‌شده را
+    // به اسمِ خام نشان بدهد بدتر از نبودنش است: خاموش می‌ماند و کاربر همان را می‌بیند.
+    BOOL hasRaw = e.raw.length > 0;
+    [_which setEnabled:hasRaw forSegment:1];
+    if (!hasRaw) _which.selectedSegment = 0;
+    _full.string = !e ? @"" : (_which.selectedSegment == 1 ? e.raw : e.text);
     [_full scrollRangeToVisible:NSMakeRange(0, 0)];
+}
+
+- (void)tapWhich { [self showFullForSelection]; }
+
+// کپیِ همان چیزی که جلوی چشم است. بی این، متنِ خام فقط با انتخابِ دستی بیرون می‌آمد:
+// دو دکمه‌ی ردیف همیشه متنِ تحویل‌شده را می‌دهند، و همان متن است که در C1 نصفه بود.
+- (void)tapCopyShown {
+    if (!_full.string.length) { [self flash:@"متنی برای کپی نیست"]; return; }
+    [ZInjector copyFinal:ZSigned(_full.string)];
+    ZPlay(ZSoundCopy);
+    [self flash:_which.selectedSegment == 1 ? @"متن خام کپی شد" : @"کپی شد"];
 }
 
 - (void)tableViewSelectionDidChange:(NSNotification *)n { [self showFullForSelection]; }

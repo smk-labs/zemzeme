@@ -428,13 +428,18 @@ extern NSString *const ZHistoryViaInsert;   // دکمه‌ی درج
 @property (nonatomic, copy) NSString *sid;    // نام پوشه‌ی سشن؛ پلِ برگشت به صدا و متنِ خام
 @property (nonatomic, copy) NSString *via;
 @property (nonatomic, copy) NSString *app;    // اپی که متن قرار بود در آن بنشیند
+@property (nonatomic, copy) NSString *raw;    // خامِ کلِ سشن؛ nil یعنی رکوردِ کهنه و خامی در کار نیست
 @property (nonatomic, strong) NSDate *at;
 @end
 
 NSURL *ZHistoryFile(void);    // ~/Library/Application Support/Zemzeme/history.jsonl
 // یک رکورد به ته فایل. هر تحویل یک عکسِ کامل از متنِ سشن است؛ خواننده با sid
 // جمعشان می‌کند و تازه‌ترین را نگه می‌دارد، پس فایل افزودنیِ خالص می‌ماند.
-void ZHistoryAppend(NSString *text, NSString *sid, NSString *via, NSString *app);
+//
+// `raw` متنِ خامِ کلِ سشن است (`ZQueue.text`)، و در **همان** رکوردِ تحویل می‌نشیند تا
+// هیچ‌وقت خامِ یک لحظه کنارِ متنِ لحظه‌ی دیگری نیفتد. باگ C1 نشان داد چرا لازم است:
+// مسیرِ تحویل که خراب شود، ردیف تاریخچه هم همان خرابی را به ارث می‌برد.
+void ZHistoryAppend(NSString *text, NSString *raw, NSString *sid, NSString *via, NSString *app);
 // تازه‌ترین‌ها، نو به کهنه، یکی به ازای هر سشن.
 NSArray<ZHistoryEntry *> *ZHistoryRecent(NSUInteger max);
 // روزی یک بار، بی‌صدا: رکوردها و خطوط لاگِ قدیمی‌تر از historyKeepDays می‌روند.
@@ -442,7 +447,7 @@ void ZHistorySweepIfDue(void);
 
 // همان سه تا، ولی روی یک فایلِ دلخواه. تنها مصرف‌کننده‌شان تست طلایی است
 // (tools/history_test.sh)، که باید روی فایل خودش کار کند نه روی تاریخچه‌ی کاربر.
-void ZHistoryAppendTo(NSURL *file, NSString *text, NSString *sid, NSString *via, NSString *app);
+void ZHistoryAppendTo(NSURL *file, NSString *text, NSString *raw, NSString *sid, NSString *via, NSString *app);
 NSArray<ZHistoryEntry *> *ZHistoryRecentIn(NSURL *file, NSUInteger max);
 NSUInteger ZHistorySweepFile(NSURL *file, NSDate *cutoff);
 

@@ -293,9 +293,17 @@ NSFont *ZFont(CGFloat size, BOOL medium) {
 - (BOOL)finalPassEnabled { return [self.d boolForKey:@"finalPass"]; }
 - (void)setFinalPassEnabled:(BOOL)v { [self.d setBool:v forKey:@"finalPass"]; }
 
-// پیش‌فرض خاموش، و جدا از تاگل پاس نهایی: ضبطِ ناخواسته‌ی صدا بدترین پیش‌فرض ممکن است.
+// پیش‌فرض **روشن**، و این عوض شد (B10، ۲۸ اوت ۲۰۲۶). تا دیروز خاموش بود با این دلیل
+// که ضبطِ ناخواسته بدترین پیش‌فرض است، ولی صدا تنها توری است که تا امروز واقعا متنِ
+// گم‌شده را برگردانده: متنِ B1 از `audio.flac` و با `--transcribe` درآمد. و بی‌انتها هم
+// نیست، هفت روز بعد جارو می‌شود.
+//
+// نبودنِ کلید یعنی پیش‌فرض، نه خاموش. بی این، هر نصبِ تازه با تور برداشته بالا می‌آمد.
 // حالت یادداشت به این کاری ندارد؛ آنجا ضبط تنها کاری است که انجام می‌شود.
-- (BOOL)recordSessions { return [self.d boolForKey:@"recordSessions"]; }
+- (BOOL)recordSessions {
+    NSObject *o = [self.d objectForKey:@"recordSessions"];
+    return o ? [self.d boolForKey:@"recordSessions"] : YES;
+}
 - (void)setRecordSessions:(BOOL)v { [self.d setBool:v forKey:@"recordSessions"]; }
 
 // پیش‌فرض خاموش: یک سشن دوم به ازای هر تکه، و سودش فقط روی متنِ پر از اصطلاح فنی

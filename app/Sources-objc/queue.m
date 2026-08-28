@@ -493,7 +493,8 @@ void ZFinishResumedSession(ZQueue *q, NSString *sid) {
                                              encoding:NSUTF8StringEncoding error:nil];
     if (all.length <= had.length) return;
     [all writeToURL:txt atomically:YES encoding:NSUTF8StringEncoding error:nil];
-    ZHistoryAppend(all, sid, ZHistoryViaAuto, nil);
+    // و خام همان `all` است: این مسیر رابطی ندارد، پس نه ویرایشی رویش رفته نه پاسی.
+    ZHistoryAppend(all, all, sid, ZHistoryViaAuto, nil);
     ZLog(@"queue: سشن %@ دیر تمام شد، %lu نویسه در تاریخچه نشست",
          sid, (unsigned long)all.length);
 }

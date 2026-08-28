@@ -14,7 +14,8 @@ clang -fobjc-arc -O1 -Wall -Werror -I app/Sources-objc \
   -framework Foundation -framework AppKit -framework CoreText -o "$out"
 
 rm -rf "$work"
-mkdir -p "$work/home" "$work/plain" "$work/many" "$work/sweep" "$work/dedupe" "$work/junk"
+mkdir -p "$work/home" "$work/plain" "$work/many" "$work/sweep" "$work/dedupe" "$work/junk" \
+         "$work/legacy" "$work/pair" "$work/c1"
 export HOME="$work/home" CFFIXED_USER_HOME="$work/home"
 
 N=250
@@ -24,7 +25,8 @@ N=250
 "$out" read  "$work/plain" $N
 
 # «یک رکورد، یک خط» ادعای کلِ فرمت است، پس با ابزار بیرونی سنجیده می‌شود نه با
-# خودِ کد: شمارِ خط باید دقیقا شمارِ رکورد باشد، با اینکه هر متن چند خط دارد.
+# خودِ کد: شمارِ خط باید دقیقا شمارِ رکورد باشد، با اینکه هر متن چند خط دارد ــ و حالا
+# متنِ خام هم کنارش در همان خط است، که خودش پر از خط جدید است.
 lines=$(wc -l < "$work/plain/history.jsonl" | tr -d ' ')
 [ "$lines" = "$N" ] || { echo "history: هر رکورد یک خط نیست ($lines خط برای $N رکورد)"; exit 1; }
 # و بی‌اپ خواندنی: آخرین خط باید تنهایی یک JSON کامل باشد
@@ -50,5 +52,11 @@ lines=$(wc -l < "$work/many/history.jsonl" | tr -d ' ')
 "$out" sweep  "$work/sweep"
 "$out" dedupe "$work/dedupe"
 "$out" junk   "$work/junk"
+
+# ۷) متنِ خام کنارِ متنِ تحویل‌شده: رکوردِ کهنه که خام ندارد، جفت شدنِ خام و تحویل از
+# یک رکورد، و شکلِ خودِ باگ C1 (تحویلِ بریده، خامِ کامل، یک ردیف).
+"$out" legacy "$work/legacy"
+"$out" pair   "$work/pair"
+"$out" c1     "$work/c1"
 
 echo "history: تست طلایی سبز"

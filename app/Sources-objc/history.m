@@ -34,10 +34,23 @@
 // همان اولین تحویل یک نسخه روی دیسک هست.
 
 // ---------- شکل رکورد ----------
-// {"app":"Safari","at":1770826923,"sid":"2026-08-11-14-22-03","t":"2026-08-11 14:22:03","text":"…","via":"auto"}
+// {"app":"Safari","at":1770826923,"raw":"","sid":"2026-08-11-14-22-03","t":"2026-08-11 14:22:03","text":"…","via":"auto"}
 //
 // دو تا زمان عمدی است: `at` برای حسابِ جارو (بی‌پارس کردنِ تاریخ) و `t` برای چشمِ
 // آدم وقتی فایل را با tail باز می‌کند.
+//
+// **`raw`، یعنی هرچه شنیده شد.** `text` متنی است که تحویل کاربر شد، و آن متن از دستِ
+// پاس هوش مصنوعی و ویرایشِ خودِ کاربر رد شده. تا امروز فقط همین در رکورد بود، پس هر
+// خرابیِ مسیرِ تحویل عینا در تاریخچه هم می‌نشست: باگ C1 (۲۶ اوت ۲۰۲۶) متنِ بریده را
+// به کلیپ‌بورد و به همین ردیف داد، و آخرین تورِ ایمنی همان‌جا با همان خرابی افتاد.
+// `raw` متنِ خامِ کلِ سشن است، همه‌ی دورها، پیش از هر دست خوردنی.
+//
+// سه حالش سه معنیِ جدا دارد و هیچ‌کدام حدس نیست:
+//   • کلید نیست: رکورد را نسخه‌ای پیش از این نوشته و خامش را نداریم. جایش خالی
+//     می‌ماند و پنجره هم همین را می‌گوید، نه اینکه `text` را جای خام قالب کند.
+//   • رشته‌ی خالی: خام همان `text` است (حالتِ معمول: نه ویرایشی، نه پاسی). یک متن
+//     دو بار در یک خط ننشیند، وگرنه فایل بی هیچ خبرِ تازه‌ای دو برابر می‌شود.
+//   • رشته‌ی پر: تحویل و خام یکی نیستند، و این همان حالتی است که C1 ساخت.
 
 NSString *const ZHistoryViaAuto = @"auto";       // پایان یا مکثِ سشن
 NSString *const ZHistoryViaCopy = @"copy";       // دکمه‌ی کپی
@@ -99,15 +112,21 @@ static NSString *zHistoryStamp(NSDate *when) {
     return [df stringFromDate:when];
 }
 
-void ZHistoryAppendTo(NSURL *file, NSString *text, NSString *sid, NSString *via, NSString *app) {
-    NSString *t = [text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+void ZHistoryAppendTo(NSURL *file, NSString *text, NSString *raw, NSString *sid, NSString *via, NSString *app) {
+    NSCharacterSet *edges = NSCharacterSet.whitespaceAndNewlineCharacterSet;
+    NSString *t = [text stringByTrimmingCharactersInSet:edges];
     if (!t.length || !file) return;
+    NSString *r = [raw stringByTrimmingCharactersInSet:edges];
 
     NSMutableDictionary *rec = [NSMutableDictionary dictionary];
     NSDate *now = NSDate.date;
     rec[@"at"] = @((long long)llround(now.timeIntervalSince1970));
     rec[@"t"] = zHistoryStamp(now);
     rec[@"text"] = t;
+    // خام در همان رکوردِ تحویل می‌نشیند، نه در رکوردی جدای خودش. دلیلش قاعده‌ی
+    // خواندن است: خواننده با `sid` جمع می‌کند و تازه‌ترین رکورد را برمی‌دارد، پس اگر
+    // خام جای دیگری می‌نشست، خامِ یک عکس می‌توانست کنارِ متنِ عکسِ دیگری بیفتد.
+    if (r.length) rec[@"raw"] = [r isEqualToString:t] ? @"" : r;
     if (sid.length) rec[@"sid"] = sid;
     if (via.length) rec[@"via"] = via;
     if (app.length) rec[@"app"] = app;
@@ -172,8 +191,8 @@ void ZHistoryAppendTo(NSURL *file, NSString *text, NSString *sid, NSString *via,
     });
 }
 
-void ZHistoryAppend(NSString *text, NSString *sid, NSString *via, NSString *app) {
-    ZHistoryAppendTo(ZHistoryFile(), text, sid, via, app);
+void ZHistoryAppend(NSString *text, NSString *raw, NSString *sid, NSString *via, NSString *app) {
+    ZHistoryAppendTo(ZHistoryFile(), text, raw, sid, via, app);
 }
 
 // ---------- خواندن ----------
@@ -215,6 +234,10 @@ static ZHistoryEntry *zParseLine(NSData *line) {
     e.sid = [d[@"sid"] isKindOfClass:NSString.class] ? d[@"sid"] : nil;
     e.via = [d[@"via"] isKindOfClass:NSString.class] ? d[@"via"] : nil;
     e.app = [d[@"app"] isKindOfClass:NSString.class] ? d[@"app"] : nil;
+    // خالی یعنی «خام همان تحویل است»، و نبودن یعنی «خامی نداریم». دومی nil می‌ماند:
+    // جای خالیِ صادق از یک متنِ جاافتاده که خودش را خام جا بزند بهتر است.
+    NSString *raw = [d[@"raw"] isKindOfClass:NSString.class] ? d[@"raw"] : nil;
+    e.raw = raw ? (raw.length ? raw : text) : nil;
     NSNumber *at = [d[@"at"] isKindOfClass:NSNumber.class] ? d[@"at"] : nil;
     e.at = at ? [NSDate dateWithTimeIntervalSince1970:at.doubleValue] : nil;
     return e;

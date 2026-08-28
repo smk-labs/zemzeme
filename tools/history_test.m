@@ -32,6 +32,14 @@ static NSString *bodyFor(NSInteger i) {
     return s;
 }
 
+// خامِ همان رکورد. هر سه‌تا یکی با `text` است (حالتِ معمول: نه ویرایشی، نه پاسی) تا
+// هر دو مسیرِ نوشتن در همین یک دور آزموده شود: رشته‌ی خالی که یعنی «همان تحویل»، و
+// خامِ کاملِ جدا که یعنی تحویل دستکاری شده.
+static NSString *rawFor(NSInteger i) {
+    if (i % 3 == 0) return bodyFor(i);
+    return [bodyFor(i) stringByAppendingString:@"\nدُمِ خام که به تحویل نرسید"];
+}
+
 static NSString *sidFor(NSInteger i) { return [NSString stringWithFormat:@"s-%05ld", (long)i]; }
 
 static NSURL *storeIn(NSString *dir) {
@@ -42,7 +50,7 @@ static NSURL *storeIn(NSString *dir) {
 
 static void phaseWrite(NSURL *store, NSInteger n) {
     for (NSInteger i = 0; i < n; i++) {
-        ZHistoryAppendTo(store, bodyFor(i), sidFor(i), ZHistoryViaAuto, @"TestApp");
+        ZHistoryAppendTo(store, bodyFor(i), rawFor(i), sidFor(i), ZHistoryViaAuto, @"TestApp");
     }
 }
 
@@ -50,7 +58,8 @@ static void phaseWrite(NSURL *store, NSInteger n) {
 // اینجاست که رکوردها در هم می‌روند.
 static void phaseHammer(NSURL *store, NSInteger n) {
     dispatch_apply((size_t)n, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^(size_t i) {
-        ZHistoryAppendTo(store, bodyFor((NSInteger)i), sidFor((NSInteger)i), ZHistoryViaAuto, @"TestApp");
+        ZHistoryAppendTo(store, bodyFor((NSInteger)i), rawFor((NSInteger)i), sidFor((NSInteger)i),
+                         ZHistoryViaAuto, @"TestApp");
     });
 }
 
@@ -70,6 +79,8 @@ static void phaseRead(NSURL *store, NSInteger n) {
         }
         ok([e.text isEqualToString:bodyFor(want)],
            ([NSString stringWithFormat:@"متنِ %@ دست‌نخورده نماند", sidFor(want)]));
+        ok([e.raw isEqualToString:rawFor(want)],
+           ([NSString stringWithFormat:@"خامِ %@ دست‌نخورده نماند", sidFor(want)]));
         ok([e.via isEqualToString:ZHistoryViaAuto] && [e.app isEqualToString:@"TestApp"],
            ([NSString stringWithFormat:@"همراهانِ %@ نماندند", sidFor(want)]));
         ok(e.at && fabs(e.at.timeIntervalSinceNow) < 3600,
@@ -94,6 +105,8 @@ static void phaseReadSet(NSURL *store, NSInteger n) {
         if (!e) { ok(NO, ([NSString stringWithFormat:@"%@ گم شد", sidFor(i)])); continue; }
         ok([e.text isEqualToString:bodyFor(i)],
            ([NSString stringWithFormat:@"متنِ %@ دست‌نخورده نماند", sidFor(i)]));
+        ok([e.raw isEqualToString:rawFor(i)],
+           ([NSString stringWithFormat:@"خامِ %@ دست‌نخورده نماند", sidFor(i)]));
     }
 }
 
@@ -116,7 +129,7 @@ static void phaseTear(NSURL *store) {
 // و نکته‌ی واقعی: بعد از آن کرش، اپ دوباره بالا می‌آید و می‌نویسد. رکوردِ تازه هم
 // باید سالم بنشیند، نه اینکه به دُمِ نصفه بچسبد و با آن بسوزد.
 static void phaseAppendAfterTear(NSURL *store, NSInteger i) {
-    ZHistoryAppendTo(store, bodyFor(i), sidFor(i), ZHistoryViaAuto, @"TestApp");
+    ZHistoryAppendTo(store, bodyFor(i), rawFor(i), sidFor(i), ZHistoryViaAuto, @"TestApp");
 }
 
 // جارو: رکوردهای کهنه می‌روند، تازه‌ها با همان ترتیب می‌مانند. رکوردهای کهنه را
@@ -152,13 +165,80 @@ static void phaseSweep(NSURL *store) {
 
 // یک سشن، چند تحویل: هر مکث یک عکسِ کامل می‌نویسد و باید **یک** ردیف بماند، آخری.
 static void phaseDedupe(NSURL *store) {
-    ZHistoryAppendTo(store, @"سلام", @"same-session", ZHistoryViaAuto, @"TestApp");
-    ZHistoryAppendTo(store, @"سلام، حالت چطور است", @"same-session", ZHistoryViaAuto, @"TestApp");
-    ZHistoryAppendTo(store, @"سلام، حالت چطور است؟ خوبم", @"same-session", ZHistoryViaCopy, @"TestApp");
+    ZHistoryAppendTo(store, @"سلام", @"سلام", @"same-session", ZHistoryViaAuto, @"TestApp");
+    ZHistoryAppendTo(store, @"سلام، حالت چطور است", @"سلام، حالت چطور است",
+                     @"same-session", ZHistoryViaAuto, @"TestApp");
+    ZHistoryAppendTo(store, @"سلام، حالت چطور است؟ خوبم", @"سلام، حالت چطور است؟ خوبم",
+                     @"same-session", ZHistoryViaCopy, @"TestApp");
     NSArray<ZHistoryEntry *> *got = ZHistoryRecentIn(store, 50);
     ok(got.count == 1, ([NSString stringWithFormat:@"یک سشن باید یک ردیف بدهد، %lu داد",
                          (unsigned long)got.count]));
     ok([got.firstObject.text isEqualToString:@"سلام، حالت چطور است؟ خوبم"], @"آخرین عکسِ سشن نماند");
+    ok([got.firstObject.raw isEqualToString:@"سلام، حالت چطور است؟ خوبم"], @"خامِ آخرین عکسِ سشن نماند");
+}
+
+// رکوردی که نسخه‌های پیش از «خام» نوشته‌اند. دو ادعا: خوانده می‌شود، و خامش **خالی**
+// می‌ماند. جا زدنِ متنِ تحویل‌شده به‌جای خام همان دروغی است که C1 ساخت، این بار با
+// مهرِ اپ رویش؛ پنجره هم روی همین nil کلیدِ خام را خاموش نگه می‌دارد.
+static void phaseLegacy(NSURL *store) {
+    long long now = (long long)NSDate.date.timeIntervalSince1970;
+    NSString *line = [NSString stringWithFormat:
+        @"{\"at\":%lld,\"sid\":\"old-one\",\"text\":\"متنِ رکوردِ کهنه\",\"via\":\"auto\"}\n", now];
+    [line writeToURL:store atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    NSArray<ZHistoryEntry *> *got = ZHistoryRecentIn(store, 20);
+    ok(got.count == 1, @"رکوردِ کهنه (بی کلیدِ خام) اصلا خوانده نشد");
+    ok([got.firstObject.text isEqualToString:@"متنِ رکوردِ کهنه"], @"متنِ رکوردِ کهنه عوض شد");
+    ok(got.firstObject.raw == nil, @"رکوردِ کهنه خام ندارد، ولی یکی برایش ساخته شد");
+    // و رکوردِ تازه پشتِ همان فایل می‌نشیند. خامش عینا برابرِ تحویل است، یعنی مسیرِ
+    // رشته‌ی خالی، و باید همان متن برگردد نه هیچ.
+    ZHistoryAppendTo(store, @"متنِ تازه", @"متنِ تازه", @"new-one", ZHistoryViaAuto, @"TestApp");
+    got = ZHistoryRecentIn(store, 20);
+    ok(got.count == 2, @"بعد از رکوردِ کهنه، رکوردِ تازه ننشست");
+    ok([got.firstObject.raw isEqualToString:@"متنِ تازه"], @"خامِ برابر با تحویل برنگشت");
+}
+
+// جمع شدن با sid، سختش: تحویل و خام باید از **یک** رکورد بیایند. بلندترین خام عمدا
+// وسط است، پس خواننده‌ای که «بلندترینش را بردار» یا «آخرین خامی که دیدی را بردار»
+// باشد همین‌جا قرمز می‌شود.
+static void phasePair(NSURL *store) {
+    ZHistoryAppendTo(store, @"عکس یک", @"خامِ یک", @"one-sid", ZHistoryViaAuto, @"TestApp");
+    ZHistoryAppendTo(store, @"عکس دو", @"خامِ دو، که بلندترین خامِ این فایل است و نباید برنده شود",
+                     @"one-sid", ZHistoryViaAuto, @"TestApp");
+    ZHistoryAppendTo(store, @"عکس سه", @"خامِ سه", @"one-sid", ZHistoryViaCopy, @"TestApp");
+    NSArray<ZHistoryEntry *> *got = ZHistoryRecentIn(store, 50);
+    ok(got.count == 1, ([NSString stringWithFormat:@"یک سشن باید یک ردیف بدهد، %lu داد",
+                         (unsigned long)got.count]));
+    ok([got.firstObject.text isEqualToString:@"عکس سه"] &&
+       [got.firstObject.raw isEqualToString:@"خامِ سه"], @"تحویل و خام از یک رکورد نیامدند");
+
+    // و ردیفی که تازه‌ترین رکوردش خام ندارد، حق ندارد خامِ رکوردِ کهنه‌ترِ همان سشن را
+    // قرض بگیرد: خامِ کهنه کنارِ متنِ تازه بدترین حالت است، چون شبیهِ درست است.
+    NSString *had = [NSString stringWithContentsOfURL:store encoding:NSUTF8StringEncoding error:nil];
+    long long now = (long long)NSDate.date.timeIntervalSince1970;
+    NSString *line = [NSString stringWithFormat:
+        @"{\"at\":%lld,\"sid\":\"one-sid\",\"text\":\"عکس چهار\",\"via\":\"auto\"}\n", now];
+    [[had stringByAppendingString:line] writeToURL:store atomically:YES
+                                          encoding:NSUTF8StringEncoding error:nil];
+    got = ZHistoryRecentIn(store, 50);
+    ok([got.firstObject.text isEqualToString:@"عکس چهار"] && got.firstObject.raw == nil,
+       @"خامِ رکوردِ کهنه‌تر به رکوردِ تازه قرض داده شد");
+}
+
+// شکلِ خودِ باگ C1، سشن ۲۰۲۶-۰۸-۲۶-۰۳-۲۳-۵۷: تحویل، متنِ ویرایش‌شده‌ی بریده بود و
+// نیمه‌ی دومِ حرف را نداشت. ادعا این است که همان ردیف حالا نیمه‌ی دوم را هم دارد، پس
+// یک تکرارِ همان باگ دیگر متن را نمی‌برد.
+static void phaseC1(NSURL *store) {
+    NSString *half = @"نیمه‌ی اولِ حرف، همان که کاربر در پنل ویرایشش کرد";
+    NSString *tail = @"و نیمه‌ی دوم، همان که از کلیپ‌بورد و از ردیف تاریخچه افتاده بود";
+    NSString *delivered = [half stringByAppendingString:@" (ویرایش‌شده)"];
+    NSString *whole = [NSString stringWithFormat:@"%@ %@", half, tail];
+    ZHistoryAppendTo(store, delivered, whole, @"2026-08-26-03-23-57", ZHistoryViaAuto, @"Windows App");
+    NSArray<ZHistoryEntry *> *got = ZHistoryRecentIn(store, 20);
+    ok(got.count == 1, @"ردیفِ سشنِ C1 خوانده نشد");
+    ok([got.firstObject.text isEqualToString:delivered], @"متنِ تحویل‌شده‌ی C1 عوض شد");
+    ok(got.firstObject.raw.length > got.firstObject.text.length &&
+       [got.firstObject.raw hasSuffix:tail],
+       @"نیمه‌ی دومِ حرف از ردیفِ C1 برداشتنی نیست");
 }
 
 // چیزهایی که نباید بترکانند
@@ -170,7 +250,7 @@ static void phaseJunk(NSURL *store) {
                                             encoding:NSUTF8StringEncoding error:nil];
     ok(ZHistoryRecentIn(store, 20).count == 0, @"آشغال رکورد داد");
     // آشغال هم جلوی نوشتنِ بعدی را نگیرد
-    ZHistoryAppendTo(store, @"بعدِ آشغال", @"after-junk", ZHistoryViaAuto, @"TestApp");
+    ZHistoryAppendTo(store, @"بعدِ آشغال", @"بعدِ آشغال", @"after-junk", ZHistoryViaAuto, @"TestApp");
     NSArray<ZHistoryEntry *> *got = ZHistoryRecentIn(store, 20);
     ok(got.count == 1 && [got.firstObject.text isEqualToString:@"بعدِ آشغال"],
        @"بعد از آشغال، رکوردِ سالم خوانده نشد");
@@ -195,6 +275,9 @@ int main(int argc, const char *argv[]) {
         else if ([phase isEqualToString:@"append"]) phaseAppendAfterTear(store, n);
         else if ([phase isEqualToString:@"sweep"]) phaseSweep(store);
         else if ([phase isEqualToString:@"dedupe"]) phaseDedupe(store);
+        else if ([phase isEqualToString:@"legacy"]) phaseLegacy(store);
+        else if ([phase isEqualToString:@"pair"]) phasePair(store);
+        else if ([phase isEqualToString:@"c1"]) phaseC1(store);
         else if ([phase isEqualToString:@"junk"]) phaseJunk(store);
         else { fprintf(stderr, "فاز ناشناخته: %s\n", argv[1]); return 2; }
 

@@ -246,7 +246,7 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
         if (!all.length) return;
         [self writeRawTranscript:_queue.text];
         [self writeTranscript:all];
-        ZHistoryAppend(all, _sessionDir.lastPathComponent, ZHistoryViaAuto, _target.localizedName);
+        ZHistoryAppend(all, _queue.text, _sessionDir.lastPathComponent, ZHistoryViaAuto, _target.localizedName);
         ZLog(@"session: تکه‌ی دیررس نشست، ردیف تاریخچه تازه شد (%ld در راه)", (long)_queue.waiting);
         return;
     }
@@ -432,7 +432,7 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
     // نیفتد و درج ممکن است جای عوضی بنشیند؛ این تنها خطی است که برای ماندنِ متن
     // لازم نیست هیچ‌کدامشان درست کار کرده باشند. سرِ هر مکث دوباره نوشته می‌شود و
     // چون sid یکی است، همان یک ردیف تازه می‌شود نه ردیفِ تازه‌ای اضافه.
-    ZHistoryAppend(all, _sessionDir.lastPathComponent, ZHistoryViaAuto, _target.localizedName);
+    ZHistoryAppend(all, _queue.text, _sessionDir.lastPathComponent, ZHistoryViaAuto, _target.localizedName);
     // امضا اینجا و فقط اینجا سوار می‌شود: تاریخچه و text.txt متنِ خودِ کاربر را
     // گرفتند و امضا تویشان نیست. تاگل که فردا خاموش شود، همان ردیف‌های قدیمی هم
     // بی‌امضا تحویل می‌دهند.
@@ -631,7 +631,7 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
     }
     // دکمه‌ی کپی هم یک تحویل است: متنی که کاربر همین حالا برداشت. و در حالت جمع
     // ممکن است ویرایش‌شده باشد، یعنی چیزی که deliver نوشته بود دیگر همان نیست.
-    ZHistoryAppend(t, _sessionDir.lastPathComponent, ZHistoryViaCopy, _target.localizedName);
+    ZHistoryAppend(t, _queue.text, _sessionDir.lastPathComponent, ZHistoryViaCopy, _target.localizedName);
     [ZInjector copyFinal:ZSigned(t)];
     ZPlay(ZSoundCopy);
     [_panel flash:@"کپی شد"];
@@ -643,7 +643,7 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
         [_panel flash:@"هنوز متنی نیست"];
         return;
     }
-    ZHistoryAppend(t, _sessionDir.lastPathComponent, ZHistoryViaInsert, _target.localizedName);
+    ZHistoryAppend(t, _queue.text, _sessionDir.lastPathComponent, ZHistoryViaInsert, _target.localizedName);
     // دکمه‌ی درج امضا می‌خورد حتی با جای خالیِ پذیرفته‌شده، و این با قاعده‌ی بالا
     // نمی‌جنگد: آنجا اپ متن را نگه داشته بود، اینجا کاربر گفته «همین‌طور که هست
     // ببرش». تحویل تمام شد، پس امضا حق دارد.
