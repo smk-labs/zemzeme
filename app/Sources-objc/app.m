@@ -30,7 +30,7 @@ static BOOL ZSetLoginItem(BOOL on, NSError **err) {
 // فایل خام s16le/16k را با سرعت واقعی به یک ZGoogleStream می‌دهد؛ همان مسیر
 // کد اصلی (اتصال، آپلود استریمی، پارس فریم‌ها) بدون میکروفن و UI محک می‌خورد.
 // اجرا: zemzeme --selftest audio.raw [en-US|fa-IR]
-int ZSelfTest(NSString *file, NSString *lang) {
+static int ZSelfTest(NSString *file, NSString *lang) {
     NSData *audio = [NSData dataWithContentsOfFile:file];
     if (!audio) {
         printf("selftest: cannot read %s\n", file.UTF8String);

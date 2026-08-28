@@ -32,7 +32,7 @@ static void ZMarkFill(void) {
     [p fill];
 }
 
-void ZMarkDraw(NSRect box, NSColor *color) {
+static void ZMarkDraw(NSRect box, NSColor *color) {
     CGFloat h = MIN(box.size.height, box.size.width / ZMarkAspect);
     NSGraphicsContext *g = NSGraphicsContext.currentContext;
     CGContextRef ctx = g.CGContext;

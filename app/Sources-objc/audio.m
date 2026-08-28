@@ -43,6 +43,7 @@ static void ZWavHeader(NSMutableData *d, uint32_t samples) {
     [d appendBytes:&bytes length:4];
 }
 
+static void ZMicDumpReport(NSData *pcm, NSUInteger clipped, NSString *path);
 int ZMicDumpMain(NSString *path, double seconds) {
     ZMic *mic = [ZMic new];
     NSMutableData *pcm = [NSMutableData data];
@@ -104,7 +105,7 @@ int ZMicDumpMain(NSString *path, double seconds) {
 // یکی است و دیگر جای این اشتباه نیست.
 //
 // کف نویز: میانه‌ی آرام‌ترین یک‌پنجم قاب‌ها. اوج حرف: بلندترین یک‌بیستم.
-void ZMicDumpReport(NSData *pcm, NSUInteger clipped, NSString *path) {
+static void ZMicDumpReport(NSData *pcm, NSUInteger clipped, NSString *path) {
     const int16_t *p = pcm.bytes;
     NSUInteger n = pcm.length / 2, frame = 1600;   // قاب ۱۰۰ میلی‌ثانیه
     NSUInteger frames = n / frame;

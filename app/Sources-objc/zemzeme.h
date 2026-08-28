@@ -838,7 +838,6 @@ NSColor *ZStatusColor(ZPanelModel *m);
 // تعریف برداری برای همه جا؛ پهن‌تر از بلندی‌اش است (نسبت ZMarkAspect)، پس هر
 // جایی که وسط‌چین می‌کند باید عرض را جدا حساب کند نه با یک ثابت مربع.
 extern const CGFloat ZMarkAspect;
-void ZMarkDraw(NSRect box, NSColor *color);     // وسط box، با حفظ نسبت
 NSImage *ZMarkImage(CGFloat height, NSColor *tint);  // نال یعنی template برای منوبار بی‌کار
 int ZMarkIconMain(NSString *dir);               // iconset آیکون بسته، برای build.sh
 void ZMarkShot(NSString *dir);                  // mark.png برای --uishot
@@ -1030,7 +1029,6 @@ int ZBatchMain(NSArray<NSString *> *args);
 // خودآزمای میکروفن: چند ثانیه از همان مسیر دیکته در یک WAV، برای اندازه گرفتنِ
 // بلندی و بریدگی و پهنای باند به‌جای حدس زدنشان.
 int ZMicDumpMain(NSString *path, double seconds);
-void ZMicDumpReport(NSData *pcm, NSUInteger clipped, NSString *path);
 NSString *ZDefaultInputName(void);
 
 // مکِ خودش هم میان‌بر دیکته دارد و می‌شود روی «دو بار Command» گذاشتش، یعنی یک دابل‌تپ
@@ -1042,4 +1040,3 @@ void ZMicSetHighSensitivity(BOOL on);   // کشِ اتمیک، تا نخ صدا 
 // ---------- فونت و سلف‌تست ----------
 void ZRegisterFonts(void);
 NSFont *ZFont(CGFloat size, BOOL medium);
-int ZSelfTest(NSString *file, NSString *lang);
