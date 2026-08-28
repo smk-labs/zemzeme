@@ -318,6 +318,7 @@ NSURL *ZQueueManifestIn(NSURL *sessionDir);
 @property (nonatomic, strong) ZQueue *queue;             // تکه‌ها به اینجا می‌روند
 @property (nonatomic) BOOL extra;                        // این خط لوله پاس دوم است
 @property (nonatomic, readonly) NSInteger degradedCuts;  // چند بار مکثی پیدا نشد
+@property (nonatomic, readonly) unsigned long long accountedBytes;  // بایتی که تکه شد یا سکوت
 // `at` افستِ مطلقِ این تکه‌ی صدا در سشن است (بایت، از صفر). خط لوله خودش نمی‌داند
 // کِی ساخته شده و صدا از کجای فایل شروع می‌شود؛ موتور می‌داند، پس همان می‌گوید.
 - (void)feed:(NSData *)pcm at:(unsigned long long)absByte;   // s16le مونو ۱۶ کیلوهرتز

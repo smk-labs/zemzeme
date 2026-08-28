@@ -140,6 +140,8 @@ NSString *ZTranscribeSegment(NSData *pcm, NSString *lang, BOOL rawUpload,
     NSLock *_lock;
     NSInteger _next;            // شماره‌ی تکه‌ی بعدی، فقط برای لاگ
     NSInteger _degraded;
+    unsigned long long _accounted;   // بایتی که بریده شد: یا به صف رفت یا سکوت شمرده شد
+    BOOL _lateSeen;             // صدای بعد از پایان، یک بار لاگ می‌شود نه هر بار
     BOOL _done;
 }
 
@@ -164,8 +166,33 @@ NSString *ZTranscribeSegment(NSData *pcm, NSString *lang, BOOL rawUpload,
     return n;
 }
 
+// تنها عددی که «آیا حرفی گم شد؟» را قابلِ آزمون می‌کند. بریدن پیوسته است: هر بایتی
+// که از این خط لوله رد شده یا تکه شده یا آگاهانه سکوت شمرده شده، پس اختلافِ این عدد
+// با آنچه ضبط‌کننده نوشت **دقیقا** همان صدایی است که هیچ‌جا نرفت. تا امروز چنین عددی
+// نبود و مقایسه فقط از روی شمارِ نویسه انجام می‌شد؛ دو تشخیصِ غلط از همان‌جا درآمد.
+- (unsigned long long)accountedBytes {
+    [_lock lock];
+    unsigned long long n = _accounted;
+    [_lock unlock];
+    return n;
+}
+
 - (void)feed:(NSData *)pcm at:(unsigned long long)absByte {
-    if (_done || !pcm.length) return;
+    if (!pcm.length) return;
+    // صدایی که بعد از بسته شدنِ خط لوله می‌رسد، تا امروز همین‌جا و بی هیچ ردی دور
+    // ریخته می‌شد. میکروفن از نخِ صدا تحویل می‌دهد و پایانِ سشن اول خط لوله را
+    // می‌بندد، پس آخرین بلاک‌ها به فایل می‌رسند و به رونویسی نه. شاهدش هم بود و
+    // خوانده نمی‌شد: در ده سشنِ آخر جمعِ تکه‌ها همیشه حدود ۰٫۲ ثانیه از طولِ صدا کم
+    // داشت. یک خط برای اولین بار، نه هر بار؛ جمعش در خطِ audit می‌آید.
+    if (_done) {
+        [_lock lock];
+        BOOL first = !_lateSeen;
+        _lateSeen = YES;
+        [_lock unlock];
+        if (first) ZLog(@"pipe[%@]: صدا بعد از بسته شدنِ خط لوله رسید، از %.1fs، و تکه نمی‌شود",
+                        _lang, absByte / kZPcmBytesPerSec);
+        return;
+    }
     [_lock lock];
     // بافر که خالی است، لنگر از نو گرفته می‌شود. همین یک شرط هر سه حالت را می‌پوشاند:
     // شروعِ سشن، خط لوله‌ای که وسط سشن ساخته شده (عوض کردن زبان)، و بعد از دور ریختن.
@@ -196,6 +223,11 @@ NSString *ZTranscribeSegment(NSData *pcm, NSString *lang, BOOL rawUpload,
 - (void)discard {
     [_lock lock];
     [_buf setLength:0];
+    // حساب هم از نو، چون «از نو» ضبط‌کننده را هم به صفر برمی‌گرداند (session.m).
+    // بی این، همان صدای دورریخته سر پایان به عنوانِ «گم‌شده» هشدار می‌داد، یعنی
+    // گاردی که سر یک کارِ درست قرمز می‌شود.
+    _accounted = 0;
+    _lateSeen = NO;
     [_lock unlock];
 }
 
@@ -215,18 +247,25 @@ NSString *ZTranscribeSegment(NSData *pcm, NSString *lang, BOOL rawUpload,
         _bufBase += c.cut;
         NSInteger idx = _next++;
         if (c.degraded) _degraded++;
+        _accounted += c.cut;
         [_lock unlock];
 
         double sec = c.cut / kZPcmBytesPerSec;
+        // و **کجای صدا**، نه فقط چند ثانیه. تا امروز خطِ هر تکه فقط طولش را داشت، پس
+        // برای پیدا کردنِ جای یک تکه در audio.flac باید طول‌ها را دستی جمع می‌زدی؛
+        // همان کمبود بود که تشخیص را به حدس تبدیل کرد. این بازه همان بازه‌ای است که
+        // در دفترچه و در خطِ صف هم نوشته می‌شود، پس سه‌تایشان به هم وصل می‌شوند.
+        double at0 = base / kZPcmBytesPerSec, at1 = (base + c.cut) / kZPcmBytesPerSec;
         if (c.degraded) {
             // هیچ‌وقت بی‌صدا سر تایمر نبُر: عددِ بلندی‌ای که به آن رضایت دادیم در
             // لاگ می‌ماند، وگرنه بعدا کسی نمی‌فهمد چرا این مرز وسط یک کلمه افتاد.
-            ZLog(@"pipe[%@] %ld: برش تحمیلی، %.1fs، مکثی نبود و rms=%.4f", _lang, (long)idx, sec, c.rms);
+            ZLog(@"pipe[%@] %ld: %.1fs تا %.1fs (%.1fs)، برش تحمیلی، مکثی نبود و rms=%.4f",
+                 _lang, (long)idx, at0, at1, sec, c.rms);
         } else if (c.tail) {
-            ZLog(@"pipe[%@] %ld: %.1fs، ته‌مانده", _lang, (long)idx, sec);
+            ZLog(@"pipe[%@] %ld: %.1fs تا %.1fs (%.1fs)، ته‌مانده", _lang, (long)idx, at0, at1, sec);
         } else {
-            ZLog(@"pipe[%@] %ld: %.1fs، مکث %.0fms، امتیاز %.2f", _lang, (long)idx, sec,
-                 c.quietSec * 1000, c.score);
+            ZLog(@"pipe[%@] %ld: %.1fs تا %.1fs (%.1fs)، مکث %.0fms، امتیاز %.2f",
+                 _lang, (long)idx, at0, at1, sec, c.quietSec * 1000, c.score);
         }
         // تکه‌ی ساکت اصلا جا نمی‌گیرد: یک رفت‌وبرگشت شبکه صرفه ندارد و سکوتِ محض هم
         // سر هر سشن یک ثانیه معطلی دارد. **ولی** این دیگر آن ادعای قدیمی را نمی‌سازد

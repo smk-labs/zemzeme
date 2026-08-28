@@ -342,18 +342,28 @@ NSURL *ZQueueManifestIn(NSURL *sessionDir) {
     NSTimeInterval nextIn = [_nextTryAt timeIntervalSinceNow];
     [_lock unlock];
 
+    // بازه‌ی این تکه در audio.flac، همان بازه‌ای که خطِ برشِ خط لوله هم دارد. بی آن،
+    // خطِ صف و خطِ برش دو شماره‌ی مستقل داشتند (seq و شماره‌ی خط لوله) و وصل کردنشان
+    // حدس بود، پس «کدام تکه گم شد» جوابِ خواندنی نداشت.
+    NSString *span = [NSString stringWithFormat:@"%.1fs تا %.1fs",
+                      frame * 2 / kZPcmBytesPerSec, (frame + frames) * 2 / kZPcmBytesPerSec];
+    // و **متنِ** تکه، نه فقط شمارِ نویسه‌اش: مقایسه‌ی متنِ پیش‌نمایش با متنِ نهایی تنها
+    // راهِ آزمودنِ «کلمه‌های آخر را دیدم و در متن نبود» است و تا امروز شدنی نبود.
+    // سقف ۲۰۰ نویسه، چون تکه‌ی هفت ثانیه‌ای عملا به آن نمی‌رسد و سقف فقط جلوی یک
+    // جوابِ در رفته را می‌گیرد.
+    NSString *shown = t.length > 200 ? [[t substringToIndex:200] stringByAppendingString:@"…"] : t;
     if (stale || !live) {
-        ZLog(@"queue %ld: جواب رسید ولی جایش دور ریخته شده بود", (long)seq);
+        ZLog(@"queue %ld [%@]: جواب رسید ولی جایش دور ریخته شده بود", (long)seq, span);
     } else if (st == ZSlotDone) {
-        ZLog(@"queue %ld ← %lu نویسه%@", (long)seq, (unsigned long)t.length,
-             tries > 1 ? [NSString stringWithFormat:@" (تلاش %ld)", (long)tries] : @"");
+        ZLog(@"queue %ld [%@] ← %lu نویسه%@: %@", (long)seq, span, (unsigned long)t.length,
+             tries > 1 ? [NSString stringWithFormat:@" (تلاش %ld)", (long)tries] : @"", shown);
     } else if (st == ZSlotSilent && noAudio) {
-        ZLog(@"queue %ld: صدایش پیدا نشد، از صف افتاد", (long)seq);
+        ZLog(@"queue %ld [%@]: صدایش پیدا نشد، از صف افتاد", (long)seq, span);
     } else if (st == ZSlotSilent) {
-        ZLog(@"queue %ld: سرور شنید و حرفی نبود، این تکه تمام است", (long)seq);
+        ZLog(@"queue %ld [%@]: سرور شنید و حرفی نبود، این تکه تمام است", (long)seq, span);
     } else {
-        ZLog(@"queue %ld: نرسید (%@)، تلاش %ld، %.0f ثانیه دیگر",
-             (long)seq, why ?: @"?", (long)tries, MAX(0.0, nextIn));
+        ZLog(@"queue %ld [%@]: نرسید (%@)، تلاش %ld، %.0f ثانیه دیگر",
+             (long)seq, span, why ?: @"?", (long)tries, MAX(0.0, nextIn));
     }
 
     [self persist];

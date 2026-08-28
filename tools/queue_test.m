@@ -548,6 +548,45 @@ int main(void) { @autoreleasepool {
     }
     ZSettings.shared.recordSessions = NO;
 
+    // ---------- ۱۴: حسابِ پوشش، تنها راهی که تکه‌ی گم‌شده دیده می‌شود ----------
+    // ادعای «یکی دو تکه‌ی آخر می‌پرد» تا امروز قابلِ آزمون نبود، چون تنها عددِ موجود
+    // شمارِ نویسه بود. این بلوک همان دو عددی را قفل می‌کند که حساب رویشان سوار است:
+    // هرچه خط لوله گرفت باید بریده شود، و صدایی که بعد از بسته شدنش می‌رسد **نباید**
+    // به حساب بیاید، وگرنه همان صدای گم‌شده در جمع پنهان می‌ماند.
+    {
+        ZTestScript(@[@[@"یک", @"ok"], @[@"دو", @"ok"], @[@"سه", @"ok"]]);
+        ZQueue *q = [ZQueue new];
+        ZPipe *fa = [[ZPipe alloc] initWithLang:@"fa-IR"];
+        fa.queue = q;
+        NSData *audio = ZTestThreePieces();
+        const NSUInteger step = 3200;
+        for (NSUInteger off = 0; off < audio.length; off += step) {
+            [fa feed:[audio subdataWithRange:NSMakeRange(off, MIN(step, audio.length - off))]
+                   at:off];
+        }
+        [fa finish];
+        [q waitForFirstPass];
+        ok(fa.accountedBytes == audio.length,
+           "هر بایتی که خط لوله گرفت یا تکه شد یا آگاهانه سکوت شمرده شد");
+
+        unsigned long long at = 0;
+        BOOL tight = YES;
+        for (ZSlot *s in q.snapshot) {
+            if (s.frame * 2 != at) tight = NO;
+            at = (s.frame + s.frames) * 2;
+        }
+        ok(tight && at == audio.length, "بازه‌ی تکه‌ها پشت سر هم کلِ صدا را می‌پوشاند");
+
+        // صدای دیررس: میکروفن از نخِ صداست و پایانِ سشن اول خط لوله را می‌بندد.
+        [fa feed:[audio subdataWithRange:NSMakeRange(0, step)] at:audio.length];
+        ok(fa.accountedBytes == audio.length,
+           "صدای بعد از بسته شدنِ خط لوله در حساب نمی‌آید، پس در هشدار دیده می‌شود");
+
+        [fa discard];
+        ok(fa.accountedBytes == 0, "«از نو» حساب را هم صفر می‌کند، وگرنه گارد سرِ کارِ درست قرمز می‌شد");
+        [q stop];
+    }
+
     // ---------- قاعده‌های ریشه‌ای، روی خودِ سورس ----------
     NSString *pip = ZTestSrc(@"pipe.m"), *que = ZTestSrc(@"queue.m");
     NSString *eng = ZTestSrc(@"engine.m"), *ses = ZTestSrc(@"session.m");
@@ -559,6 +598,12 @@ int main(void) { @autoreleasepool {
        "دلیلِ بسته شدنِ اتصال از ZTranscribeSegment برمی‌گردد");
     ok([que containsString:@"ZCloseWasClean(why)"],
        "صف روی همان دلیل تصمیم می‌گیرد، نه روی خالی بودنِ متن");
+
+    // حسابِ پوشش در موتور است و اینجا کامپایل نمی‌شود، پس همین یک بند نگهش می‌دارد:
+    // بی این صدا زدن، هیچ سشنی جمعِ صدایش را گزارش نمی‌کند و باز هم از روی شمارِ
+    // نویسه مهندسی معکوس لازم می‌شود.
+    ok([eng containsString:@"[self auditCoverage:recEnd]"],
+       "پایانِ سشن حسابِ پوشش را می‌زند، پیش از انتظارِ متن");
 
     // نشانه‌ی ⟨جامانده⟩ و جراحیِ رشته باید رفته باشند: ترتیب حالا ساختاری است.
     for (NSString *gone in @[@"ZHoleMark", @"ZFillHoleAt", @"ZRetryHoles", @"retryHoles"]) {

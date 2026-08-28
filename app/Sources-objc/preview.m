@@ -218,8 +218,22 @@
     ZGoogleStream *s = _cur;
     _cur = nil;
     _gen++;    // هر رویدادِ در پروازِ سشنِ قبلی از این به بعد بی‌اثر است
+    NSString *last = [self compose];
     [_lock unlock];
     [s cancel];
+    // آخرین چیزی که کاربر خاکستری دید، یک بار، همین‌جا. این فایل تا امروز **هیچ**
+    // متنی لاگ نمی‌کرد و نتیجه‌اش این بود که پرتکرارترین شکایتِ کاربر («کلمه‌های آخر
+    // را در پیش‌نمایش دیدم و در متن نبود») اصلا قابلِ آزمون نبود: دو طرفِ مقایسه
+    // لازم است و یک طرفش وجود نداشت.
+    //
+    // سقف ۴۰۰ نویسه و **از دو سر**: ادعا همیشه سرِ ته متن است، پس بریدنِ ساده از
+    // اول دقیقا همان شاهدی را دور می‌ریخت که برای آن لاگ می‌شود.
+    if (!last.length) return;
+    NSString *shown = last.length > 400
+        ? [NSString stringWithFormat:@"%@ (...) %@", [last substringToIndex:200],
+           [last substringFromIndex:last.length - 200]]
+        : last;
+    ZLog(@"preview: متنِ پایانی، %lu نویسه: %@", (unsigned long)last.length, shown);
 }
 
 @end

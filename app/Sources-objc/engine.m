@@ -30,6 +30,8 @@
     NSDate *_startedAt;
     NSTimeInterval _seconds; // ثانیه‌ی صدای بلعیده‌شده، از بایت‌ها نه از ساعت دیوار
     unsigned long long _fedBytes;   // فقط وقتی ضبط‌کننده‌ای نیست (مسیر اندازه‌گیری)
+    unsigned long long _auditFrom;  // اولین بایتِ این دورِ حساب، در مختصاتِ ضبط‌کننده
+    BOOL _auditOpen;
     BOOL _stopping;
     BOOL _fileMode;
     dispatch_source_t _cap;
@@ -70,6 +72,9 @@
     for (ZPipe *p in _retiredSecond) [p discard];
     // و جاهای رونویسی‌شده، یک بار، برای همه: صف مالِ کلِ سشن است.
     [self.queue discard];
+    // حسابِ پوشش هم از صفر. صدای دورریخته عمدا هیچ‌جا نمی‌رود، و گاردی که سرِ یک
+    // کارِ درست قرمز شود همان گاردی است که کسی جدی نمی‌گیرد.
+    _auditOpen = NO;
 }
 
 // ---------- شروع ----------
@@ -206,6 +211,10 @@
     // سر هر دورِ تازه‌ی شنیدن موتور از نو ساخته می‌شود ولی ضبط‌کننده همان می‌ماند، پس
     // شمارنده‌ی موتور از صفر شروع می‌کرد و افستِ دورِ دوم دروغ می‌شد.
     unsigned long long at = _recorder ? _recorder.pcmBytes : _fedBytes;
+    // لنگرِ حسابِ پوشش، سرِ اولین بایت. مرجعش همان افستی است که تکه‌ها با آن نوشته
+    // می‌شوند، پس دورِ دومِ شنیدن (ضبط‌کننده‌اش ادامه دارد) و «از نو» (ضبط‌کننده‌اش
+    // صفر می‌شود) هر دو خودشان درست حساب می‌شوند، بی هیچ حالتِ اضافه.
+    if (!_auditOpen) { _auditOpen = YES; _auditFrom = at; }
     _fedBytes += pcm.length;
     [_recorder feed:pcm];
     // و بریدن **هیچ‌وقت نمی‌ایستد**، حتی وقتی هیچ تکه‌ای نمی‌رسد. تا دیروز دو شکستِ
@@ -298,6 +307,9 @@
     // «یک لحظه…» می‌گوید و یک حدسِ خامِ تازه فقط نویز است.
     [_preview stop];
     _preview = nil;
+    // **پیش از** finish خوانده می‌شود: ته‌مانده‌ی کمتر از یک بلاک آنجا با سکوت پر
+    // می‌شود (record.m) و همان پرکننده در حساب به «صدای گم‌شده» تبدیل می‌شد.
+    unsigned long long recEnd = _recorder ? _recorder.pcmBytes : _fedBytes;
     [_recorder finish];
 
     NSDate *t0 = NSDate.date;
@@ -311,6 +323,9 @@
         for (ZPipe *p in self->_retiredSecond) [p finish];
         [self->_fa finish];
         [self->_en finish];
+        // پیش از انتظارِ متن: این حساب فقط صدا را می‌شمارد و به شبکه کاری ندارد، پس
+        // حتی وقتی هیچ متنی نرسد هم در لاگ هست.
+        [self auditCoverage:recEnd];
         // و انتظار **فقط تا دورِ اول**: هر تکه یک بار امتحان شود، نه اینکه تا رسیدنِ
         // همه بمانیم. تفاوتش همان چیزی است که این تغییر برای آن نوشته شد: با انتظارِ
         // کامل، یک قطعیِ اینترنت یعنی Esc هیچ متنی تحویل نمی‌دهد و کلِ دیکته گروگان
@@ -344,6 +359,40 @@
     for (ZPipe *p in _retired) [p cancel];
     for (ZPipe *p in _retiredSecond) [p cancel];
     [_recorder discard];
+}
+
+// ---------- حسابِ پوشش ----------
+// صدایی که روی دیسک نشست، آیا واقعا تکه شد؟ تا امروز جوابِ این سوال در لاگ نبود و
+// تنها عددِ موجود شمارِ نویسه بود؛ دو تشخیصِ غلط (تعارضِ میان‌بر، بریدنِ وسطِ حرف) از
+// همان کمبود درآمد و هر دو رد شدند.
+//
+// حساب ساده است چون بریدن پیوسته است: هرچه خط لوله برید یا به صف رفت یا آگاهانه
+// سکوت شمرده شد، پس هر بایتی که در آن جمع نیست هیچ‌جا نرفته. و بازنشسته‌ها هم در
+// جمع می‌آیند، وگرنه عوض کردنِ زبان وسط سشن کلِ صدای پیش از آن را «گم‌شده» نشان
+// می‌داد. پاس دومِ انگلیسی بیرون است: همان صدا را دوباره می‌شمارد.
+- (void)auditCoverage:(unsigned long long)recEnd {
+    if (!_auditOpen || recEnd <= _auditFrom) return;
+    unsigned long long accounted = _fa.accountedBytes;
+    for (ZPipe *p in _retired) accounted += p.accountedBytes;
+    unsigned long long chunks = 0;
+    NSInteger n = 0;
+    for (ZSlot *s in self.queue.snapshot) {
+        if (s.extra || s.frame * 2 < _auditFrom) continue;
+        chunks += s.frames * 2;
+        n++;
+    }
+    unsigned long long all = recEnd - _auditFrom;
+    unsigned long long lost = all > accounted ? all - accounted : 0;
+    ZLog(@"audit: %.1fs صدا، %.1fs در %ld تکه، %.1fs سکوتِ ردشده، %.1fs هیچ‌جا نرفت",
+         all / kZPcmBytesPerSec, chunks / kZPcmBytesPerSec, (long)n,
+         (accounted > chunks ? accounted - chunks : 0) / kZPcmBytesPerSec,
+         lost / kZPcmBytesPerSec);
+    // آستانه‌ی هشدار، اندازه‌ی یک بلاکِ میکروفن (۰٫۱ ثانیه). پایین‌ترش بایتِ فردی است
+    // که برش‌زن جا می‌گذارد و مسابقه‌ی چند میلی‌ثانیه‌ای سر بستن؛ بالاترش صدای واقعیِ
+    // گفته‌شده است. عددِ شناخته‌شده‌ی امروز ~۰٫۲ ثانیه در هر سشن است.
+    if (lost / kZPcmBytesPerSec < 0.1) return;
+    ZLog(@"audit: هشدار، %.1fs صدا از %.1fs به بعد هیچ تکه‌ای ندارد؛ در audio.flac هست و در متن نه",
+         lost / kZPcmBytesPerSec, (_auditFrom + accounted) / kZPcmBytesPerSec);
 }
 
 // جمعِ کل سشن، نه فقط خط لوله‌ی فعلی: اگر کاربر وسط راه زبان را عوض کرده باشد،
