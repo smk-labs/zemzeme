@@ -582,6 +582,68 @@ int main(void) { @autoreleasepool {
         [q stop];
     }
 
+    // ---------- ۱۵: بلاکی که وسطِ دنباله‌ی بستن می‌رسد ----------
+    // B4 می‌گفت آخرین صدا سرِ بستن دور ریخته می‌شود و کسری‌اش ~۰٫۲ ثانیه است. آن عدد
+    // پرکننده‌ی سکوتِ ضبط‌کننده بود نه صدای گم‌شده: در شش سشنِ واقعیِ بعد از کامیت
+    // 2349e8f خطِ audit هر بار «0.0s هیچ‌جا نرفت» داد و خطِ صدای دیررسِ خط لوله یک بار
+    // هم نخورد. آنچه واقعا می‌افتاد یک بلاک بود که یک لایه بالاتر، سرِ دروازه‌ی موتور،
+    // می‌مرد. این بلوک ادعای بعد از فیکس را قفل می‌کند: بلاکی که وسطِ بستن می‌رسد هم
+    // روی دیسک می‌نشیند و هم تکه می‌شود، با افستِ مطلقِ درست، و حساب صفر گم‌شده می‌دهد.
+    {
+        ZTestScript(@[@[@"یک", @"ok"], @[@"دو", @"ok"], @[@"سه", @"ok"], @[@"چهار", @"ok"]]);
+        ZQueue *q = [ZQueue new];
+        ZPipe *fa = [[ZPipe alloc] initWithLang:@"fa-IR"];
+        fa.queue = q;
+        NSFileManager *fm = NSFileManager.defaultManager;
+        NSURL *dir = [NSURL fileURLWithPath:[NSTemporaryDirectory()
+                      stringByAppendingPathComponent:@"zemzeme-close-block"]];
+        [fm removeItemAtURL:dir error:nil];
+        ZRecorder *rec = [[ZRecorder alloc] initWithURL:
+                          [dir URLByAppendingPathComponent:@"audio.flac"]];
+
+        // همان ترتیبی که ingest دارد: افست **پیش از** خوردنِ تکه از ضبط‌کننده گرفته
+        // می‌شود، وگرنه هر تکه به اندازه‌ی خودش جلو می‌افتد.
+        NSData *audio = ZTestThreePieces();
+        const NSUInteger step = 3200;
+        for (NSUInteger off = 0; off < audio.length; off += step) {
+            NSData *c = [audio subdataWithRange:NSMakeRange(off, MIN(step, audio.length - off))];
+            unsigned long long at = rec.pcmBytes;
+            [rec feed:c];
+            [fa feed:c at:at];
+        }
+        // و این یکی همان بلاکِ در پرواز است: میکروفن ایستاده، دروازه هنوز باز.
+        NSData *late = [audio subdataWithRange:NSMakeRange(0, step)];
+        unsigned long long lateAt = rec.pcmBytes;
+        [rec feed:late];
+        [fa feed:late at:lateAt];
+
+        // از اینجا به بعد دقیقا ترتیبِ `stop` در engine.m است.
+        unsigned long long recEnd = rec.pcmBytes;
+        [rec finish];
+        [fa finish];
+        [q waitForFirstPass];
+
+        ok(recEnd == audio.length + step, "بلاکِ سرِ بستن به ضبط‌کننده رسید، پس در audio.flac هست");
+        ok(fa.accountedBytes == recEnd, "و به خط لوله هم رسید، پس حساب صفر گم‌شده می‌دهد");
+
+        unsigned long long at = 0;
+        BOOL tight = YES;
+        for (ZSlot *s in q.snapshot) {
+            if (s.frame * 2 != at) tight = NO;
+            at = (s.frame + s.frames) * 2;
+        }
+        ok(tight && at == recEnd,
+           "افستِ تکه‌ها پشت سر هم تا آخرین بلاک را می‌پوشاند، پس حرفِ آخر جای خودش است");
+
+        // و همان تله‌ای که عددِ ~۰٫۲ ثانیه‌ی B4 از آن درآمد: شمارنده **بعد از** finish
+        // پرکننده‌ی سکوت را هم دارد. حساب عمدا پیش از finish خوانده می‌شود.
+        unsigned long long block = (unsigned long long)[ZFlacEncoder new].blockFrames * 2;
+        ok(block && rec.pcmBytes - recEnd == (block - recEnd % block) % block,
+           "کسریِ ته فایل پرکننده‌ی سکوت است، پس مقایسه بعد از finish صدای گم‌شده نمی‌شمارد");
+        [fm removeItemAtURL:dir error:nil];
+        [q stop];
+    }
+
     // ---------- قاعده‌های ریشه‌ای، روی خودِ سورس ----------
     NSString *pip = ZTestSrc(@"pipe.m"), *que = ZTestSrc(@"queue.m");
     NSString *eng = ZTestSrc(@"engine.m"), *ses = ZTestSrc(@"session.m");
@@ -599,6 +661,27 @@ int main(void) { @autoreleasepool {
     // نویسه مهندسی معکوس لازم می‌شود.
     ok([eng containsString:@"[self auditCoverage:recEnd]"],
        "پایانِ سشن حسابِ پوشش را می‌زند، پیش از انتظارِ متن");
+
+    // ترتیبِ بستن، که در همین فایل کامپایل نمی‌شود پس از روی سورس سنجیده می‌شود:
+    // **اول منبع، بعد دروازه**. تا امروز `_stopping` پیش از `[_mic stop]` می‌نشست و
+    // آخرین بلاکِ در پرواز سرِ `ingest` می‌مرد، پیش از دیسک و پیش از خط لوله، جایی که
+    // هیچ عددی نمی‌دیدش. در `cancel` عمدا برعکس است: دور ریختن خواسته‌ی کاربر است.
+    NSUInteger stopAt = [eng rangeOfString:@"- (void)stop {"].location;
+    NSUInteger cancelAt = [eng rangeOfString:@"- (void)cancel {"].location;
+    ok(stopAt != NSNotFound && cancelAt != NSNotFound && stopAt < cancelAt,
+       "stop و cancel هر دو در موتورند و stop اول آمده");
+    NSRange inStop = NSMakeRange(stopAt, cancelAt - stopAt);
+    NSRange inCancel = NSMakeRange(cancelAt, eng.length - cancelAt);
+    NSUInteger micInStop = [eng rangeOfString:@"[_mic stop];" options:0 range:inStop].location;
+    NSUInteger gateInStop = [eng rangeOfString:@"_stopping = YES;" options:0 range:inStop].location;
+    ok(micInStop != NSNotFound && gateInStop != NSNotFound && micInStop < gateInStop,
+       "در stop اول میکروفن می‌ایستد و بعد دروازه بسته می‌شود");
+    NSUInteger micInCancel = [eng rangeOfString:@"[_mic stop];" options:0 range:inCancel].location;
+    NSUInteger gateInCancel = [eng rangeOfString:@"_stopping = YES;" options:0 range:inCancel].location;
+    ok(micInCancel != NSNotFound && gateInCancel != NSNotFound && gateInCancel < micInCancel,
+       "در cancel برعکس، چون آنجا افتادنِ صدای در پرواز خواسته‌ی کاربر است");
+    ok([eng containsString:@"_lateDropped"],
+       "بلاکی که هنوز سرِ بستن می‌افتد یک بار لاگ می‌شود، نه بی‌صدا");
 
     // نشانه‌ی ⟨جامانده⟩ و جراحیِ رشته باید رفته باشند: ترتیب حالا ساختاری است.
     for (NSString *gone in @[@"ZHoleMark", @"ZFillHoleAt", @"ZRetryHoles", @"retryHoles"]) {
