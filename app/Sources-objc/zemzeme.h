@@ -38,7 +38,12 @@ NSString *ZFaDigits(NSString *s);
 NSString *ZTimestampId(void);
 
 // ---------- تنظیمات ----------
-#define kZRDPBundleId @"com.microsoft.rdc.macos"    // Windows App، تنها اپی که همیشه پیست می‌گیرد
+#define kZRDPBundleId @"com.microsoft.rdc.macos"    // Windows App
+#define kZFreeRDPName @"sdl-freerdp"                // کلاینت ریموتِ لینوکس، بی باندل آیدی
+
+// شناسه‌ی مقصد: باندل آیدی، و اگر نبود نامِ فایلِ اجرایی. اپِ بی‌باندل هم باید یک اسم
+// پایدار داشته باشد، وگرنه قانونِ ریموت هیچ‌وقت به آن نمی‌رسد. شرحش سرِ خودِ تابع.
+NSString *ZAppIdentity(NSRunningApplication *app);
 
 // در منو: «درج مستقیم» و «ذخیره در کلیپ‌بورد». اسم‌ها از روی کاری است که با متن
 // می‌شود، نه از روی مکانیزم، چون تفاوتی که به کاربر می‌رسد همین است: اولی کلیپ‌بورد را
@@ -862,12 +867,6 @@ void ZMarkShot(NSString *dir);                  // mark.png برای --uishot
 // می‌کند. نال یعنی اپ چیزی نداد و تاییدِ خواندنی ممکن نیست.
 AXUIElementRef ZCopyFocusedElement(pid_t frontPid) CF_RETURNS_RETAINED;
 void ZInvalidateFocusCache(void);
-
-// ورودیِ غیرِ خودمان (کلید کاربر، کلیک). تنها راهِ ثابت کردنِ «کسی دست نزده» در اپی
-// که خواندنِ AX ندارد، مثل ریموت دسکتاپ. رویدادهای خودمان با kCGEventSourceUserData
-// علامت می‌خورند و اینجا حساب نمی‌شوند، وگرنه هر تایپِ خودمان مدرک را باطل می‌کرد.
-void ZNoteForeignInput(void);
-CFAbsoluteTime ZLastForeignInputAt(void);
 
 // ابزار اندازه‌گیری همان نردبان، بی هیچ سشن دیکته‌ای: نردبان یک بار روی اپِ فوکس‌دار
 // اجرا می‌شود و چاپ می‌کند چه صفت‌هایی موجود بود، هر پله چه قابی داد و کدام زد.

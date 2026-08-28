@@ -524,7 +524,7 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
     [_panel yieldKey];
     NSRunningApplication *to = _target ?: NSWorkspace.sharedWorkspace.frontmostApplication;
     ZInjector *inj = [ZInjector new];
-    ZInsertMode im = [ZSettings.shared insertModeForBundleId:to.bundleIdentifier];
+    ZInsertMode im = [ZSettings.shared insertModeForBundleId:ZAppIdentity(to)];
     [inj insert:text pid:to.processIdentifier
     delayMicros:ZSettings.shared.typeDelayMicros
  pasteIfRefused:im == ZInsertPaste

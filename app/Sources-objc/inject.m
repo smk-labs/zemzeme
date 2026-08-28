@@ -5,13 +5,8 @@
 
 // ---------- ورودیِ غیرِ خودمان ----------
 // رویدادهای ساختگیِ ما این برچسب را می‌گیرند. بی آن، تپِ سراسری تایپِ خودمان را هم
-// «کاربر دست زد» می‌دید و مدرکِ سطح دو هیچ‌وقت معتبر نمی‌ماند.
+// «کاربر دست زد» می‌دید و رویدادِ نگه‌داشته را دوباره تزریق می‌کرد.
 static const int64_t kZOurEventTag = 0x7A656D32;    // "zem2"
-
-static CFAbsoluteTime gLastForeignInputAt;
-
-void ZNoteForeignInput(void) { gLastForeignInputAt = CFAbsoluteTimeGetCurrent(); }
-CFAbsoluteTime ZLastForeignInputAt(void) { return gLastForeignInputAt; }
 
 // ---------- ZInjector ----------
 
@@ -271,13 +266,29 @@ static CFRange zSelectedRange(AXUIElementRef el, BOOL *ok) {
 static BOOL zFrontIsRemoteClient(void) {
     __block NSString *b = nil;
     if (NSThread.isMainThread) {
-        b = NSWorkspace.sharedWorkspace.frontmostApplication.bundleIdentifier;
+        b = ZAppIdentity(NSWorkspace.sharedWorkspace.frontmostApplication);
     } else {
         dispatch_sync(dispatch_get_main_queue(), ^{
-            b = NSWorkspace.sharedWorkspace.frontmostApplication.bundleIdentifier;
+            b = ZAppIdentity(NSWorkspace.sharedWorkspace.frontmostApplication);
         });
     }
-    return [b isEqualToString:kZRDPBundleId];
+    return [b isEqualToString:kZRDPBundleId] || [b isEqualToString:kZFreeRDPName];
+}
+
+// همان سوال، ولی فقط برای کلاینتِ لینوکس. جدا از بالا لازم است چون مهلتِ کلیپ‌بورد این
+// دو یکی نیست: Windows App کلیپ‌بورد را روی کانالِ خودِ RDP می‌برد، ولی کانالِ متنِ
+// ousmousa متنِ غیرِ اَسکی را دور می‌ریزد، پس متن از راهِ SSH می‌رود (desk-clip) و آن
+// راه کندتر است.
+static BOOL zFrontIsFreeRDP(void) {
+    __block NSString *b = nil;
+    if (NSThread.isMainThread) {
+        b = ZAppIdentity(NSWorkspace.sharedWorkspace.frontmostApplication);
+    } else {
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            b = ZAppIdentity(NSWorkspace.sharedWorkspace.frontmostApplication);
+        });
+    }
+    return [b isEqualToString:kZFreeRDPName];
 }
 
 // پیست تکه‌ای: کپی با نشونه transient (تاریخچه‌گیرها رد می‌کنند) و Cmd+V.
@@ -299,7 +310,13 @@ static BOOL zFrontIsRemoteClient(void) {
         [pb setString:@"" forType:transient];
     });
     if (zFrontIsRemoteClient()) [ZKeyFlick flick];   // «برو مک و برگرد»، خودکار
-    usleep(d);    // مهلت سینک کلیپ‌بورد ریموت دسکتاپ
+    // مهلت سینک کلیپ‌بورد ریموت دسکتاپ. برای سشنِ لینوکس کفِ این مهلت بالاتر است:
+    // متن از کانالِ RDP نمی‌رود (آن کانال متنِ غیرِ اَسکی را صفر بایت تحویل می‌دهد)،
+    // از پلِ SSH می‌رود، و اندازه‌گیریِ ۱۴۰۵/۰۶/۰۳ رسیدنش را ۵۲۳ تا ۶۹۹ میلی‌ثانیه
+    // نشان داد. با ۶۰۰ی پیش‌فرض، Cmd+V بعضی وقت‌ها روی متنِ *قبلی* می‌نشیند، و آن
+    // خرابیِ بی‌صداست: پیست می‌شود، فقط چیزِ اشتباه. ۱۲۰۰ فاصله‌ی روشنی می‌دهد.
+    if (zFrontIsFreeRDP() && d < 1200000) d = 1200000;
+    usleep(d);
     [ZInjector sendCmdV];
     usleep(150000);
 }
@@ -634,17 +651,11 @@ static CGEventRef zHotkeyCallback(CGEventTapProxy proxy, CGEventType type, CGEve
         if (_tap) CGEventTapEnable(_tap, true);
         return event;
     }
-    // هر ورودی‌ای که برچسبِ ما را ندارد یعنی کاربر (یا اپ دیگری) دست زده. تنها
-    // مدرکی است که در اپِ بی‌خواندن (ریموت دسکتاپ) در دسترس است، پس اول از همه.
-    if (CGEventGetIntegerValueField(event, kCGEventSourceUserData) != kZOurEventTag) {
-        ZNoteForeignInput();
-    } else {
-        // رویدادِ خودمان است (تایپ، یا Cmd+V). تا امروز مثل ورودی کاربر از همین
-        // ماشین حالت رد می‌شد: تایپِ خود اپ به شاخه‌ی «کلید دیگری آمد» می‌افتاد،
-        // رویدادِ نگه‌داشته‌ی Command راست را دوباره تزریق می‌کرد و تپِ در جریانِ
-        // کاربر را می‌خورد. صدای خودمان را ورودی حساب نکنیم.
-        return event;
-    }
+    // رویدادِ خودمان است (تایپ، یا Cmd+V). تا امروز مثل ورودی کاربر از همین ماشین
+    // حالت رد می‌شد: تایپِ خود اپ به شاخه‌ی «کلید دیگری آمد» می‌افتاد، رویدادِ
+    // نگه‌داشته‌ی Command راست را دوباره تزریق می‌کرد و تپِ در جریانِ کاربر را
+    // می‌خورد. صدای خودمان را ورودی حساب نکنیم.
+    if (CGEventGetIntegerValueField(event, kCGEventSourceUserData) == kZOurEventTag) return event;
     // ماوس هم «کلید دیگری» است: با Command راست + کلیک، رها کردنِ کلید تپِ تنها
     // حساب می‌شد و ۰.۳۵ ثانیه بعد سشن بی‌دلیل مکث می‌کرد.
     if (type == kCGEventLeftMouseDown || type == kCGEventRightMouseDown) {

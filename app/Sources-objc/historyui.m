@@ -478,7 +478,7 @@ static NSString *zWhen(NSDate *d) {
     NSString *out = ZSigned(e.text);
     [ZInjector copyFinal:out];
     ZInjector *inj = [ZInjector new];
-    ZInsertMode im = [ZSettings.shared insertModeForBundleId:to.bundleIdentifier];
+    ZInsertMode im = [ZSettings.shared insertModeForBundleId:ZAppIdentity(to)];
     [inj insert:out pid:to.processIdentifier
     delayMicros:ZSettings.shared.typeDelayMicros
  pasteIfRefused:im == ZInsertPaste

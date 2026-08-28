@@ -354,6 +354,7 @@ NSFont *ZFont(CGFloat size, BOOL medium) {
 // نشانه‌ای که چه شد و چرا. تنظیمی که تنها کارِ ممکنش خراب کردن است تنظیم نیست، تله است.
 - (ZInsertMode)insertModeForBundleId:(NSString *)bundleId {
     if ([bundleId isEqualToString:kZRDPBundleId]) return ZInsertPaste;
+    if ([bundleId isEqualToString:kZFreeRDPName]) return ZInsertPaste;
     return self.insertMode;
 }
 
@@ -501,4 +502,13 @@ ZSpeechEvent *ZProtoDecodeEvent(NSData *body) {
     });
     ev.interim = interim;
     return ev;
+}
+
+// شناسه‌ی مقصد. `bundleIdentifier` برای یک باینریِ خام nil است، و nil به معنی «اپِ
+// معمولی» است نه «ریموت»، پس مقایسه با nil هیچ‌وقت به قانونِ ریموت نمی‌رسید. نامِ فایلِ
+// اجرایی همان چیزی است که برای این اپ‌ها پایدار می‌ماند.
+NSString *ZAppIdentity(NSRunningApplication *app) {
+    if (!app) return nil;
+    if (app.bundleIdentifier.length) return app.bundleIdentifier;
+    return app.executableURL.lastPathComponent;
 }

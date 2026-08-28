@@ -32,6 +32,10 @@ int main(int argc, const char *argv[]) {
 
         ok([s insertModeForBundleId:kZRDPBundleId] == ZInsertPaste,
            @"Windows App باید پیست بگیرد، هر چه روشِ سراسری باشد");
+        // کلاینتِ لینوکس باندل آیدی ندارد، پس شناسه‌اش نامِ فایلِ اجرایی است. اگر این
+        // خط قرمز شود، درج در سشنِ ousmousa برگشته است به تایپِ یونیکد، یعنی «aaaa».
+        ok([s insertModeForBundleId:kZFreeRDPName] == ZInsertPaste,
+           @"sdl-freerdp هم باید پیست بگیرد، هر چه روشِ سراسری باشد");
         // یک اپ معمولی باید دقیقا همان چیزی را بگیرد که کاربر سراسری انتخاب کرده،
         // وگرنه استثنای ریموت به بقیه هم سرایت کرده و انتخاب کاربر بی‌معنی شده.
         ok([s insertModeForBundleId:@"com.apple.Safari"] == global,
