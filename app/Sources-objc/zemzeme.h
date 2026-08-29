@@ -709,7 +709,6 @@ static inline ZWritePath ZChooseWritePath(BOOL alwaysPaste, BOOL axAvailable, NS
 + (BOOL)secureInputActive;
 + (void)copyFinal:(NSString *)text;                     // کپی ماندگار پایانی
 - (void)type:(NSString *)text delayMicros:(useconds_t)d;
-- (void)paste:(NSString *)text delayMicros:(useconds_t)d;
 - (void)copyFinalAfterPending:(NSString *)text;         // پشت صف درج، که مسابقه با پیست نگیرد
 // همان type: ولی با خبرِ «نشست»، چون دفتر تا نشستنِ یک عملیات، عملیات بعدی را نمی‌فرستد
 - (void)type:(NSString *)text delayMicros:(useconds_t)d done:(void (^)(void))done;

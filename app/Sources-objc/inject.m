@@ -186,7 +186,15 @@ static NSMutableSet<NSNumber *> *ZNoAXWritePids(void) {
         //
         // و کلیپ‌بورد چیزی نمی‌بازد، برخلاف آنچه اول گمان می‌رفت: هر مسیرِ تحویل پیش از
         // درج `copyFinal:` را صدا زده (session.m)، پس همین متن از قبل رویش هست.
-        switch (ZChooseWritePath(pasteIfRefused, viaAX, text.length)) {
+        //
+        // **B7: لاگ می‌گفت چه فرستادیم و هیچ‌وقت نمی‌گفت چه نشست.** ۲۰۲۶-۰۸-۲۱ ساعت
+        // ۱۱:۲۳:۵۸ کل ۳۷۰ نویسه پیست شد و کاربر ۱۲۱ نویسه‌ی آخر را دید؛ بی عددی از سمتِ
+        // مقصد، ریشه ناشناس ماند. این دو خواندن آن عدد را می‌سازند و **هشدار نمی‌دهند**:
+        // اول اندازه، بعد آستانه (بندِ B7، با شمارش). سقفِ هر دو خواندن هم همان مهلتِ
+        // ۰٫۱۵ ثانیه‌ایِ `kAXTimeout` در app/Sources-objc/caret.m است، نه انتظارِ باز.
+        ZWritePath path = ZChooseWritePath(pasteIfRefused, viaAX, text.length);
+        NSInteger before = path == ZWritePaste && !pasteIfRefused ? zBoxChars(pid) : -1;
+        switch (path) {
             case ZWriteAX:
                 break;    // نشست، تمام
             case ZWritePaste:
@@ -202,6 +210,16 @@ static NSMutableSet<NSNumber *> *ZNoAXWritePids(void) {
         }
         self->_lastWriteAt = CFAbsoluteTimeGetCurrent();
         if (done) dispatch_async(dispatch_get_main_queue(), ^{ done(viaAX); });
+        // خواندنِ دوم **پشتِ** کپیِ پایانی می‌نشیند، نه اینجا: آن کپی (session.m) تنها
+        // تور نجاتِ کاربر است و یک پرس‌وجوی کندِ اکسسبیلیتی نباید عقبش بیندازد.
+        if (before < 0) return;
+        NSInteger sent = (NSInteger)text.length;
+        dispatch_async(ZInjectQueue(), ^{
+            NSInteger after = zBoxChars(pid);
+            ZLog(@"inject: نشستن در pid=%d، %ld نویسه رفت، کادر از %ld به %@", pid, (long)sent,
+                 (long)before, after < 0 ? @"نشد خواند" : [NSString stringWithFormat:@"%ld",
+                                                           (long)after]);
+        });
     });
 }
 
@@ -260,10 +278,12 @@ static CFRange zSelectedRange(AXUIElementRef el, BOOL *ok) {
     return r;
 }
 
-// فلیکِ پنجره‌ی کلید فقط مالِ کلاینتِ ریموت است. در یک اپ مک گرفتنِ لحظه‌ایِ کلید
-// بی‌دلیل است و می‌تواند پاپ‌اوورِ باز را ببندد، پس آنجا دست نمی‌زنیم. مقصدِ Cmd+V
-// همان اپِ جلو است، پس همین‌جا و همین حالا پرسیدنش دقیقا همان چیزی است که لازم داریم.
-static BOOL zFrontIsRemoteClient(void) {
+// کدام اپ جلو است. مقصدِ Cmd+V همان اپِ جلو است، پس همین‌جا و همین حالا پرسیدنش دقیقا
+// همان چیزی است که لازم داریم.
+//
+// **یک بار پرسیده می‌شود، نه دو بار.** تا امروز دو تابع بودند و مسیرِ پیست هر دو را جدا
+// صدا می‌زد: اپِ جلو که بینشان عوض می‌شد، فلیک برای یکی می‌رفت و مهلتِ کلیپ‌بورد برای آن یکی.
+static NSString *zFrontBundleId(void) {
     __block NSString *b = nil;
     if (NSThread.isMainThread) {
         b = ZAppIdentity(NSWorkspace.sharedWorkspace.frontmostApplication);
@@ -272,35 +292,33 @@ static BOOL zFrontIsRemoteClient(void) {
             b = ZAppIdentity(NSWorkspace.sharedWorkspace.frontmostApplication);
         });
     }
-    return [b isEqualToString:kZRDPBundleId] || [b isEqualToString:kZFreeRDPName];
+    return b;
 }
 
-// همان سوال، ولی فقط برای کلاینتِ لینوکس. جدا از بالا لازم است چون مهلتِ کلیپ‌بورد این
-// دو یکی نیست: Windows App کلیپ‌بورد را روی کانالِ خودِ RDP می‌برد، ولی کانالِ متنِ
-// ousmousa متنِ غیرِ اَسکی را دور می‌ریزد، پس متن از راهِ SSH می‌رود (desk-clip) و آن
-// راه کندتر است.
-static BOOL zFrontIsFreeRDP(void) {
-    __block NSString *b = nil;
-    if (NSThread.isMainThread) {
-        b = ZAppIdentity(NSWorkspace.sharedWorkspace.frontmostApplication);
-    } else {
-        dispatch_sync(dispatch_get_main_queue(), ^{
-            b = ZAppIdentity(NSWorkspace.sharedWorkspace.frontmostApplication);
-        });
+// چند نویسه در کادرِ مقصد است. منفی یعنی نشد خواند، و همین «نشد خواند» هم خودش
+// اندازه‌گیری است: کلاینتِ ریموت اصلا کادری برای خواندن نمی‌دهد.
+static NSInteger zBoxChars(pid_t pid) {
+    AXUIElementRef el = ZCopyFocusedElement(pid);
+    if (!el) return -1;
+    NSInteger n = -1;
+    CFTypeRef v = NULL;
+    if (AXUIElementCopyAttributeValue(el, kAXNumberOfCharactersAttribute, &v) == kAXErrorSuccess
+        && v) {
+        if (CFGetTypeID(v) == CFNumberGetTypeID()) n = ((__bridge NSNumber *)v).integerValue;
+        CFRelease(v);
     }
-    return [b isEqualToString:kZFreeRDPName];
+    CFRelease(el);
+    return n;
 }
 
 // پیست تکه‌ای: کپی با نشونه transient (تاریخچه‌گیرها رد می‌کنند) و Cmd+V.
 // همه چیز روی یک صف سریال تا دو پیست پشت هم مسابقه کلیپ‌بورد نگیرند
 // (باگ واقعی: برگرداندن کلیپ‌بورد قبلی وسط پیست بعدی می‌نشست و متن قدیمی پیست می‌شد؛
 // برای همین «برگرداندن» حذف شد. کپی پایانی Esc به هر حال کلیپ‌بورد را پر می‌کند.)
-- (void)paste:(NSString *)text delayMicros:(useconds_t)d {
-    dispatch_async(ZInjectQueue(), ^{ [self pasteNow:text delayMicros:d]; });
-}
-
-// روی صف درج. مسیرِ درجِ اتمیک از همین‌جا صدایش می‌زند، چون همان‌جا روی صف است و
-// یک dispatch دیگر فقط پیست را پشتِ کارهای بعدی می‌انداخت.
+//
+// روی صف درج صدا زده می‌شود، و تنها صدازننده‌اش مسیرِ درجِ اتمیکِ همین فایل است: از
+// همان‌جا مستقیم، چون آنجا از قبل روی صف است و یک dispatch دیگر فقط پیست را پشتِ
+// کارهای بعدی می‌انداخت. `paste:` که همین را از بیرونِ صف می‌گرفت، مشتری نداشت و رفت.
 - (void)pasteNow:(NSString *)text delayMicros:(useconds_t)d {
     dispatch_sync(dispatch_get_main_queue(), ^{
         NSPasteboard *pb = NSPasteboard.generalPasteboard;
@@ -309,13 +327,20 @@ static BOOL zFrontIsFreeRDP(void) {
         [pb setString:text forType:NSPasteboardTypeString];
         [pb setString:@"" forType:transient];
     });
-    if (zFrontIsRemoteClient()) [ZKeyFlick flick];   // «برو مک و برگرد»، خودکار
+    // فلیکِ پنجره‌ی کلید فقط مالِ کلاینتِ ریموت است. در یک اپ مک گرفتنِ لحظه‌ایِ کلید
+    // بی‌دلیل است و می‌تواند پاپ‌اوورِ باز را ببندد، پس آنجا دست نمی‌زنیم.
+    NSString *front = zFrontBundleId();
+    if ([front isEqualToString:kZRDPBundleId] || [front isEqualToString:kZFreeRDPName])
+        [ZKeyFlick flick];                           // «برو مک و برگرد»، خودکار
     // مهلت سینک کلیپ‌بورد ریموت دسکتاپ. برای سشنِ لینوکس کفِ این مهلت بالاتر است:
     // متن از کانالِ RDP نمی‌رود (آن کانال متنِ غیرِ اَسکی را صفر بایت تحویل می‌دهد)،
     // از پلِ SSH می‌رود، و اندازه‌گیریِ ۱۴۰۵/۰۶/۰۳ رسیدنش را ۵۲۳ تا ۶۹۹ میلی‌ثانیه
     // نشان داد. با ۶۰۰ی پیش‌فرض، Cmd+V بعضی وقت‌ها روی متنِ *قبلی* می‌نشیند، و آن
     // خرابیِ بی‌صداست: پیست می‌شود، فقط چیزِ اشتباه. ۱۲۰۰ فاصله‌ی روشنی می‌دهد.
-    if (zFrontIsFreeRDP() && d < 1200000) d = 1200000;
+    // و کفِ بالاتر فقط مالِ کلاینتِ لینوکس است: Windows App کلیپ‌بورد را روی کانالِ خودِ
+    // RDP می‌برد، ولی کانالِ متنِ ousmousa متنِ غیرِ اَسکی را دور می‌ریزد، پس متن از راهِ
+    // SSH می‌رود (desk-clip) و آن راه کندتر است.
+    if ([front isEqualToString:kZFreeRDPName] && d < 1200000) d = 1200000;
     usleep(d);
     [ZInjector sendCmdV];
     usleep(150000);
