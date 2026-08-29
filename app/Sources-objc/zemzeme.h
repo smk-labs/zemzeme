@@ -301,6 +301,7 @@ void ZAdoptOrphanQueue(ZQueue *q, NSString *sid, NSString *rewrite, NSIndexSet *
 // تاگل «ضبط صدای سشن» روی audio.flac. جدا از تابع بالا چون آن یکی پوشه‌ی واقعیِ
 // سشن‌ها را می‌خواند و این یکی هر صفی را می‌گیرد، پس تست به آن دست نمی‌زند.
 void ZFinishResumedSession(ZQueue *q, NSString *sid);
+BOOL ZTextLanded(NSURL *sessionDir);   // شرطِ پاک کردنِ صدا. شرحش در queue.m
 
 // مسیر دفترچه‌ی یک سشن. یک جا نوشته می‌شود چون هم نویسنده لازمش دارد هم لانچ.
 NSURL *ZQueueManifestIn(NSURL *sessionDir);

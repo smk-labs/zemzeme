@@ -27,6 +27,11 @@ recognition.
   editing before you insert (the panel never takes focus just by appearing), or
   cursor-side, where a dot replaces the panel and the text is inserted once at the
   end. Right Command + E switches.
+- **Edit in the panel, then carry on speaking.** Your edit stays, and what you say
+  next is added to it: the cursor, the clipboard, the history row and `text.txt` all
+  end up with the same complete text. The price is one thing. Once you edit, the AI
+  cleanup pass stays off for the rest of that session, because the model rewrites the
+  whole text and nobody gets to rewrite yours.
 - **Live language switching**: right Command + L flips Persian and English **mid
   sentence**, as many times as you like. What you already said is transcribed in the
   old language, what follows in the new one, and both are joined in order.
@@ -44,8 +49,9 @@ recognition.
   getting cut and queued, and a piece that did not come back goes again on its own
   after 1, 2, 4, 8, 15 and 30 seconds, the clock shared by the whole queue and reset
   by the first piece that lands. Esc is never held hostage either: whatever has
-  arrived is delivered right then, and the rest drop into their own places later.
-  The panel shows a calm count, not an error.
+  arrived is delivered right then, and the rest drop into their own places later,
+  even after the panel is gone: into that session's `text.txt` and `raw.txt` and into
+  its own history row, not at your cursor. The panel shows a calm count, not an error.
 - **Killing the app does not lose speech either.** Every waiting piece is one row in
   a small notebook beside the session (`queue.json`), and its audio is the
   `audio.flac` already sitting next to it, so a piece is a frame offset, not a copy
@@ -63,7 +69,13 @@ recognition.
 - **An optional signature line** appended to every piece of text that leaves the app.
   Right Command + G toggles it, the line itself is yours to edit, and it is never
   stored anywhere. Off by default.
-- Works over Windows App remote desktop, where it always uses the clipboard route.
+- **Two warnings on the panel** for things the app used to know and keep to itself:
+  that macOS dictation is sharing the double-Command shortcut (once per app run, with
+  where to switch it off), and that the microphone is sending audio with no words in
+  it (five pieces in a row come back empty, before any text). One such session stayed
+  silent for the full five-minute cap.
+- Works over remote desktop, both Windows App and `sdl-freerdp`, where the clipboard
+  route is always used: typing there writes a run of `a` and nothing else.
 
 ## Install
 
@@ -209,7 +221,9 @@ work fully without it.
   before you paste a key.
 - Session audio is kept by default (this changed on 28 August 2026). It stays on
   your own disk for seven days and is then swept automatically. Turn it off in the
-  menu, under Advanced, and the audio is deleted the moment the text is ready.
+  menu, under Advanced, and the audio goes at the end of the session instead. Either
+  way it is deleted only after the text is confirmed written to disk: audio is the
+  only net that has actually brought a lost transcript back.
 - Transcript history is on by default and kept for 60 days in `history.jsonl`, next
   to everything else on your own disk. Change it with
   `defaults write io.seyed.zemzeme historyKeepDays 30`; `0` means never sweep. The

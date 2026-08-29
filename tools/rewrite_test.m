@@ -334,6 +334,10 @@ static void scenarioPure(void) {
 // بدلِ سپردنِ صف. این تست فقط لایه‌ی بازنویسی را می‌سنجد و صفش هم بدل است، پس
 // سپردنِ واقعی اینجا معنایی ندارد؛ ولی `endNow` صدایش می‌زند و بی این، لینک نمی‌شود.
 // گاردِ خودِ سپردن جای دیگری است: tools/queue_test.sh بندهای ۱۶ و ۱۷.
+// و بدلِ «متن روی دیسک نشست؟». این تست پوشه‌ی سشنِ واقعی ندارد و تاگلِ صدا هم در آن
+// خاموش نیست، پس این شرط اینجا هیچ‌وقت تصمیمی نمی‌گیرد. گاردِ خودش tools/queue_test.sh است.
+BOOL ZTextLanded(NSURL *sessionDir) { (void)sessionDir; return YES; }
+
 void ZAdoptOrphanQueue(ZQueue *q, NSString *sid, NSString *rewrite, NSIndexSet *covers) {
     (void)q; (void)sid; (void)rewrite; (void)covers;
 }

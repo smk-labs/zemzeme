@@ -558,6 +558,7 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
         ZLog(@"session: صدا نگه داشته شد، %ld تکه هنوز در راه است", (long)_queue.waiting);
         return;
     }
+    if (!ZTextLanded(_sessionDir)) return;    // تور آخر از همه می‌رود (B2)
     NSURL *audio = _recorder.url;
     if (audio) [NSFileManager.defaultManager removeItemAtURL:audio error:nil];
 }
