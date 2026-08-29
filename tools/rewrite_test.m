@@ -55,6 +55,9 @@ static void push(NSString *text, ZSlotState st) {
 
 // audio.m در بیلد نیست و core.m این را می‌خواهد؛ تست میکروفن ندارد
 void ZMicSetHighSensitivity(BOOL on) { (void)on; }
+// app.m در بیلد نیست و warn.m این را می‌خواهد. نه یعنی «برخوردی نیست»، پس هشدارِ
+// میان‌بر جای هشدارِ اکسسبیلیتی را در این سناریوها نمی‌گیرد.
+BOOL ZMacDictationOnDoubleCommand(void) { return NO; }
 // queue.m در بیلد نیست: مسیرِ دفترچه اینجا موضوع نیست
 NSURL *ZQueueManifestIn(NSURL *sessionDir) {
     return [sessionDir URLByAppendingPathComponent:@"queue.json"];

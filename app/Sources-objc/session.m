@@ -20,6 +20,7 @@
 // کارت راهنما.
 #import "zemzeme.h"
 #import "rewrite.h"
+#import "warn.h"
 
 // «حرفت که تمام شد، یک بار Command راست را بزن». یک رشته، سه مصرف‌کننده: اگر هر
 // کدام متن خودش را داشت، یکی‌شان دیر یا زود عقب می‌ماند.
@@ -111,6 +112,7 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
         _warning = @"مک هنوز اجازه نداده؛ متن جای کرسر نوشته نمی‌شود";
         [ZInjector promptAccessibility];
     }
+    if (!_warning.length) _warning = ZClashWarning();   // برخوردِ میان‌بر (B8)
 
     NSError *err = nil;
     if (![_engine startWithError:&err]) {
@@ -240,6 +242,8 @@ NSString *ZModeLabel(ZMode m) { return m == ZModeCursor ? @"کنار کرسر" :
     // می‌نشیند. این خط فقط جلوی تحویلِ دوباره را می‌گیرد، اگر سشن به هر دلیلی
     // زنده مانده باشد.
     if (_finished) return;
+    // میکروفنِ کر (B9). نال یعنی حرفی نیست، پس هشدارِ قبلی سرِ جایش می‌ماند.
+    _warning = ZDeafWarning(_queue.snapshot) ?: _warning;
     [self writeRawTranscript:_queue.text];
     // هنوز داریم می‌شنویم، یا منتظر بسته شدن صدا، یا وسط پاس: فقط شمار تازه شود.
     // تحویل جای خودش را دارد و دو بار تحویل دادن یعنی دو بار درج.

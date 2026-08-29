@@ -14,7 +14,7 @@ out="${TMPDIR:-/tmp}/zemzeme-rewrite-test"
 work="${TMPDIR:-/tmp}/zemzeme-rewrite-work"
 clang -fobjc-arc -O1 -Wall -Werror -I app/Sources-objc \
   app/Sources-objc/core.m app/Sources-objc/history.m app/Sources-objc/rewrite.m \
-  app/Sources-objc/session.m tools/rewrite_test.m \
+  app/Sources-objc/session.m app/Sources-objc/warn.m tools/rewrite_test.m \
   -framework Foundation -framework AppKit -framework CoreText -o "$out"
 
 rm -rf "$work"
